@@ -1,0 +1,3 @@
+num_nodes: 1
+component_placement:
+  actor,env,rollout: all

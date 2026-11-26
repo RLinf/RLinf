@@ -1,0 +1,179 @@
+# SuperMimic motion tracking on LAFAN1 with the generalized-coordinate state.
+# Batch sizes and env counts are global; every rank gets an equal share.
+defaults:
+  - env/g1_mimic@env.train
+  - env/g1_mimic@env.eval
+  - model/supermimic@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/bucket_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: supermimic_lafan1_gencoord
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 6000           # global updates
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: -1
+  save_interval: 2000
+  log_interval: 100          # logger backends and metrics table
+  resume_dir: null           # a global_step_<N> directory, or auto for the latest
+  ckpt_path: null
+  eval_export:
+    enabled: False
+    output_dir: null
+
+algorithm:
+  adv_type: null             # lambda-returns are computed in the critic phase
+  loss_type: supermimic
+
+  k: 8                       # world-model training window
+  H: 32                      # imagination horizon
+  gamma: 0.99
+  lam: 0.95
+  # Each transition is drawn this many times by the world model on average;
+  # with the batches below and 4096 envs that is 0.4 updates per env step.
+  replay_ratio: 16
+
+  wm_batches: 10
+  wm_window_batch: 2048
+  imagine_batch: 4096
+  critic_epochs: 5
+  critic_minibatches: 4
+  replay_length: 1000
+
+env:
+  group_name: EnvGroup
+  train:
+    total_num_envs: 4096
+    num_clips: 40
+  eval:
+    total_num_envs: 40
+    num_clips: 40
+    is_eval: True
+    eval_tasks: [tracking]
+    # The longest LAFAN1 clip has 8194 frames at 30 fps, 13656 control steps.
+    max_steps_per_rollout_epoch: 13656
+    video_cfg:
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: RolloutGroup
+  rollout_backend: huggingface
+  enable_offload: False
+  pipeline_stage_num: 1
+  amp_autocast:
+    enabled: True
+    precision: bf16
+  gc_after_weight_sync: False  # weights sync after every update
+  model:
+    model_path: ""
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 1
+  global_batch_size: 2048
+  seed: 0
+  enable_offload: False
+  # Record each global update as one CUDA graph after a few eager updates.
+  cuda_graph: True
+  use_profiler: False # trace the first global updates of a launch with torch.profiler
+  profiler:
+    output_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/profiler
+    activities: ["cpu", "cuda"]
+    record_shapes: False
+    profile_memory: False
+    with_stack: False
+    with_flops: False
+    with_modules: False
+    export_tensorboard: True
+    export_chrome_trace: False
+    chrome_filename_prefix: "chrome_trace"
+    schedule_warmup: 3
+    schedule_active: 1
+    schedule_repeat: 1
+
+  model:
+    representation: gencoord
+
+  # Adam on the motion policy's first and last layers, norms and biases.
+  optim:
+    lr: 2.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    fused: True
+    capturable: ${actor.cuda_graph}
+    clip_grad: 1.0
+    clip_grad_value: 0.1
+    lr_scheduler: constant
+  world_model_optim:
+    lr: 2.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-8
+    fused: True
+    capturable: ${actor.cuda_graph}
+    clip_grad: 1.0
+    lr_scheduler: constant
+  critic_optim:
+    lr: 2.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-8
+    fused: True
+    capturable: ${actor.cuda_graph}
+    clip_grad: 1.0
+    lr_scheduler: constant
+  # Muon on the hidden matrices of every network.
+  muon_optim:
+    optimizer: muon
+    lr: 2.0e-4
+    weight_decay: 0.1
+    momentum: 0.95
+    nesterov: True
+    adjust_lr_fn: match_rms_adamw
+    lr_scheduler: constant
+
+  fsdp_config:
+    strategy: fsdp2
+    # SuperMimicPolicy is ~64 MB FP32; replicating weights avoids per-step AllGather.
+    sharding_strategy: no_shard
+    reshard_after_forward: False
+    # One FSDP unit per network; each phase gathers only the networks it reads.
+    wrap_policy:
+      module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]
+    # Cast network weights to bf16 once per phase at unshard; keep master weights,
+    # optimizer state, gradient reductions, kinematics, rewards and losses in fp32.
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      cast_forward_inputs: False
+    amp_autocast:
+      enabled: False
+      precision: bf16
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

@@ -1,7 +1,7 @@
-异步 agentic RL
-===============
+异步 Agent RL
+=============
 
-本页先说明如何在 RLinf 里打开异步 agentic RL、哪些配置可能需要改，再解释底下的机制：rollout 与训练怎样重叠，两个准入上限各管什么，训练数据会旧到什么程度。如果只需要一份能直接跑的配置，先看 :doc:`Search-R1 异步训练 </rst_source/examples/agentic/searchr1/async>`；等到要改某个默认值、想知道该改哪个以及为什么时，再回到这里。
+本页先说明如何在 RLinf 里打开异步 agentic RL、哪些配置可能需要改，再解释底下的机制：rollout 与训练怎样重叠，两个准入上限各管什么，训练数据会旧到什么程度。如果只需要一份能直接跑的配置，先看 :doc:`Search-R1（异步训练） </rst_source/examples/agentic/searchr1/index>`；等到要改某个默认值、想知道该改哪个以及为什么时，再回到这里。
 
 如何开启
 --------
@@ -78,6 +78,10 @@
 
 重叠之所以可控，关键在 buffer worker。dataloader 由它而不是 runner 持有，所以 actor 训练期间它仍能继续投放；它同时统计在途的组和缓冲里的组，所以两边之间积压的数据有上限；它总是先交出最早的组，所以 actor 拿到的数据变旧的速度由上限决定。
 
+.. note::
+
+   使用 :doc:`session server <session_server>` 时，buffer worker 只收到每个组的元数据，轨迹留在 rollout 节点上。下文的上限和 staleness 规则不变。
+
 两个准入上限
 ------------
 
@@ -88,7 +92,7 @@ buffer worker 只在两个上限同时满足时才投放新 prompt。两个上�
 
 第一个上限要求在途组数（已投放、尚未交回的组）低于 ``rollout_buffer.max_inflight_groups``。默认值把引擎的请求容量换算成组数，即 ``ceil(max_running_requests x instances x 1.2 / group_size)``；多出的 1.2 倍余量，留给那些轨迹正在等工具返回、或在等组内最慢那条轨迹的组。
 
-只有引擎还有空闲时，调高这个上限才有用。引擎一旦忙满，多投放的组只会在引擎里排队，让数据变旧。在 GLM 参考运行上，把 ``max_inflight_groups`` 从 77 提到 160 后，每个 DP rank 的运行请求数从约 75 升到 128（另有 33–78 个在排队），吞吐没有变化，平均 staleness 却从约 1.3 升到约 2.0：GPU 在约 75 个请求时就已经忙满了。对应的实测图见 :doc:`Search-R1 异步页 </rst_source/examples/agentic/searchr1/async>` 的“两个上限怎么调”一节。
+只有引擎还有空闲时，调高这个上限才有用。引擎一旦忙满，多投放的组只会在引擎里排队，让数据变旧。在 GLM 参考运行上，把 ``max_inflight_groups`` 从 77 提到 160 后，每个 DP rank 的运行请求数从约 75 升到 128（另有 33–78 个在排队），吞吐没有变化，平均 staleness 却从约 1.3 升到约 2.0：GPU 在约 75 个请求时就已经忙满了。对应的实测图见 :doc:`Search-R1 </rst_source/examples/agentic/searchr1/index>` 的异步训练部分。
 
 缓冲上限：数据新鲜度
 ~~~~~~~~~~~~~~~~~~~~

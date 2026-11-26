@@ -1,5 +1,5 @@
-Diffusion Model Fine-Tuning with ART
-====================================
+DiffusionART
+============
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
    :align: center
@@ -90,33 +90,73 @@ For the derivation and reference implementation, see the
 `official code <https://github.com/vanzll/DiffusionART>`_, and
 `project page <https://vanzll.github.io/diffusionart-project/>`_.
 
-Installation
-------------
+Setup and Run
+-------------
 
-Follow the shared :ref:`installation <diffusion-model-setup>`,
-:ref:`model download <diffusion-model-checkpoints>`, and
-:ref:`OCR dataset download <diffusion-ocr-dataset>` instructions.
-Both ART configs use CPU OCR.
+In mainland China, append ``--use-mirror`` to ``install.sh`` and run
+``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``. Prebuilt
+images are available on `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__.
+Both ART configs use CPU OCR; see :doc:`video_models` for full shared setup notes.
 
-Run It
-------
+.. tab-set::
 
-Open ``examples/diffusion/config/sd3_art_ocr.yaml`` or
-``examples/diffusion/config/wan22_ti2v_5b_art_video_ocr.yaml`` and set
-``actor.model.model_path``, ``env.train.dataset.path``, and
-``env.eval.dataset.path`` to your model and data directories.
-Set GPU placement with ``cluster.component_placement``.
+   .. tab-item:: SD3.5 Medium (Image OCR)
 
-Launch the chosen config from the repository root:
+      **1. Install**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash examples/diffusion/run_diffusion.sh sd3_art_ocr
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
 
-   bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_art_video_ocr
+      **2. Download**
+
+      Accept the SD3.5 Medium access terms on Hugging Face first, then download the checkpoint and OCR prompts:
+
+      .. code-block:: bash
+
+         hf download stabilityai/stable-diffusion-3.5-medium --local-dir ./stable-diffusion-3.5-medium
+         mkdir -p ./ocr_data
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/train.txt -o ./ocr_data/train.txt
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/test.txt -o ./ocr_data/test.txt
+
+      **3. Launch**
+
+      Set ``actor.model.model_path``, ``env.train.dataset.path``, and ``env.eval.dataset.path`` in ``examples/diffusion/config/sd3_art_ocr.yaml`` (adjust GPU placement with ``cluster.component_placement``), then launch:
+
+      .. code-block:: bash
+
+         bash examples/diffusion/run_diffusion.sh sd3_art_ocr
+
+   .. tab-item:: Wan2.2 TI2V 5B (Video OCR)
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model diffusion && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --local-dir ./Wan2.2-TI2V-5B-Diffusers
+         mkdir -p ./ocr_data
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/train.txt -o ./ocr_data/train.txt
+         curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/test.txt -o ./ocr_data/test.txt
+
+      **3. Launch**
+
+      Set ``actor.model.model_path``, ``env.train.dataset.path``, and ``env.eval.dataset.path`` in ``examples/diffusion/config/wan22_ti2v_5b_art_video_ocr.yaml`` (adjust GPU placement with ``cluster.component_placement``), then launch:
+
+      .. code-block:: bash
+
+         bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_art_video_ocr
 
 Logs go under ``logs/<timestamp>-<config>/``. Training reports image OCR scores
-as ``env/avg`` and video OCR scores as ``env/video_ocr``.
+as ``env/avg`` and video OCR scores as ``env/video_ocr``. For scalar definitions,
+see :doc:`Training Metrics </rst_source/reference/metrics>`.
 
 Configure ART Updates
 ~~~~~~~~~~~~~~~~~~~~~
@@ -215,32 +255,34 @@ the first 29 rounds of each run.
 To reproduce the experiments, set the model and data paths in the chosen
 config and apply these shared settings:
 
-.. code-block:: yaml
+.. dropdown:: Advanced configuration (optional)
 
-   cluster:
-     component_placement:
-       actor,env,rollout: "0-3"
-   algorithm:
-     group_size: 8
-   actor:
-     seed: 42
-     model:
-       wan22_ti2v_5b:
-         max_generation_batch_size: 2
-         compile_transformer_forward: True
-         offload_auxiliary_modules: True
-   env:
-     train:
-       total_num_envs: 96
-       seed: 42
-       reward:
-         use_gpu: False
-     eval:
-       seed: 42
-       reward:
-         use_gpu: False
-   runner:
-     val_check_interval: -1
+   .. code-block:: yaml
+
+      cluster:
+        component_placement:
+          actor,env,rollout: "0-3"
+      algorithm:
+        group_size: 8
+      actor:
+        seed: 42
+        model:
+          wan22_ti2v_5b:
+            max_generation_batch_size: 2
+            compile_transformer_forward: True
+            offload_auxiliary_modules: True
+      env:
+        train:
+          total_num_envs: 96
+          seed: 42
+          reward:
+            use_gpu: False
+        eval:
+          seed: 42
+          reward:
+            use_gpu: False
+      runner:
+        val_check_interval: -1
 
 The batch and step settings for each configuration are below. Both NFT
 configurations use ``algorithm.nft_tau=[1.0,0.01,0,70]``.

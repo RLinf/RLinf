@@ -1,5 +1,5 @@
-Channel API
-===========
+Channel Interface
+=================
 
 Use these interfaces to create queues and customize their enqueue and consumer
 routing behavior. Start with :doc:`../../concepts/channel` for the execution

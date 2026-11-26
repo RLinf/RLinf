@@ -11,10 +11,11 @@ REPO_PATH=$(dirname $(dirname "$CONFIG_PATH"))
 MEGATRON_PATH=/opt/Megatron-LM
 export PYTHONPATH=${REPO_PATH}:${MEGATRON_PATH}:$PYTHONPATH
 
-if [ -z "$1" ]; then
+if [ -z "$1" ] || [[ "$1" == *=* ]] || [[ "$1" == +* ]] || [[ "$1" == ~* ]] || [[ "$1" == -* ]]; then
     CONFIG_NAME="qwen2.5-vl-3b-grpo-fsdp"
 else
     CONFIG_NAME=$1
+    shift
 fi
 
-python ${REPO_PATH}/examples/reasoning/main_grpo.py --config-path ${CONFIG_PATH}/config/vqa/  --config-name $CONFIG_NAME
+python "${REPO_PATH}/examples/reasoning/main_grpo.py" --config-path "${CONFIG_PATH}/config/vqa/" --config-name "$CONFIG_NAME" "$@"

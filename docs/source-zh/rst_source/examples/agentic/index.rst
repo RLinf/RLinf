@@ -1,107 +1,128 @@
-智能体场景
-========================================
+Agent 与 LLM
+============
 
-RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的支持使RLinf天然支持智能体工作流的构建，以及智能体的训练。以下示例包含数学推理强化学习与智能体 AI 工作流，例如智能体工作流构建、在线强化学习训练、环境接入，以及 **以推理为中心的智能体强化学习** 等场景。
+基于 RLinf 的分布式 worker 运行时、Megatron / FSDP 训练后端与 SGLang / vLLM 推理引擎，覆盖 **推理训练**\ （文本与多模态）、**Agent 训练**\ （多轮工具调用、多 Agent 与在线代码补全）以及 **图像与视频生成**。
 
-.. raw:: html
+运行推理或 Agent 示例前，先按 :doc:`安装 <../../start/installation>` 执行 ``bash requirements/install.sh agentic``；图像与视频生成示例使用 ``bash requirements/install.sh embodied --model diffusion``。
 
-   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="wideseek_r1/index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/scaling.png"
-            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="wideseek_r1/index.html" style="text-decoration: underline; color: blue;">
-          <b>WideSeek-R1</b>
-         </a><br>
-         通过多智能体强化学习探索用于广泛信息检索的宽度扩展方法
-       </p>
-     </div>
+按方向选择
+----------
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="agentlightning_calc_x.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/agentlightning_calcx.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="agentlightning_calc_x.html" style="text-decoration: underline; color: blue;">
-          <b>AgentLightning Calc-X</b>
-         </a><br>
-         基于 Agent Lightning 编排智能体强化学习，RLinf 作为分布式训练后端
-       </p>
-     </div>
+.. list-table::
+   :header-rows: 1
+   :widths: 20 26 22 32
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="coding_online_rl.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/coding_online_rl_offline_numbers.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="coding_online_rl.html" style="text-decoration: underline; color: blue;">
-          <b>代码补全在线强化学习开源版</b>
-         </a><br>
-         基于RLinf+continue实现端到端在线强化学习，模型效果提升52%
-       </p>
-     </div>
+   * - 方向
+     - 模型与后端
+     - 算法 / 模式
+     - 包含示例
+   * - :doc:`推理训练 <math_reasoning/index>`
+     - Moonlight-16B、Qwen2.5、Qwen3-VL（Megatron / FSDP + SGLang / vLLM）
+     - GRPO、PPO（文本与视觉推理）
+     - :doc:`Moonlight-16B <math_reasoning/moonlight>`、:doc:`Qwen2.5 GRPO <math_reasoning/reasoning>`、:doc:`Qwen2.5 PPO <math_reasoning/reasoning_ppo>`、:doc:`Qwen3-VL Geo3K <qwen3_vl_geo3k>`
+   * - :doc:`Agent 训练 <agents/index>`
+     - Agent Lightning、GLM-4.7-Flash、Qwen2.5、Qwen3-4B
+     - 多轮工具调用、MARL、在线 RL
+     - :doc:`AgentLightning <agentlightning_calc_x>`、:doc:`Coding Online RL <coding_online_rl>`、:doc:`rStar2 <rstar2>`、:doc:`Search-R1 <searchr1/index>`、:doc:`WideSeek-R1 <wideseek_r1/index>`
+   * - :doc:`图像与视频生成 <../video_models>`
+     - SD3.5 Medium、Wan2.2 TI2V 5B（Diffusers）
+     - DiffusionART、Diffusion-NFT、ReFL
+     - :doc:`DiffusionART <../diffusion_art>`、:doc:`Diffusion-NFT <../diffusion_nft>`、:doc:`ReFL <../embodied/refl>`
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="searchr1/index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="searchr1/index.html" style="text-decoration: underline; color: blue;">
-          <b>Search-R1强化学习</b>
-         </a><br>
-         训练LLM调用搜索工具回答问题，RLinf加速训练过程55%
-       </p>
-     </div>
+推理训练
+--------
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="rstar2.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rstar2-RLinf-7b.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="rstar2.html" style="text-decoration: underline; color: blue;">
-          <b>rStar2-agent强化学习</b>
-         </a><br>
-         通过强化学习让模型学会使用Python工具进行自主推理和反思,以极低计算成本达到数学推理领域的顶尖水平
-       </p>
-     </div>
+.. grid:: 1 2 2 4
+   :gutter: 3
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/waiting_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <b>[适配中]SWE-agent</b><br>
-         部署、推理、训练一体，高灵活性、高性能
-       </p>
-     </div>
+   .. grid-item-card:: Moonlight-16B（MoE GRPO）
+      :link: math_reasoning/moonlight
+      :link-type: doc
 
-    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-      <a href="math_reasoning/index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/math_numbers_small.jpg"
-           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-       <a href="math_reasoning/index.html" style="text-decoration: underline; color: blue;">
-         <b>数学推理</b>
-        </a><br>
-        使用 GRPO 与 PPO 训练 Qwen2.5 与 Moonlight-16B 的数学推理能力
-      </p>
-    </div>
+      通过 Megatron-Bridge 训练 DeepSeek-V3 MLA + MoE 架构模型。
 
-    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-      <a href="qwen3_vl_geo3k.html" style="display: block;"><img src="https://github.com/RLinf/misc/raw/main/pic/geo_problem.png"
-           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-       <a href="qwen3_vl_geo3k.html" style="text-decoration: underline; color: blue;">
-         <b>使用 GRPO 训练 Qwen3-VL 视觉语言推理</b>
-        </a><br>
-        基于 GRPO 的视觉语言模型强化学习训练，用于几何问题求解（Geo3K）
-      </p>
-    </div>
+   .. grid-item-card:: Qwen2.5 数学推理（GRPO）
+      :link: math_reasoning/reasoning
+      :link-type: doc
 
-   </div>
+      在 AReaL-boba 上用 GRPO 训练 DeepSeek-R1-Distill-Qwen（1.5B / 7B），覆盖 AIME24、AIME25 与 GPQA-diamond。
 
-.. toctree::
-   :hidden:
-   :maxdepth: 2
+   .. grid-item-card:: Qwen2.5 数学推理（PPO）
+      :link: math_reasoning/reasoning_ppo
+      :link-type: doc
 
-   WideSeek-R1 <wideseek_r1/index>
-   AgentLightning <agentlightning_calc_x>
-   Coding Online RL <coding_online_rl>
-   Search-R1 <searchr1/index>
-   rStar2 <rstar2>
-   数学推理 <math_reasoning/index>
-   Qwen3 VL GRPO <qwen3_vl_geo3k>
+      基于 Qwen2.5-1.5B 的 PPO 数学推理训练，同时更新 actor 与 critic。
+
+   .. grid-item-card:: Qwen3-VL 视觉推理（Geo3K）
+      :link: qwen3_vl_geo3k
+      :link-type: doc
+
+      基于 FSDP 与 SGLang 的视觉语言模型 GRPO 训练，面向 Geo3K 几何推理任务。
+
+Agent 训练
+----------
+
+.. grid:: 1 2 3 3
+   :gutter: 3
+
+   .. grid-item-card:: AgentLightning
+      :link: agentlightning_calc_x
+      :link-type: doc
+
+      使用 Agent Lightning 编排 Agent 工作流，并将分布式 RL 训练交给 RLinf 后端（Calc-X 示例）。
+
+   .. grid-item-card:: Coding Online RL
+      :link: coding_online_rl
+      :link-type: doc
+
+      结合 RLinf 与 Continue IDE 插件的端到端代码补全在线强化学习流程。
+
+   .. grid-item-card:: rStar2
+      :link: rstar2
+      :link-type: doc
+
+      结合本地 Python 代码执行服务，训练模型完成多轮数学推理与自我反思。
+
+   .. grid-item-card:: Search-R1
+      :link: searchr1/index
+      :link-type: doc
+
+      基于 Qwen2.5-3B 与 GLM-4.7-Flash 的多轮搜索调用 RL（支持同步与异步训练），配套 FAISS 或 Qdrant 本地检索服务。
+
+   .. grid-item-card:: WideSeek-R1
+      :link: wideseek_r1/index
+      :link-type: doc
+
+      面向广泛信息检索的主从多 Agent 强化学习，4B 模型在 WideSearch 上达到 40.0% item F1。
+
+如需接入自己的 Agent（白盒或 OpenAI API 黑盒接入），见 :doc:`新增 Agent </rst_source/extending/agents/index>`。
+
+图像与视频生成
+--------------
+
+.. grid:: 1 2 2 4
+   :gutter: 3
+
+   .. grid-item-card:: 图像与视频生成总览
+      :link: ../video_models
+      :link-type: doc
+
+      SD3.5 Medium 与 Wan2.2 TI2V 5B 的公共扩散环境安装、OCR 提示数据集与权重下载。
+
+   .. grid-item-card:: DiffusionART
+      :link: ../diffusion_art
+      :link-type: doc
+
+      在 prompt 组内构造共享奖励引导，面向 SD3.5 Medium 图像 OCR 与 Wan2.2 视频 OCR 训练。
+
+   .. grid-item-card:: Diffusion-NFT
+      :link: ../diffusion_nft
+      :link-type: doc
+
+      使用正负速度候选与 OCR Reward 微调 SD3.5 Medium 和 Wan2.2。
+
+   .. grid-item-card:: ReFL
+      :link: ../embodied/refl
+      :link-type: doc
+
+      使用可微 ImageReward 反馈与可选监督图文更新微调 SD3.5 Medium。

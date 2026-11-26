@@ -1,5 +1,5 @@
-RL with GenieSim Benchmark
-==========================
+GenieSim RL
+===========
 
 .. |pi| replace:: π₀.₅
 
@@ -109,259 +109,164 @@ and output space. Additional simulator state channels are masked, and model
 outputs are reduced to the 16 robot-control dimensions. State and action
 normalization uses the checkpoint's ``assets/norm_stats.json``.
 
-Installation
-------------
-
-On the training node, outside any container, run the repository setup commands.
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
-   :end-before: Then set up the dependencies
 
-Choose one of the following installation methods. Both install
-``rlinf-geniesim-client`` from GenieSim ``v3.5.0``, which ``install.sh``
-clones automatically. To install from an existing GenieSim checkout instead,
-set ``GENIESIM_PATH`` to it. See
-:doc:`Installation </rst_source/start/installation>` for prerequisites and
-GPU driver setup.
+GenieSim training runs across two nodes: install RLinf and launch training on the **RLinf Client** (training node), and start the simulator servers on the **GenieSim Server** (simulation node, RTX-series GPU).
 
-**Custom environment**
+.. tab-set::
 
-On the training node, from the RLinf repository root, install OpenPI and the
-GenieSim client, then activate the environment:
+   .. tab-item:: RLinf Client (Training Node)
+      :sync: geniesim-client
 
-.. code:: bash
+      **1. Install**
 
-   # Mainland China users can add --use-mirror.
-   bash requirements/install.sh embodied --model openpi --env geniesim
-   source .venv/bin/activate
+      On the training node, clone RLinf and install OpenPI with ``rlinf-geniesim-client`` from GenieSim ``v3.5.0`` (``install.sh`` clones GenieSim automatically; set ``GENIESIM_PATH`` to use an existing checkout). You can also build the ``embodied-geniesim`` target from ``docker/Dockerfile``.
 
-**Docker image**
+      .. code-block:: bash
 
-On the training node, run this build from the RLinf repository root:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env geniesim && source .venv/bin/activate
 
-.. code:: bash
+      **2. Download**
 
-   docker build -f docker/Dockerfile \
-     --build-arg BUILD_TARGET=embodied-geniesim \
-     --build-arg NO_MIRROR=1 \
-     -t rlinf:embodied-geniesim .
+      Download the OpenPI |pi| SFT checkpoint for GenieSim, `RLinf-Pi05-GenieSim-G2-Instruction-SFT <https://huggingface.co/RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT>`__ (trained for 45,000 steps with action chunk length 10 on 5,000 trajectories from the `instruction_and_robust suite of GenieSim3.0-Dataset <https://huggingface.co/datasets/agibot-world/GenieSim3.0-Dataset/tree/main/task_suite/instruction_and_robust>`__). Run this in the activated OpenPI environment from the RLinf repository root (``/workspace/RLinf`` in Docker). If you already have the checkpoint, export ``GENIESIM_CHECKPOINT_PATH`` to its directory and skip to step 3.
 
-The image provides an NVIDIA CUDA 12.8 training environment with OpenPI and
-the GenieSim client. Connect it to your GenieSim service to run training.
+      .. code-block:: bash
 
-Still on the training node, in the RLinf repository root, start the container
-with the repository mounted:
+         export GENIESIM_CHECKPOINT_PATH="$PWD/checkpoints/geniesim_sft"
+         hf download RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT \
+            --local-dir "$GENIESIM_CHECKPOINT_PATH"
 
-.. code:: bash
+      Training and evaluation read ``GENIESIM_CHECKPOINT_PATH`` for the model path, or you can set it directly in YAML:
 
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v "$(pwd):/workspace/RLinf" \
-      --workdir /workspace/RLinf \
-      rlinf:embodied-geniesim
+      .. include:: _model_path.rst
 
-The container opens in ``/workspace/RLinf``. Inside the RLinf container,
-activate OpenPI:
+      **3. Launch**
 
-.. code:: bash
+      Reference training configs under ``examples/embodiment/config/``:
 
-   source switch_env openpi
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 48 30
 
-Download the Model
-------------------
+         * - Recipe
+           - Config
+           - Notes
+         * - Single-task PPO
+           - ``geniesim_pick_block_color_ppo_openpi_pi05.yaml``
+           - Change task selection for other tasks.
+         * - Single-task GRPO
+           - ``geniesim_pick_block_color_grpo_openpi_pi05.yaml``
+           - Change task selection for other tasks.
+         * - 4-task PPO
+           - ``geniesim_multitask4_ppo_openpi_pi05.yaml``
+           - 4-task mix.
+         * - 6-task PPO
+           - ``geniesim_multitask6_ppo_openpi_pi05.yaml``
+           - 6-task mix.
+         * - 10-task PPO
+           - ``geniesim_multitask10_ppo_openpi_pi05.yaml``
+           - 10-task mix.
 
-Download the OpenPI |pi| SFT checkpoint for GenieSim,
-`RLinf-Pi05-GenieSim-G2-Instruction-SFT <https://huggingface.co/RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT>`__, as the starting point for
-PPO or GRPO training.
+      With the simulation servers running (see the **GenieSim Server** tab) and ``GENIESIM_CHECKPOINT_PATH`` exported, replace ``sim-host`` with the simulation node IP and launch single-task PPO:
 
-The checkpoint was trained with 5,000 trajectories from the
-`instruction_and_robust suite of GenieSim3.0-Dataset <https://huggingface.co/datasets/agibot-world/GenieSim3.0-Dataset/tree/main/task_suite/instruction_and_robust>`__.
-SFT ran for 45,000 steps with an action chunk length of 10.
+      .. code-block:: bash
 
-Run the download in the activated OpenPI environment. With Docker, run it on
-the training node inside the RLinf container at ``/workspace/RLinf``. With a
-custom installation, run it on the training node in the RLinf repository
-root. If you already have the checkpoint, set ``GENIESIM_CHECKPOINT_PATH`` to
-a directory that environment can read, then continue to ``Run It``.
+         export GENIESIM_HOST_0=sim-host
+         bash examples/embodiment/run_embodiment.sh geniesim_pick_block_color_ppo_openpi_pi05
 
-.. code:: bash
+      Each recipe's ``env.train.override_cfg.addresses`` lists the required server endpoints; edit this list to change the address or port. Training-time validation is disabled by default; if you enable it with a positive ``runner.val_check_interval``, set ``GENIESIM_EVAL_HOST`` to the validation simulation node and start one server per port in ``env.eval.override_cfg.addresses``.
 
-   pip install huggingface-hub
+      For standalone evaluation, export the simulation server IP and port and run ``evaluations/run_eval.sh`` (``GENIESIM_EVAL_SERVER_ADDR`` sets ``env.eval.override_cfg.address`` in ``evaluations/geniesim/geniesim_pick_block_color_eval.yaml``; see the :doc:`Evaluation CLI <../../evaluations/reference/cli>`):
 
-   # For mainland China users:
-   # export HF_ENDPOINT=https://hf-mirror.com
+      .. code-block:: bash
 
-   export GENIESIM_CHECKPOINT_PATH="$PWD/checkpoints/geniesim_sft"
-   hf download RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT \
-      --local-dir "$GENIESIM_CHECKPOINT_PATH"
+         export GENIESIM_EVAL_SERVER_ADDR=tcp://sim-host:5601
+         bash evaluations/run_eval.sh geniesim geniesim_pick_block_color_eval
 
-The example saves the checkpoint under the RLinf repository. Choose another
-directory by changing ``GENIESIM_CHECKPOINT_PATH`` before downloading.
-Training and evaluation read ``GENIESIM_CHECKPOINT_PATH`` for the model path.
-You can also set the paths directly in YAML, using paths visible to the
-RLinf process:
+   .. tab-item:: GenieSim Server (Simulation Node)
+      :sync: geniesim-server
 
-.. include:: _model_path.rst
+      **1. Prepare and Enter Container**
 
-Run It
-------
+      On the simulation node, follow the `GenieSim post-training server guide <https://github.com/AgibotTech/genie_sim#39-post-training-server>`__ to prepare ``geniesim_assets`` and build the Isaac Sim 6.0.1-based image using GenieSim ``v3.5.0`` (the same revision as the installed client). From the GenieSim repository root outside containers, start and enter the server container:
 
-On the simulation node, follow the `GenieSim post-training server guide <https://github.com/AgibotTech/genie_sim#39-post-training-server>`__
-to prepare ``geniesim_assets`` and build the Isaac Sim 6.0.1-based image.
-Use GenieSim ``v3.5.0``, the same revision as the installed client.
+      .. code-block:: bash
 
-**Start the Simulation Server**
+         geniesim docker --profile post-train up --headless
+         geniesim docker --profile post-train into
 
-On the simulation node, outside containers and from the GenieSim repository
-root, start and enter the server container:
+      **2. Start Simulation Servers**
 
-.. code:: bash
+      Inside the ``post_train_server`` container at ``/workspace``, start the servers and check their status (adjust ``--count``, ``--base-port``, and ``--devices`` from the table below):
 
-   geniesim docker --profile post-train up --headless
-   geniesim docker --profile post-train into
+      .. code-block:: bash
 
-Inside the ``post_train_server`` container, from ``/workspace``, start the
-servers and check their status. The count, starting port, and GPU below are
-example values; adjust them to match your RLinf configuration:
+         geniesim post-train server start --count 2 --base-port 5601 --devices 0
+         geniesim post-train server status --count 2 --base-port 5601
 
-.. code:: bash
+      Each recipe needs the following servers and GPUs (simulation GPUs are RTX 4090s; ``--devices`` places consecutive ports on the same GPU to match how each recipe groups endpoints by env process):
 
-   geniesim post-train server start --count 2 --base-port 5601 --devices 0
-   geniesim post-train server status --count 2 --base-port 5601
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 10 16 12 12 12 16
 
-The example starts the two servers of the single-task recipes on GPU 0.
-Each recipe needs the following servers and GPUs; the simulation GPUs are
-RTX 4090s. ``--devices`` places consecutive ports on the same GPU, which
-matches how each recipe groups its endpoints by env process:
+         * - Recipe
+           - Servers
+           - Ports
+           - Envs per server
+           - Simulation GPUs
+           - Training GPUs
+           - ``--devices``
+         * - Single-task PPO / GRPO
+           - 2
+           - 5601–5602
+           - 16
+           - 1
+           - 1
+           - ``0``
+         * - 4-task PPO
+           - 4
+           - 5601–5604
+           - 16
+           - 2
+           - 2
+           - ``0,1``
+         * - 6-task PPO
+           - 6
+           - 5601–5606
+           - 12
+           - 2
+           - 2
+           - ``0,1``
+         * - 10-task PPO
+           - 12
+           - 5601–5612
+           - 14
+           - 4
+           - 4
+           - ``0,1,2,3``
 
-.. list-table::
-   :header-rows: 1
-   :widths: 22 10 16 12 12 12 16
+      **3. Verify IP and Ports**
 
-   * - Recipe
-     - Servers
-     - Ports
-     - Envs per server
-     - Simulation GPUs
-     - Training GPUs
-     - ``--devices``
-   * - Single-task PPO / GRPO
-     - 2
-     - 5601–5602
-     - 16
-     - 1
-     - 1
-     - ``0``
-   * - 4-task PPO
-     - 4
-     - 5601–5604
-     - 16
-     - 2
-     - 2
-     - ``0,1``
-   * - 6-task PPO
-     - 6
-     - 5601–5606
-     - 12
-     - 2
-     - 2
-     - ``0,1``
-   * - 10-task PPO
-     - 12
-     - 5601–5612
-     - 14
-     - 4
-     - 4
-     - ``0,1,2,3``
+      In another terminal on the simulation node (outside containers), check the reachable IP address and listening TCP ports (for detailed options, see the `GenieSim server guide <https://github.com/AgibotTech/genie_sim/blob/HEAD/source/rlinf_geniesim/README.md>`__):
 
-Start each recipe's training servers with ``--count`` set to its server
-count, ``--base-port 5601``, and the ``--devices`` value from the table.
+      .. code-block:: bash
 
-In another terminal on the simulation node, outside containers and from any
-directory, list this machine's IP addresses and listening TCP ports:
-
-.. code:: bash
-
-   hostname -I
-   ss -ltn
-
-Replace ``sim-host`` below with an IP of the simulation node that the training
-node can reach, and use the port the server is listening on. For detailed
-options, see the
-`GenieSim server guide <https://github.com/AgibotTech/genie_sim/blob/HEAD/source/rlinf_geniesim/README.md>`__.
-
-Run the RLinf commands on the training node, in the activated OpenPI
-environment, from the RLinf repository root. With Docker, that is
-``/workspace/RLinf`` inside the container. With a custom installation, use
-the repository directory on the training node. Keep the
-``GENIESIM_CHECKPOINT_PATH`` set above.
+         hostname -I
+         ss -ltn
 
 .. note::
 
-   On an RTX 4090, we recommend at most 42 parallel environments per GPU at
-   the default render width of 640, or 64 with
-   ``env.train.override_cfg.render_width`` set to 360. Servers on the same GPU
-   share this budget.
-
-   ``env.train.override_cfg.images_at_chunk_end_only`` is enabled by default.
-   With this option, RLinf and the simulator exchange complete action chunks,
-   rendering only the final frame of each chunk.
-
-**Train**
-
-Launch single-task PPO:
-
-.. code:: bash
-
-   export GENIESIM_HOST_0=sim-host
-   bash examples/embodiment/run_embodiment.sh geniesim_pick_block_color_ppo_openpi_pi05
-
-GRPO and multi-task recipes are listed in `Visualization and Results`_.
-Each recipe's ``env.train.override_cfg.addresses`` lists the required server
-endpoints; edit this list to change the address or port.
-
-Training-time validation is disabled by default. If you enable it with a
-positive ``runner.val_check_interval``, set ``GENIESIM_EVAL_HOST`` to the
-simulation node used for validation and start one more server for each port listed in
-``env.eval.override_cfg.addresses``, as many as the training servers.
-
-**Evaluate**
-
-Set the simulation server's address and launch standalone evaluation.
-The address below is an example; replace it with the server's IP and port:
-
-.. code:: bash
-
-   export GENIESIM_EVAL_SERVER_ADDR=tcp://sim-host:5601
-   bash evaluations/run_eval.sh geniesim_pick_block_color_eval
-
-``GENIESIM_EVAL_SERVER_ADDR`` sets ``env.eval.override_cfg.address`` in
-``evaluations/geniesim/geniesim_pick_block_color_eval.yaml``; include the
-chosen port in this variable. See the :doc:`Evaluation CLI <../../evaluations/reference/cli>`
-for more options.
+   On an RTX 4090, we recommend at most 42 parallel environments per GPU at the default render width of 640, or 64 with ``env.train.override_cfg.render_width`` set to 360 (servers on the same GPU share this budget). ``env.train.override_cfg.images_at_chunk_end_only`` is enabled by default so RLinf and the simulator exchange complete action chunks and render only the final frame of each chunk.
 
 Visualization and Results
 -------------------------
 
-Launch TensorBoard from the RLinf repo root:
-
-.. code:: bash
-
-   tensorboard --logdir ../results --port 6006
-
-The key signal is ``env/success_once``. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-Enable video in the env config when you want rollout videos:
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
+Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 The following results use the Agibot G2 dual-arm wheeled robot, with GenieSim
 running on an RTX 4090.
@@ -463,205 +368,190 @@ twice; the repeats were removed before computing the rates. The success rate
 logged during the run includes the repeats and can differ slightly from the
 table.
 
-The training reference configs are in ``examples/embodiment/config/``:
-
-- Single-task PPO: ``geniesim_pick_block_color_ppo_openpi_pi05.yaml``; change
-  the task selection to train another task.
-- Single-task GRPO: ``geniesim_pick_block_color_grpo_openpi_pi05.yaml``; change
-  the task selection to train another task.
-- 4-task PPO: ``geniesim_multitask4_ppo_openpi_pi05.yaml``.
-- 6-task PPO: ``geniesim_multitask6_ppo_openpi_pi05.yaml``.
-- 10-task PPO: ``geniesim_multitask10_ppo_openpi_pi05.yaml``.
-
-Appendix
---------
-
 .. _geniesim-parameters:
 
-Generalization Parameters
-~~~~~~~~~~~~~~~~~~~~~~~~~
+.. dropdown:: Appendix: Generalization parameters
 
-.. list-table::
-   :header-rows: 1
-   :widths: 35 18 47
+   .. list-table::
+      :header-rows: 1
+      :widths: 35 18 47
 
-   * - Field
-     - Default
-     - Description
-   * - ``env.train.seed``
-     - ``0``
-     - Training seed; nonnegative values enable reset randomization.
-   * - ``env.eval.seed``
-     - ``-1``
-     - Disable reset randomization during evaluation.
-   * - ``override_cfg.randomization``
-     - ``null``
-     - Set under env.train or env.eval; null keeps simulator defaults. All generalization fields below belong in this mapping.
-   * - ``use_task_generalization``
-     - ``true``
-     - Inherit task defaults; false skips this source. Explicit values take precedence.
-   * - ``use_benchmark_generalization``
-     - ``true``
-     - Inherit benchmark settings; false skips this source. Explicit values take precedence.
-   * - ``object_xy_radius``
-     - ``0.03``
-     - Object XY position perturbation in meters; set to 0 to disable.
-   * - ``init_joint_thresh``
-     - ``0.05``
-     - Initial joint-position offsets within ±0.05 rad; set to 0 to disable.
-   * - ``init_base_xy_thresh``
-     - ``[0.05, 0.05]``
-     - Base X/Y offsets within ±0.05 m; null disables them. Per-instance base poses skip the default perturbation.
-   * - ``render.lights.enable``
-     - ``false``
-     - Lighting perturbation; true enables it.
-   * - ``render.material.enable``
-     - ``false``
-     - Material perturbation; true enables it.
-   * - ``render.background.enable``
-     - ``false``
-     - Background variation; true enables it.
-   * - ``render.camera_pose.enable``
-     - ``false``
-     - Camera-pose perturbation; enable with true and set nonzero thresholds in render.camera_pose.threshold.
-   * - ``joint_pd.enable``
-     - ``false``
-     - Joint PD-gain perturbation; enable with true and set scale ranges in joint_pd.kp_scale and joint_pd.kd_scale.
+      * - Field
+        - Default
+        - Description
+      * - ``env.train.seed``
+        - ``0``
+        - Training seed; nonnegative values enable reset randomization.
+      * - ``env.eval.seed``
+        - ``-1``
+        - Disable reset randomization during evaluation.
+      * - ``override_cfg.randomization``
+        - ``null``
+        - Set under env.train or env.eval; null keeps simulator defaults. All generalization fields below belong in this mapping.
+      * - ``use_task_generalization``
+        - ``true``
+        - Inherit task defaults; false skips this source. Explicit values take precedence.
+      * - ``use_benchmark_generalization``
+        - ``true``
+        - Inherit benchmark settings; false skips this source. Explicit values take precedence.
+      * - ``object_xy_radius``
+        - ``0.03``
+        - Object XY position perturbation in meters; set to 0 to disable.
+      * - ``init_joint_thresh``
+        - ``0.05``
+        - Initial joint-position offsets within ±0.05 rad; set to 0 to disable.
+      * - ``init_base_xy_thresh``
+        - ``[0.05, 0.05]``
+        - Base X/Y offsets within ±0.05 m; null disables them. Per-instance base poses skip the default perturbation.
+      * - ``render.lights.enable``
+        - ``false``
+        - Lighting perturbation; true enables it.
+      * - ``render.material.enable``
+        - ``false``
+        - Material perturbation; true enables it.
+      * - ``render.background.enable``
+        - ``false``
+        - Background variation; true enables it.
+      * - ``render.camera_pose.enable``
+        - ``false``
+        - Camera-pose perturbation; enable with true and set nonzero thresholds in render.camera_pose.threshold.
+      * - ``joint_pd.enable``
+        - ``false``
+        - Joint PD-gain perturbation; enable with true and set scale ranges in joint_pd.kp_scale and joint_pd.kd_scale.
 
 .. _geniesim-training-tasks:
 
-Training Tasks
-~~~~~~~~~~~~~~
+.. dropdown:: Appendix: Training tasks (25 tasks)
 
-.. rubric:: Instruction Following
+   **Instruction Following**
 
-.. list-table::
-   :header-rows: 1
-   :widths: 5 35 28 32
+   .. list-table::
+      :header-rows: 1
+      :widths: 5 35 28 32
 
-   * - No.
-     - subtask name
-     - task name
-     - Description
-   * - 1
-     - ``pick_block_color``
-     - ``table_task_1_g2_op``
-     - Pick a block of the specified color.
-   * - 2
-     - ``pick_billiards_color``
-     - ``table_task_1_g2_op``
-     - Pick a billiard ball of the specified color.
-   * - 3
-     - ``pick_specific_object``
-     - ``table_task_0_g2_op``
-     - Pick the specific object named in the instruction.
-   * - 4
-     - ``pick_block_size``
-     - ``table_task_1_g2_op``
-     - Pick a block of the specified size.
-   * - 5
-     - ``pick_object_type``
-     - ``table_task_0_g2_op``
-     - Pick an object of the specified category.
-   * - 6
-     - ``pick_follow_logic_or``
-     - ``table_task_0_g2_op``
-     - Pick an object satisfying either condition in the instruction.
-   * - 7
-     - ``pick_block_number``
-     - ``table_task_0_g2_op``
-     - Pick a block bearing the specified number.
-   * - 8
-     - ``pick_common_sense``
-     - ``table_task_0_g2_op``
-     - Pick an object based on a common-sense description.
-   * - 9
-     - ``pick_block_shape``
-     - ``table_task_0_g2_op``
-     - Pick a block of the specified shape.
-   * - 10
-     - ``straighten_object``
-     - ``table_task_0_g2_op``
-     - Straighten an object on the table.
+      * - No.
+        - subtask name
+        - task name
+        - Description
+      * - 1
+        - ``pick_block_color``
+        - ``table_task_1_g2_op``
+        - Pick a block of the specified color.
+      * - 2
+        - ``pick_billiards_color``
+        - ``table_task_1_g2_op``
+        - Pick a billiard ball of the specified color.
+      * - 3
+        - ``pick_specific_object``
+        - ``table_task_0_g2_op``
+        - Pick the specific object named in the instruction.
+      * - 4
+        - ``pick_block_size``
+        - ``table_task_1_g2_op``
+        - Pick a block of the specified size.
+      * - 5
+        - ``pick_object_type``
+        - ``table_task_0_g2_op``
+        - Pick an object of the specified category.
+      * - 6
+        - ``pick_follow_logic_or``
+        - ``table_task_0_g2_op``
+        - Pick an object satisfying either condition in the instruction.
+      * - 7
+        - ``pick_block_number``
+        - ``table_task_0_g2_op``
+        - Pick a block bearing the specified number.
+      * - 8
+        - ``pick_common_sense``
+        - ``table_task_0_g2_op``
+        - Pick an object based on a common-sense description.
+      * - 9
+        - ``pick_block_shape``
+        - ``table_task_0_g2_op``
+        - Pick a block of the specified shape.
+      * - 10
+        - ``straighten_object``
+        - ``table_task_0_g2_op``
+        - Straighten an object on the table.
 
-.. rubric:: Spatial Understanding
+   **Spatial Understanding**
 
-.. list-table::
-   :header-rows: 1
-   :widths: 5 35 28 32
+   .. list-table::
+      :header-rows: 1
+      :widths: 5 35 28 32
 
-   * - No.
-     - subtask name
-     - task name
-     - Description
-   * - 11
-     - ``pick_object_absolute_position``
-     - ``table_task_2_g2_op``
-     - Pick an object at the specified absolute position.
-   * - 12
-     - ``pick_object_relative_position``
-     - ``table_task_2_g2_op``
-     - Pick an object based on its position relative to another object.
-   * - 13
-     - ``place_object_relative_position``
-     - ``table_task_2_g2_op``
-     - Place an object at the specified position relative to another object.
-   * - 14
-     - ``place_beverage_to_anothers_position``
-     - ``table_task_2_g2_op``
-     - Place a beverage at another object's position.
-   * - 15
-     - ``sort_cubes_by_size``
-     - ``table_task_2_g2_op``
-     - Arrange cubes by size.
-   * - 16
-     - ``sort_number``
-     - ``table_task_2_g2_op``
-     - Arrange numbered objects in numerical order.
-   * - 17
-     - ``stack_bowls``
-     - ``table_task_2_g2_op``
-     - Stack bowls.
-   * - 18
-     - ``stack_three_building_blocks``
-     - ``table_task_2_g2_op``
-     - Stack three building blocks.
+      * - No.
+        - subtask name
+        - task name
+        - Description
+      * - 11
+        - ``pick_object_absolute_position``
+        - ``table_task_2_g2_op``
+        - Pick an object at the specified absolute position.
+      * - 12
+        - ``pick_object_relative_position``
+        - ``table_task_2_g2_op``
+        - Pick an object based on its position relative to another object.
+      * - 13
+        - ``place_object_relative_position``
+        - ``table_task_2_g2_op``
+        - Place an object at the specified position relative to another object.
+      * - 14
+        - ``place_beverage_to_anothers_position``
+        - ``table_task_2_g2_op``
+        - Place a beverage at another object's position.
+      * - 15
+        - ``sort_cubes_by_size``
+        - ``table_task_2_g2_op``
+        - Arrange cubes by size.
+      * - 16
+        - ``sort_number``
+        - ``table_task_2_g2_op``
+        - Arrange numbered objects in numerical order.
+      * - 17
+        - ``stack_bowls``
+        - ``table_task_2_g2_op``
+        - Stack bowls.
+      * - 18
+        - ``stack_three_building_blocks``
+        - ``table_task_2_g2_op``
+        - Stack three building blocks.
 
-.. rubric:: Manipulation Skills
+   **Manipulation Skills**
 
-.. list-table::
-   :header-rows: 1
-   :widths: 5 35 28 32
+   .. list-table::
+      :header-rows: 1
+      :widths: 5 35 28 32
 
-   * - No.
-     - subtask name
-     - task name
-     - Description
-   * - 19
-     - ``open_door``
-     - ``home_g2_op``
-     - Open a door.
-   * - 20
-     - ``pour_workpiece``
-     - ``laboratory_06_g2_op``
-     - Pour out workpieces.
-   * - 21
-     - ``take_wrong_item_shelf``
-     - ``market_01_g2_op``
-     - Remove a misplaced item from a shelf.
-   * - 22
-     - ``hold_pot``
-     - ``kitchen_02_g2_op``
-     - Hold a pot with both arms.
-   * - 23
-     - ``place_block_into_box``
-     - ``table_task_2_g2_op``
-     - Place a block into a box.
-   * - 24
-     - ``stock_and_straighten_shelf``
-     - ``market_00_g2_op``
-     - Stock a shelf and straighten its items.
-   * - 25
-     - ``clean_the_desktop``
-     - ``study_room_05_g2_op``
-     - Clear the desktop.
+      * - No.
+        - subtask name
+        - task name
+        - Description
+      * - 19
+        - ``open_door``
+        - ``home_g2_op``
+        - Open a door.
+      * - 20
+        - ``pour_workpiece``
+        - ``laboratory_06_g2_op``
+        - Pour out workpieces.
+      * - 21
+        - ``take_wrong_item_shelf``
+        - ``market_01_g2_op``
+        - Remove a misplaced item from a shelf.
+      * - 22
+        - ``hold_pot``
+        - ``kitchen_02_g2_op``
+        - Hold a pot with both arms.
+      * - 23
+        - ``place_block_into_box``
+        - ``table_task_2_g2_op``
+        - Place a block into a box.
+      * - 24
+        - ``stock_and_straighten_shelf``
+        - ``market_00_g2_op``
+        - Stock a shelf and straighten its items.
+      * - 25
+        - ``clean_the_desktop``
+        - ``study_room_05_g2_op``
+        - Clear the desktop.

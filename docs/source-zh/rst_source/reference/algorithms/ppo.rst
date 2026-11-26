@@ -1,5 +1,5 @@
-近端策略优化 (PPO)
-==================================
+近端策略优化（PPO）
+===================
 
 1. 引言
 ---------------
@@ -72,35 +72,30 @@ PPO 的目标函数定义如下：
 我们的框架支持在 LLM 推理任务和具身任务中使用 PPO。
 
 3.1. 具身任务
-~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~
 
-下面首先给出一个具身任务的示例配置：
+具身 PPO 默认预设位于 ``examples/embodiment/config/algorithm/ppo.yaml``。完整配方参见 :doc:`ManiSkill <../../examples/embodied/maniskill>` 与 ``examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml``：
 
 .. code-block:: yaml
 
    algorithm:
-
-      # 核心 PPO 设置（建议不要修改）
+      # 核心 PPO 设置
       normalize_advantages: True
       group_size: 1
       adv_type: gae
       loss_type: actor_critic
       loss_agg_func: "token-mean"
 
-      # 算法参数（通常需要调优）
-
-      rollout_micro_batch_size: 256
-      logprob_forward_micro_batch_size: 16  # 较大的 batch_size 可以提高稳定性。
-                                            # 请根据算力和模型大小调整。
-
+      # 算法参数
+      kl_beta: 0.0
       entropy_bonus: 0          # 可选：鼓励探索
       clip_ratio_high: 0.2      # PPO 裁剪参数 (epsilon)
       clip_ratio_low: 0.2       # 应与 clip_ratio_high 保持一致
+      clip_ratio_c: 3.0         # 双重裁剪上界
       value_clip: 0.2           # 稳定价值函数更新
 
-      gamma: 0.99               # GAE 的折扣因子
-      gae_lambda: 0.95          # GAE 的 Lambda 参数
-
+      gamma: 0.99               # GAE 折扣因子
+      gae_lambda: 0.95          # GAE Lambda 参数
       huber_delta: 10.0         # 价值训练中 Huber 损失的 Delta 参数
 
 Rollout 与 Actor 的重要性采样修正
@@ -174,7 +169,7 @@ LLM 推理任务的配置与具身任务的配置有相似之处。
 3.3. 多轮 Agent 任务
 ~~~~~~~~~~~~~~~~~~~~
 
-模型和数据准备参见 :doc:`Search-R1 训练 </rst_source/examples/agentic/searchr1/qwen2.5>`。使用 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``，关键配置如下：
+模型和数据准备参见 :doc:`Search-R1 训练 </rst_source/examples/agentic/searchr1/index>`。使用 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``，关键配置如下：
 
 .. code-block:: yaml
 

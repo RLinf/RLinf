@@ -69,6 +69,7 @@ env:
     total_num_envs: 4
     max_episode_steps: 1
     max_steps_per_rollout_epoch: 1
+    group_size: ${algorithm.group_size}
   eval:
     rollout_epoch: 1
     total_num_envs: 1

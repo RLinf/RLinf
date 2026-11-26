@@ -1,104 +1,94 @@
-Cross-Q
-===========
+CrossQ
+======
 
 1. 简介
-----------
+-------
 
-CrossQ是 :doc:`SAC <sac>` 算法的一种轻量级进化版本，旨在提高样本效率。它在标准 SAC 框架上引入了三个独特的架构更新：
+CrossQ 在 :doc:`Soft Actor-Critic（SAC） <sac>` 基础上移除目标网络，以更低的计算开销提升样本效率。其核心改动包括三点：
 
-- 移除目标网络：消除滞后的目标 Q 网络以加速价值学习
+- **移除目标网络**：省去滞后的目标 Q 网络，加快价值传播。
+- **批重归一化（Batch Renormalization，BRN）**：在 critic 与 actor 中引入批重归一化，并将当前状态与下一状态拼接做联合前向传播，校正批统计量分布。
+- **更宽的 Critic 网络**：扩大 critic 隐藏层宽度（例如 2048），提升表征能力与收敛速度。
 
-- 批重归一化 (Batch Renormalization, BRN)：在Critic和Actor中集成批重归一化以稳定训练，使用当前状态和未来状态的联合前向传播来校正分布统计。
-
-- 更宽的Critic网络：扩展Critic网络层的宽度(例如扩展到2048个单元)以增强表示能力和优化速度。
-
-通过移除目标网络，Cross-Q避免了价值传播中的延迟，而批重归一化的应用确保了以前在RL中难以实现的训练稳定性。
-这种架构使CrossQ能够达到或超越REDQ和DroQ等计算昂贵方法的样本效率，同时保持UTD为1，且计算占用显著降低。
-更多详情，请参阅原版 `CrossQ <https://arxiv.org/abs/1902.05605>`_ 论文。
-
-
+更多细节参见原始 `CrossQ 论文 <https://arxiv.org/abs/1902.05605>`__。
 
 2. 目标函数
-----------------
+-----------
 
-CrossQ与SAC使用相同的最大熵RL目标。
-设策略为 :math:`\pi` 。则 :math:`\pi` 的Q函数满足相同的贝尔曼方程：
-
-.. math::
-
-   Q^{\pi}(s, a) = \mathbb{E}_{s' \sim P, a \sim \pi} \left[ r(s, a) + \gamma (Q^{\pi}(s', a') - \alpha \log \pi(a'|s')) \right].
-
-这里 :math:`\gamma` 是折扣因子， :math:`\alpha` 是温度参数。
-
-CrossQ在参数化和更新Q函数与SAC不同。具体来说，它完全移除了目标网络。因此，第i个Q函数 :math:`Q_{\phi_{i}}` 的损失是使用当前网络参数 :math:`\phi_{i}` 而非单独的目标网络定义的：
+CrossQ 与 SAC 共享最大熵 RL 目标。设 policy 为 :math:`\pi`，其软 Q 函数满足软 Bellman 方程：
 
 .. math::
 
-   L(\phi_{i}, D) = \mathbb{E}{(s, a, r, s', d) \sim D} \left[ \frac{1}{2} \left( Q_{\phi_{i}}(s, a) - (r + \gamma (1 - d) \cdot \text{sg}(\min_{i} Q_{\phi_{i}}(s', a') - \alpha \log \pi_{\theta}(a'|s'))) \right)^2 \right],
+   Q^{\pi}(s, a) = \mathbb{E}_{s' \sim P,\, a' \sim \pi} \left[ r(s, a) + \gamma \left( Q^{\pi}(s', a') - \alpha \log \pi(a' \mid s') \right) \right].
 
-其中 :math:`D` 是经验回放池， :math:`\text{sg}(\cdot)` 表示停止梯度算子 (防止梯度通过自举目标回传)， :math:`a'` 从当前策略 :math:`\pi_{\theta}` 中采样。
-
-Actor损失函数与SAC保持一致。Actor :math:`\pi_{\theta}` 被训练为最大化期望Q值和熵：
+其中 :math:`\gamma` 为折扣因子，:math:`\alpha` 为熵温度系数。由于移除目标网络，第 :math:`i` 个 critic :math:`Q_{\phi_{i}}` 的损失直接使用当前参数 :math:`\phi_{i}` 并在自举目标上停止梯度：
 
 .. math::
 
-   L(\theta, D) = \mathbb{E}{s \sim D, a \sim \pi{\theta}} \left[ \alpha \log \pi_{\theta}(a|s) - \min_{i} Q_{\phi_i}(s, a) \right].
+   L(\phi_{i}, D) = \mathbb{E}_{(s, a, r, s', d) \sim D} \left[ \frac{1}{2} \left( Q_{\phi_{i}}(s, a) - \left(r + \gamma (1 - d) \cdot \operatorname{sg}\!\left(\min_{j} Q_{\phi_{j}}(s', a') - \alpha \log \pi_{\theta}(a' \mid s')\right)\right) \right)^2 \right],
 
-同样，温度系数 :math:`\alpha` 通过相同的损失函数进行更新：
+其中 :math:`D` 为回放缓冲区，:math:`\operatorname{sg}(\cdot)` 为停止梯度算子，:math:`a' \sim \pi_{\theta}(\cdot \mid s')`。
 
-.. math::
-
-   L(\alpha, D) = - \alpha (H_{\text{targ}} - H(\pi(\cdot, d))).
-
-3. 特殊设计
-------------
-
-CrossQ 引入了三个关键的设计：
-
-- 移除目标网络：与SAC依赖缓慢更新的目标网络 :math:`\phi_{\text{targ}}` 来稳定学习不同，CrossQ使用当前网络 :math:`\phi` 来计算TD目标。梯度在自举项上被停止以防止发散。
-
-- 批重归一化 (BRN)：为了在没有目标网络的情况下稳定训练，CrossQ在Critic和Actor网络中集成了批重归一化。为了解决训练样本 :math:`(s, a)` 和自举样本 :math:`(s', a')` 之间的分布不匹配问题，CrossQ 通过连接这些批次来执行联合前向传播：
+Actor :math:`\pi_{\theta}` 的损失与 SAC 相同：
 
 .. math::
 
-  \left[ \begin{matrix} q \ q' \end{matrix} \right] = Q_{\phi} \left( \left[ \begin{matrix} s \ s' \end{matrix} \right], \left[ \begin{matrix} a \ a' \end{matrix} \right] \right),
+   L(\theta, D) = \mathbb{E}_{s \sim D,\, a \sim \pi_{\theta}} \left[ \alpha \log \pi_{\theta}(a \mid s) - \min_{i} Q_{\phi_i}(s, a) \right].
 
-这确保了BRN的统计量是在当前数据和回放数据的混合上计算的 。
+温度系数 :math:`\alpha` 的更新损失为：
 
-- 更宽的Critic网络：CrossQ扩展了Critic网络层的宽度 (例如从256个隐藏单元增加到2048个)。增加的宽度结合BRN，加速了优化并显著提高了相较于标准SAC架构的样本效率。
+.. math::
+
+   L(\alpha, D) = \mathbb{E}_{s \sim D} \left[ -\alpha \left( H_{\mathrm{targ}} - H(\pi(\cdot \mid s)) \right) \right].
+
+3. 关键设计
+-----------
+
+- **BRN 联合前向传播**：为消除当前样本 :math:`(s, a)` 与自举样本 :math:`(s', a')` 的分布差异，CrossQ 将两批输入拼接后送入同一轮 critic 前向计算：
+
+  .. math::
+
+     \begin{bmatrix} q \\ q' \end{bmatrix} = Q_{\phi} \left( \begin{bmatrix} s \\ s' \end{bmatrix}, \begin{bmatrix} a \\ a' \end{bmatrix} \right),
+
+  使批重归一化统计量在混合分布上计算。
+- **停止梯度自举**：TD 目标直接由当前网络 :math:`Q_{\phi}` 计算并截断梯度，无需维护 EMA 目标网络副本。
+- **加宽 Critic 层**：配合 BRN 将隐藏层从 256 扩展到 2048 等更宽维度，在 UTD 为 1 时即可取得高样本效率。
 
 4. 配置
-----------
+-------
 
-CrossQ与SAC使用几乎相同的配置。参数 `q_head_type` 可用于在CrossQ和标准SAC架构之间切换。
+CrossQ 与 SAC 复用同一套配置，通过 ``q_head_type: "crossq"`` 切换 Q 头结构。完整示例参见 :doc:`MLP Policy 示例 <../../examples/embodied/mlp>` 与可运行配置 ``examples/embodiment/config/maniskill_crossq_mlp.yaml``：
 
 .. code-block:: yaml
 
    algorithm:
       update_epoch: 32
       group_size: 1
-      agg_q: min # ["min", "mean"] # 聚合多个 Q 值的选项
+      agg_q: min                     # ["min", "mean"]
       adv_type: embodied_sac
       loss_type: embodied_sac
       loss_agg_func: "token-mean"
-      q_head_type: "crossq" # ["crossq", "default"] 选择 CrossQ 或标准 SAC Q 头
-        
-      bootstrap_type: standard
+      q_head_type: "crossq"          # ["crossq", "default"]
+      critic_actor_ratio: 2
+      bootstrap_type: always         # ["standard", "always"]
       gamma: 0.8
       tau: 0.01
       target_update_freq: 1
       entropy_tuning:
-         alpha_type: softplus  # ["softplus","exp","fixed_alpha"]
+         alpha_type: softplus        # ["softplus", "exp", "fixed_alpha"]
          initial_alpha: 0.01
-         target_entropy: -4
+         target_entropy: -4          # -action_dim
          optim:
             lr: 3.0e-4
             lr_scheduler: torch_constant
             clip_grad: 10.0
-        
-      # 回放缓冲区设置
       replay_buffer:
-         enable_cache: True # 启用内存缓存以减少I/O开销
-         cache_size: 6000 # 内存缓存的轨迹数量
-         sample_window_size: 6000 # 滑动采样窗口大小
-         min_buffer_size: 2  # 开始更新策略时缓冲区数据量最小值（以Trajectory为单位）
+         enable_cache: True
+         cache_size: 10000
+         sample_window_size: 10000
+         min_buffer_size: 0
+
+   actor:
+      model:
+         add_q_head: True
+         q_head_type: "crossq"

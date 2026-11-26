@@ -1,5 +1,5 @@
-Adaptive P2P Communication
-===================================
+Collective Communication
+========================
 
 This component provides point-to-point (P2P) data transfer between workers with **strict ordering** and **async handles**, on top of PyTorch ``torch.distributed``.
 It consists of two public-facing classes:
