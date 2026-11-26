@@ -256,6 +256,8 @@ class _Patcher:
                     del sys.modules[k]
 
         for key, value in sys.modules.copy().items():
+            if not hasattr(value, "__dict__"):
+                continue
             for k, v in value.__dict__.copy().items():
                 if k.startswith("ORIG__"):
                     continue

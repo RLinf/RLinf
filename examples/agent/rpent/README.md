@@ -32,6 +32,7 @@ This example trains a 4B Vision-Language-Action reasoning model (Qwen3.5-4B) wit
 | `rlinf/hybrid_engines/sglang/multimodal/replay.py` | Local tmpfs image staging (`stage_local_images`) + safetensors replay payload capture for exact Megatron vision-input reconstruction. |
 | `rlinf/hybrid_engines/megatron/qwen_vl_inputs.py` | Qwen3.5 VL multimodal input assembly for Megatron forward/backward without modifying Megatron-LM sources. |
 | `examples/agent/rpent/config/train_qwen3.5_4b_rpent_grpo.yaml` | 8-GPU Sync GRPO + oversampling config (`seq_length=262144`, `max_turns=50`, `max_new_tokens=16384`, `group_size=8`). |
+| `examples/agent/rpent/config/train_qwen3.5_4b_rpent_grpo_48gpu.yaml` | 48-GPU cross-cluster Sync GRPO config (`32 × 8` oversampled to `384`, early per-simulator straggler cancellation, collocated `/pool/{sleep,wake}`, `max_fraction=0.25`). |
 
 ## Key Optimizations
 
@@ -86,6 +87,54 @@ bash examples/agent/rpent/run_train.sh \
 ```
 
 > **Note on CUDA IPC weight sync (driver 535.x)**: `actor.env_vars` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` and `PYTORCH_ALLOC_CONF=expandable_segments:False` so `storage._share_cuda_()` succeeds across Actor→Rollout IPC transfers.
+
+## 48-GPU Cross-Cluster Training (`train_qwen3.5_4b_rpent_grpo_48gpu.yaml`)
+
+For large-scale synchronous GRPO (`rollout_batch_size=32`, `sampling_batch_size=48`, `group_size=8` → **384 concurrent oversampled episodes**: 24 LIBERO + 24 RoboTwin groups, taking the fastest 16 complete groups per simulator), RLinf coordinates a 4-node / 32-GPU Ray cluster with multi-node RPent `SimPoolRouter` frontends spanning heterogeneous H100 and A100 clusters.
+
+### Reference 48-GPU Topology (5× H100 + 1× A100 via Jump Host)
+
+| Node | Role | Per-GPU Allocation | Node Total |
+| :--- | :--- | :--- | :--- |
+| `h100` (8× H100) | Dedicated Sim + SAM3 (`sleepable: false`) | `4 LIBERO + 6 RoboTwin + 2 SAM3` | `32 LIBERO + 48 RoboTwin + 16 SAM3` |
+| `h100_1`–`h100_4` (32× H100) | Ray RL Cluster + Collocated Sim (`sleepable: true`) | `5 LIBERO + 2 RoboTwin` + SGLang (`DP=32`) / Megatron (`TP=2, DP=16`) | `160 LIBERO + 64 RoboTwin + 32 RL` |
+| `a100` (8× A100) | Remote Dedicated Sim + SAM3 (`sleepable: false`, bridged via jump-host SSH tunnel) | `10 RoboTwin + 1 SAM3` | `80 RoboTwin + 8 SAM3` |
+| **Total (48 GPUs)** | | | **192 LIBERO + 192 RoboTwin + 24 SAM3 (queue=2048) + 32 RL GPUs** |
+
+### Multi-Node Features & Launch
+
+1. **Early per-simulator straggler cancellation**: As soon as either simulator meets its `rollout_episodes / group_size` quota (16 complete groups), `RPentGRPORunner` immediately calls `RPentAgentLoopWorker.cancel_candidate_ids()` to abort unselected stragglers in that domain, freeing SGLang KV/Mamba cache and GPU compute for the other domain.
+2. **Collocated pool sleep/wake lifecycle**: With `tools.rpent.sleep_sim_pools_during_training: true`, `RPentGRPORunner` invokes `POST /pool/sleep` on every router before Megatron `recompute_logprobs` + backward (`~8.8s`, freeing collocated H100 VRAM to `~5.5 GiB` while dedicated `h100`/`a100` nodes stay warm) and `POST /pool/wake` (`~20.6s`) after weight sync.
+3. **Long-tail context compression (`max_fraction: 0.25`)**: Compacts conversation history at 25% of the 262k window (`~65k` tokens) to bound late-turn prefill/decode tail latency across 384 concurrent rollouts.
+
+```bash
+# On each of the 4 RL nodes (set NODE_RANK=0..3 and ulimit -n 1048576):
+# Start Ray with --temp-dir=/tmp/rpent_ppo/ray (backed by /dev/shm/rpent_ppo)
+# Then launch from head node (h100_1):
+ulimit -n 1048576
+export RPENT_ROOT=/path/to/rpent_ppo
+export RPENT_LOCAL_CACHE=/tmp/rpent_ppo        # symlink -> /dev/shm/rpent_ppo
+export RPENT_ROUTER_HOST=<H100_HEAD_IP>
+export RAY_ADDRESS=<H100_HEAD_IP>:29710
+export NO_PROXY=127.0.0.1,localhost,<VPC_CIDR>
+
+python examples/agent/rpent/train.py \
+  --config-name train_qwen3.5_4b_rpent_grpo_48gpu
+```
+
+### Cross-Cluster Production Issues & Fixes
+
+The following issues were hit and resolved during 48-GPU cross-cluster bring-up and verified end-to-end across full Step 1 (`32/32` weight sync, `384/384` zero-queue concurrency, `17.97%` success rate, `retry=0.0`, `loss=0.0125`, `peak VRAM=79.2 GiB`):
+
+| Issue / Failure | Root Cause | Fix & Operational Guidance |
+| :--- | :--- | :--- |
+| **`AttributeError` in `rlinf/utils/patcher.py` on H100 (Hopper)** | Hopper's `deep_gemm` inserts non-module sentinel objects lacking `__dict__` into `sys.modules`. | Guarded `_Patcher` in `rlinf/utils/patcher.py` with `if not hasattr(value, "__dict__"): continue`. |
+| **`GenerateInput(rank=0)` `SIGABRT: Too many open files`** | 32-GPU Ray/Gloo `ChannelWorker` opens `>1,400` TCP FDs (64 Gloo groups + Ray sockets), exceeding container default `ulimit -n 1024`. | Set `ulimit -n 1048576` in Ray node startup, `run_train.sh`, and SSH tunnel scripts (and `resource.setrlimit` in RPent `server.py`/`serve.py`). |
+| **`httpx.RemoteProtocolError: Server disconnected without sending a response`** | Client `httpx` default `keepalive_expiry=5.0` raced with `uvicorn`'s default `timeout_keep_alive=5` across the cross-cluster SSH tunnel, and bare open errors hid HTTP response details. | Set `AgentLoopWorker._client()` `keepalive_expiry=30.0` (strictly below RPent server `timeout_keep_alive=300`), included `resp.text[:300]` in `HTTPStatusError`, mapped router `TransportError` → HTTP `503`, and set `max_infra_retries: 3`. |
+| **Shared BeeGFS short-reads & container `/` overlay eviction** | Concurrent reads of Python packages, `@triton.jit` sources (`fla-core` `OSError: could not get source code`), and simulator assets from BeeGFS caused intermittent 0-byte reads; copying ~45 GB into container `/tmp` risked 100 GB overlay eviction. | Stage `RLinf`, `RPent`, `envs/rl-overlay`, `checkpoint-216`, simulator venvs, and assets into node-local RAM tmpfs (`/dev/shm/rpent_ppo`, symlinked at `/tmp/rpent_ppo`), and point Ray `--temp-dir` to `/tmp/rpent_ppo/ray`. Keeps `/` overlay at `<1.2 GiB / 100 GiB (1%–2%)` and enables `~42s` RAM-to-RAM node recovery (`1.07 GB/s`). |
+| **Megatron backward OOM on collocated RL+Sim GPUs** | Peak 32-GPU Megatron (`TP=2, DP=16`) backward reaches `79.2 GiB / 81.5 GiB` on H100; resident collocated sim workers leave insufficient VRAM. | Enable `tools.rpent.sleep_sim_pools_during_training: true` and `sleepable: true` on collocated RPent pools (`h100_1`–`h100_4`) while keeping dedicated `h100`/`a100` pools warm (`sleepable: false`). |
+| **`json.decoder.JSONDecodeError` in SGLang `l2norm_fwd_kernel` after pod crash / disk full** | Interrupted writes leave 0-byte `*.json` files inside `/root/.triton/cache`, causing all SGLang workers on that node to crash during prefill. | Audit `/root/.triton/cache` for 0-byte or invalid JSON files (`find /root/.triton/cache -type f -size 0`) before launch, and sync a verified cache from a healthy peer node. |
+| **Transient SGLang `TCPStore` `EADDRINUSE` during 8-way startup** | Concurrent `tp=1` SGLang workers on the same host can occasionally race on ephemeral ports at startup. | Cleanly retry launch once Ray reports `0.0/32.0 GPU` used and routers report `active_sessions: 0`. |
 
 ## Unit Tests
 

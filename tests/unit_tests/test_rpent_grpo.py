@@ -352,3 +352,82 @@ def test_zero_base64_conversation_history_and_local_staging():
     got_meta, got_imgs = _unpack_execute_response(buf)
     assert got_meta == meta and got_imgs == [png1]
     assert _BINARY_EXECUTE_MEDIA_TYPE.startswith("application/")
+
+
+def test_validate_sim_pool_capacity_48gpu_scale() -> None:
+    """Verify 48-GPU 384-episode (192 LIBERO + 192 RoboTwin) capacity validation."""
+    from rlinf.agents.rpent.simulators import SimulatorSpec
+    from rlinf.runners.rpent_runner import validate_sim_pool_capacity
+
+    sims = {
+        "libero": SimulatorSpec("libero", "http://127.0.0.1:28561", "a.jsonl", 16, 24),
+        "robotwin": SimulatorSpec(
+            "robotwin", "http://127.0.0.1:28562", "b.jsonl", 16, 24
+        ),
+    }
+    res = validate_sim_pool_capacity(
+        simulators=sims,
+        default_endpoint=None,
+        sampling_groups=48,
+        group_size=8,
+        num_agent_workers=32,
+        episodes_per_worker=None,
+        fetch_health=lambda _ep: {"workers_total": 192, "workers_idle": 192},
+    )
+    assert res["libero"]["required"] == 192
+    assert res["robotwin"]["required"] == 192
+
+
+def test_rpent_runner_pool_sleep_wake_lifecycle(monkeypatch) -> None:
+    """Verify RPentGRPORunner._pool_lifecycle posts /pool/{sleep,wake} to all endpoints."""
+    import httpx
+    from omegaconf import OmegaConf
+
+    from rlinf.agents.rpent.simulators import SimulatorSpec
+    from rlinf.runners.rpent_runner import RPentGRPORunner
+
+    calls: list[str] = []
+
+    class _FakeResp:
+        def __init__(self, url: str):
+            self.url = url
+
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict:
+            sleeping = self.url.endswith("/sleep")
+            return {
+                "ok": True,
+                "environment": "libero" if "28561" in self.url else "robotwin",
+                "workers_target": 192,
+                "workers_total": 32 if sleeping else 192,
+                "sleeping": sleeping,
+            }
+
+    def _fake_post(url, **kwargs):
+        calls.append(url)
+        return _FakeResp(url)
+
+    monkeypatch.setattr(httpx, "post", _fake_post)
+
+    runner = object.__new__(RPentGRPORunner)
+    runner.simulators = {
+        "libero": SimulatorSpec("libero", "http://127.0.0.1:28561", "a.jsonl", 16, 24),
+        "robotwin": SimulatorSpec(
+            "robotwin", "http://127.0.0.1:28562", "b.jsonl", 16, 24
+        ),
+    }
+    runner.cfg = OmegaConf.create(
+        {"tools": {"rpent": {"sleep_sim_pools_during_training": True}}}
+    )
+
+    assert runner._sleep_pools_enabled() is True
+    runner._pool_lifecycle("sleep")
+    runner._pool_lifecycle("wake")
+    assert set(calls) == {
+        "http://127.0.0.1:28561/pool/sleep",
+        "http://127.0.0.1:28562/pool/sleep",
+        "http://127.0.0.1:28561/pool/wake",
+        "http://127.0.0.1:28562/pool/wake",
+    }

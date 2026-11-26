@@ -151,7 +151,11 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
                 timeout=httpx.Timeout(
                     connect=30.0, read=read_timeout, write=60.0, pool=60.0
                 ),
-                limits=httpx.Limits(max_connections=512, max_keepalive_connections=128),
+                limits=httpx.Limits(
+                    max_connections=512,
+                    max_keepalive_connections=128,
+                    keepalive_expiry=30.0,
+                ),
                 trust_env=False,
             )
         return self._http
@@ -204,7 +208,12 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
                         else None,
                     },
                 )
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    raise httpx.HTTPStatusError(
+                        f"HTTP {resp.status_code} on {endpoint}/sessions/open: {resp.text[:300]}",
+                        request=resp.request,
+                        response=resp,
+                    )
                 return resp.json()
             except (httpx.HTTPError, OSError) as exc:
                 last_error = exc
@@ -659,6 +668,23 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
 
         await asyncio.gather(*state["tasks"].values(), return_exceptions=True)
         return {"cohort_id": cohort_id, "candidates": len(state["tasks"])}
+
+    async def cancel_candidate_ids(
+        self, cohort_id: str, candidate_ids: list[int]
+    ) -> dict[str, Any]:
+        """Cancel specific unselected candidate IDs early (e.g. when one simulator meets quota)."""
+        state = self._cohort
+        if state is None or state["id"] != cohort_id:
+            return {"cohort_id": cohort_id, "cancelled": 0}
+        targets = []
+        for cid in candidate_ids:
+            task = state["tasks"].get(cid)
+            if task is not None and not task.done():
+                task.cancel()
+                targets.append(task)
+        if targets:
+            await asyncio.gather(*targets, return_exceptions=True)
+        return {"cohort_id": cohort_id, "cancelled": len(targets)}
 
     async def cancel_rollout_candidates(
         self, cohort_id: str, selected_ids: list[int]

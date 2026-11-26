@@ -286,6 +286,8 @@ class RPentGRPORunner(AgentRunner):
         complete: dict[int, dict[str, Any]] = {}
         selected_groups: list[int] = []
         selected_ids: list[int] = []
+        closed_envs: set[str] = set()
+        early_cancel_handles: list[Handle] = []
         selection_error: BaseException | None = None
         started = time.time()
 
@@ -308,6 +310,7 @@ class RPentGRPORunner(AgentRunner):
                     continue
                 if gid in selected_groups:
                     continue
+                env: str | None = None
                 if remaining_quota is not None:
                     env = self._group_envs[gid]
                     if remaining_quota.get(env, 0) <= 0:
@@ -315,9 +318,40 @@ class RPentGRPORunner(AgentRunner):
                     remaining_quota[env] -= 1
                 selected_groups.append(gid)
                 selected_ids.extend(members)
+                if (
+                    remaining_quota is not None
+                    and env is not None
+                    and remaining_quota[env] == 0
+                    and env not in closed_envs
+                    and len(selected_groups) < target_groups
+                ):
+                    closed_envs.add(env)
+                    selected_set = set(selected_groups)
+                    drop_ids = [
+                        g * group_size + m
+                        for g, e in self._group_envs.items()
+                        if e == env and g not in selected_set
+                        for m in range(group_size)
+                    ]
+                    if drop_ids:
+                        logger.info(
+                            "RPent simulator '%s' met quota (%d groups); "
+                            "cancelling %d unselected straggler candidates early",
+                            env,
+                            self.simulators[env].rollout_groups,
+                            len(drop_ids),
+                        )
+                        early_cancel_handles.append(
+                            self.agent_loop.cancel_candidate_ids(cohort_id, drop_ids)
+                        )
         except BaseException as exc:
             selection_error = exc
         finally:
+            for early in early_cancel_handles:
+                try:
+                    early.wait()
+                except BaseException as exc:
+                    selection_error = selection_error or exc
             cancel_handle = self.agent_loop.cancel_rollout_candidates(
                 cohort_id, selected_ids
             )
@@ -452,6 +486,59 @@ class RPentGRPORunner(AgentRunner):
         }
         return rollout_metrics, training_metrics, durations
 
+    def _sim_endpoints(self) -> list[str]:
+        if self.simulators:
+            return [spec.endpoint for spec in self.simulators.values()]
+        rpent = (self.cfg.get("tools") or {}).get("rpent") or {}
+        if rpent.get("remote_toolkit_endpoint"):
+            return [str(rpent["remote_toolkit_endpoint"]).rstrip("/")]
+        return []
+
+    def _sleep_pools_enabled(self) -> bool:
+        rpent = (self.cfg.get("tools") or {}).get("rpent") or {}
+        return bool(rpent.get("sleep_sim_pools_during_training", False))
+
+    def _pool_lifecycle(self, action: str) -> None:
+        """Sleep or wake collocated simulator pools around Megatron training."""
+        import concurrent.futures
+
+        import httpx
+
+        endpoints = self._sim_endpoints()
+        if not endpoints:
+            return
+        timeout_s = 600.0 if action == "wake" else 120.0
+
+        def _call(ep: str) -> tuple[str, dict[str, Any]]:
+            resp = httpx.post(
+                f"{ep}/pool/{action}", json={}, timeout=timeout_s, trust_env=False
+            )
+            resp.raise_for_status()
+            return ep, resp.json()
+
+        started = time.time()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(endpoints)) as pool:
+            results = list(pool.map(_call, endpoints))
+        summary = ", ".join(
+            f"{info.get('environment', ep)}={info.get('workers_total')}/{info.get('workers_target')} "
+            f"(sleeping={info.get('sleeping')})"
+            for ep, info in results
+        )
+        logger.info(
+            "RPent simulator pool %s completed in %.1fs: %s",
+            action,
+            time.time() - started,
+            summary,
+        )
+        if action == "wake":
+            for ep, info in results:
+                target = int(info.get("workers_target", 0))
+                total = int(info.get("workers_total", 0))
+                if target > 0 and total < target:
+                    raise RuntimeError(
+                        f"Simulator pool at {ep} woke with {total}/{target} workers"
+                    )
+
     def _validate_sim_pool_capacity(self) -> None:
         rpent = (self.cfg.get("tools") or {}).get("rpent") or {}
         ep_limit = rpent.get("episodes_per_worker")
@@ -493,6 +580,9 @@ class RPentGRPORunner(AgentRunner):
                         self._sync_weights()
                     with self.timer("rollout"):
                         agent_metrics = self._run_oversampled_rollout()
+                    if self._sleep_pools_enabled():
+                        with self.timer("sim_sleep"):
+                            self._pool_lifecycle("sleep")
                     actor_rollout_metrics, actor_training_metrics, durations = (
                         self._run_training_step()
                     )
@@ -564,6 +654,9 @@ class RPentGRPORunner(AgentRunner):
                     self._stop_rollouts()
                     self.metric_logger.finish()
                     return
+                if self._sleep_pools_enabled():
+                    with self.timer("sim_wake"):
+                        self._pool_lifecycle("wake")
 
         self._stop_rollouts()
         self.metric_logger.finish()
