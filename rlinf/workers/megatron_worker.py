@@ -153,7 +153,7 @@ class MegatronWorker(MegatronModelManager, Worker):
         self.offload_grad = self.role_cfg.offload_grad
 
         self.ref_policy_state_dict = None
-        self.is_pipeline = placement.is_pipeline
+        self.is_pipeline = self._use_streaming_pipeline(placement)
         self.placement_mode = placement._placement_mode
         self.rollout_sync_mode = placement._rollout_sync_mode
         self.enable_dp_load_balance = self.role_cfg.get("enable_dp_load_balance", False)
@@ -191,6 +191,12 @@ class MegatronWorker(MegatronModelManager, Worker):
             self.init_profiler()
 
         self._init_auto_scheduler(role)
+
+    def _use_streaming_pipeline(
+        self, placement: ModelParallelComponentPlacement
+    ) -> bool:
+        """Whether this worker streams rollout chunks through the base pipeline path."""
+        return placement.is_pipeline
 
     def _init_auto_scheduler(self, role: str):
         self.use_auto_scheduler = self.placement_mode == PlacementMode.AUTO

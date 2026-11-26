@@ -674,6 +674,43 @@ class TestSessionServerConfig:
         with pytest.raises(ValueError, match="actor.training_backend"):
             validate_session_server_cfg(cfg)
 
+    def test_agentic_tokenizer_parser_mismatch_rejected_for_non_searchr1_task(
+        self, monkeypatch
+    ):
+        """Non-Search-R1 tasks still validate agentloop.agentic_tokenizer
+        against rollout.sglang.tool_call_parser."""
+        import sys
+
+        import rlinf.config as cfg_mod
+
+        placement = SimpleNamespace(rollout_num_model_instances=2)
+        monkeypatch.setitem(sys.modules, "sglang_router", SimpleNamespace())
+        monkeypatch.setattr(cfg_mod, "Cluster", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            cfg_mod, "ModelParallelComponentPlacement", lambda *a, **kw: placement
+        )
+        base_cfg = {
+            "cluster": {},
+            "runner": {"async_mode": True},
+            "actor": {"training_backend": "fsdp"},
+            "reward": {"reward_type": "custom_agent"},
+            "agentloop": {"agentic_tokenizer": "glm47"},
+            "rollout": {
+                "sglang": {"backend_type": "server", "tool_call_parser": "hermes"},
+                "pause_mode": "retract",
+            },
+            "session_server": {"enable": True},
+        }
+        with pytest.raises(ValueError, match="tool_call_parser='glm47'"):
+            validate_session_server_cfg(OmegaConf.create(base_cfg))
+        with pytest.raises(ValueError, match="tool_call_parser='glm47'"):
+            cfg_mod.validate_searchr1_cfg(OmegaConf.create(base_cfg))
+
+        matched_cfg = OmegaConf.create(base_cfg)
+        matched_cfg.rollout.sglang.tool_call_parser = "glm47"
+        assert validate_session_server_cfg(matched_cfg).session_server.enable is True
+        assert cfg_mod.validate_searchr1_cfg(matched_cfg) is matched_cfg
+
 
 class TestAssembly:
     def test_assembled_result_matches_get_rollout_result(self):

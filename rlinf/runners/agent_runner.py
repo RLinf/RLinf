@@ -188,7 +188,7 @@ class AgentRunner(ReasoningRunner):
 
     def _sync_weights(self):
         super()._sync_weights()
-        if not self.is_pipeline:
+        if self.component_placement.is_collocated:
             onload_handles = []
             for solid_rollout in self.solid_rollouts.values():
                 onload_handles.append(solid_rollout.onload_engine())
@@ -213,7 +213,7 @@ class AgentRunner(ReasoningRunner):
                 compute_ref_logprobs=self.compute_ref_logprobs,
             )
             input_channel = self.inference_channel
-        if self.is_pipeline:
+        if not self.component_placement.is_collocated:
             rollout_handle.wait()
         handles["training"] = self.actor.run_training(input_channel=input_channel)
         rollout_metrics, training_metrics = handles["training"].wait()[0]
@@ -266,7 +266,7 @@ class AgentRunner(ReasoningRunner):
                             output_channel=self.rollout_channel,
                         )
 
-                        if not self.is_pipeline:
+                        if self.component_placement.is_collocated:
                             agent_metrics = rollout_handle.wait()[0]
                             offload_handles = [self.rollout.offload_engine()]
                             for solid_rollout in self.solid_rollouts.values():

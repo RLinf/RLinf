@@ -1734,6 +1734,7 @@ def _multi_turn_actor(dynamic):
     from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
 
     actor = object.__new__(MAFSDPActor)
+    actor._payload_channels = None
     actor.torch_platform = torch.cpu
     actor.enable_dynamic_batch_size = dynamic
     actor.max_tokens_per_mbs = 20

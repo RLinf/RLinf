@@ -635,6 +635,14 @@ class Channel:
 
         if self._current_worker is not None:
             # Inside a worker, use send/recv
+            peer = (self._channel_name, target_rank)
+            prior_exc = AsyncChannelCommWork.get_peer_failure(peer)
+            if prior_exc is not None:
+                if async_op:
+                    return AsyncChannelCommWork.failed(
+                        prior_exc, peer=peer, channel_actor=target_actor
+                    )
+                raise prior_exc
             query_id = uuid.uuid4().int
             get_kwargs = {
                 "dst_addr": self._current_worker.worker_address,
@@ -649,7 +657,7 @@ class Channel:
                 async_comm_work=async_comm_work,
                 query_id=query_id,
                 channel_actor=target_actor,
-                peer=(self._channel_name, target_rank),
+                peer=peer,
                 call_future=call_future,
             )
             if async_op:
@@ -770,6 +778,14 @@ class Channel:
         target_actor = self._get_channel_actor(target_rank)
 
         if self._current_worker is not None:
+            peer = (self._channel_name, target_rank)
+            prior_exc = AsyncChannelCommWork.get_peer_failure(peer)
+            if prior_exc is not None:
+                if async_op:
+                    return AsyncChannelCommWork.failed(
+                        prior_exc, peer=peer, channel_actor=target_actor
+                    )
+                raise prior_exc
             query_id = uuid.uuid4().int
             get_kwargs = {
                 "dst_addr": self._current_worker.worker_address,
@@ -785,7 +801,7 @@ class Channel:
                 async_comm_work=async_comm_work,
                 query_id=query_id,
                 channel_actor=target_actor,
-                peer=(self._channel_name, target_rank),
+                peer=peer,
                 call_future=call_future,
             )
             if async_op:

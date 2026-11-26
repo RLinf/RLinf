@@ -101,12 +101,9 @@ class MAFSDPActor(FSDPActor):
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
 
-    def _validate_pipeline_features(self) -> None:
-        """Allow DP load balance and dynamic batching under disaggregated placement.
-
-        MAFSDPActor.run_training gathers all groups of a step before training,
-        unlike the base streaming pipeline path.
-        """
+    def _use_streaming_pipeline(self) -> bool:
+        """MAFSDPActor gathers the full step batch instead of streaming chunks."""
+        return False
 
     def _receive_rollout_result(
         self, channel: Channel
@@ -295,7 +292,6 @@ class MAFSDPActor(FSDPActor):
         compute_ref_logprobs: bool,
     ):
         """Compute real-length probabilities and retain the balanced group order."""
-        assert not self.is_pipeline, "MAFSDPActor supports collocated inference."
         batch, results = self.get_step_batch(input_channel)
         self._load_weight_and_optimizer()
         self.model.eval()

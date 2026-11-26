@@ -317,84 +317,110 @@ def test_ma_fsdp_actor_get_step_batch_assembles_delivered_groups(monkeypatch):
     assert channel.get_count == 1
 
 
-def test_fsdp_pipeline_feature_validation_differs_for_base_and_ma_actor():
-    """Base FSDPActor rejects DP load balance and dynamic batching in pipeline
-    mode, while MAFSDPActor allows both under disaggregated placement."""
-    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
-    from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
+def test_fsdp_streaming_pipeline_decoupled_from_disaggregated_placement(monkeypatch):
+    """Base FSDPActor enables streaming pipeline under disaggregated placement,
+    while MAFSDPActor keeps is_disaggregated=True and is_pipeline=False so
+    DP load balance, dynamic batching, and disaggregated run_inference work."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
 
-    base = FSDPActor.__new__(FSDPActor)
-    base.is_pipeline = True
-    base.enable_dp_load_balance = True
-    base.enable_dynamic_batch_size = False
-    with pytest.raises(AssertionError, match="DP load balance"):
-        base._validate_pipeline_features()
-
-    base.enable_dp_load_balance = False
-    base.enable_dynamic_batch_size = True
-    with pytest.raises(AssertionError, match="Dynamic batch size"):
-        base._validate_pipeline_features()
-
-    ma_actor = MAFSDPActor.__new__(MAFSDPActor)
-    ma_actor.is_pipeline = True
-    ma_actor.enable_dp_load_balance = True
-    ma_actor.enable_dynamic_batch_size = True
-    ma_actor._validate_pipeline_features()
-
-
-def test_fsdp_actor_init_skips_inference_block_without_dedicated_inference(monkeypatch):
-    """Disaggregated FSDPActor without a dedicated inference group does not
-    require cfg.inference to exist."""
     from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
     from rlinf.scheduler import Worker
     from rlinf.utils.placement import PlacementMode
+    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
     from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
 
     monkeypatch.setattr(Worker, "__init__", lambda self: None)
     monkeypatch.setattr(FSDPModelManager, "__init__", lambda self, *a, **kw: None)
 
-    cfg = OmegaConf.create(
-        {
-            "runner": {
-                "task_type": "reasoning",
-                "enable_dynamic_batch_size": True,
-                "max_tokens_per_mbs": 4096,
-            },
-            "data": {"max_prompt_length": 512, "rollout_batch_size": 4},
-            "algorithm": {
-                "group_size": 2,
-                "n_minibatches": 1,
-                "calculate_entropy": False,
-                "entropy_bonus": 0.0,
-                "kl_beta": 0.0,
-                "kl_penalty_type": "low_var_kl",
-                "loss_agg_func": "token-mean",
-                "loss_scales": [],
-            },
-            "agentloop": {"is_dynamic_rollout_batch": True},
-            "rollout": {"group_name": "RolloutGroup"},
-            "actor": {
-                "micro_batch_size": 1,
-                "enable_dp_load_balance": True,
-                "enable_offload": False,
-                "model": {"encoder_seq_length": 1024},
-            },
-        }
-    )
+    def _make_cfg(*, dp_balance: bool, dynamic_bs: bool):
+        return OmegaConf.create(
+            {
+                "runner": {
+                    "task_type": "reasoning",
+                    "enable_dynamic_batch_size": dynamic_bs,
+                    "max_tokens_per_mbs": 4096,
+                },
+                "data": {"max_prompt_length": 512, "rollout_batch_size": 4},
+                "algorithm": {
+                    "group_size": 2,
+                    "n_minibatches": 1,
+                    "calculate_entropy": False,
+                    "entropy_bonus": 0.0,
+                    "kl_beta": 0.0,
+                    "kl_penalty_type": "low_var_kl",
+                    "loss_agg_func": "token-mean",
+                    "loss_scales": [],
+                },
+                "agentloop": {"is_dynamic_rollout_batch": True},
+                "rollout": {"group_name": "RolloutGroup"},
+                "actor": {
+                    "micro_batch_size": 1,
+                    "enable_dp_load_balance": dp_balance,
+                    "enable_offload": True,
+                    "model": {"encoder_seq_length": 1024},
+                },
+            }
+        )
+
     placement = MagicMock()
     placement.is_disaggregated = True
     placement.has_dedicated_actor_inference = False
     placement.placement_mode = PlacementMode.DISAGGREGATED
 
+    # Base FSDPActor still rejects DP load balance and dynamic batching in pipeline mode.
+    base = FSDPActor.__new__(FSDPActor)
+    base._world_size = 4
+    base._rank = 0
+    with pytest.raises(AssertionError, match="DP load balance"):
+        FSDPActor.__init__(
+            base, _make_cfg(dp_balance=True, dynamic_bs=False), placement
+        )
+
+    base2 = FSDPActor.__new__(FSDPActor)
+    base2._world_size = 4
+    base2._rank = 0
+    with pytest.raises(AssertionError, match="Dynamic batch size"):
+        FSDPActor.__init__(
+            base2, _make_cfg(dp_balance=False, dynamic_bs=True), placement
+        )
+
+    # MAFSDPActor is disaggregated without streaming pipeline: offload is disabled,
+    # cfg.inference is not required, and both DP balance & dynamic batching are allowed.
     actor = MAFSDPActor.__new__(MAFSDPActor)
     actor._world_size = 4
     actor._rank = 0
-    MAFSDPActor.__init__(actor, cfg, placement)
+    MAFSDPActor.__init__(actor, _make_cfg(dp_balance=True, dynamic_bs=True), placement)
 
-    assert actor.is_pipeline is True
+    assert actor.is_disaggregated is True
+    assert actor.is_pipeline is False
+    assert actor.enable_offload is False
     assert actor._inference_group_name is None
     assert actor._inference_world_size == 0
     assert actor._payload_channels is None
+
+    # Disaggregated MAFSDPActor.run_inference succeeds (e.g. synchronous disaggregated
+    # runs with recompute_logprobs=True and no dedicated inference group).
+    group = _versioned_group(0)
+    out_items = []
+
+    class _OutChannel:
+        def put(self, item):
+            out_items.append(item)
+
+    actor.get_step_batch = lambda ch: (group.to_actor_batch(), [group])
+    actor._load_weight_and_optimizer = lambda: None
+    actor.model = SimpleNamespace(eval=lambda: None)
+    actor.worker_timer = lambda: nullcontext()
+    actor.inference_step = lambda batch, compute_ref: (
+        [torch.zeros(len(r)) for r in batch["input_ids"]],
+        None,
+    )
+    actor.run_inference(None, _OutChannel(), compute_ref_logprobs=False)
+
+    assert len(out_items) == 1
+    assert out_items[0].recomputed_logprobs is not None
+    assert len(out_items[0].recomputed_logprobs) == group.num_sequence
 
 
 def _versioned_group(identity):

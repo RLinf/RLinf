@@ -481,10 +481,35 @@ class AsyncChannelCommWork(AsyncWork):
     # Futures of pending gets, by (channel name, channel rank) and then by
     # query ID.
     channel_data_store: dict[tuple[str, int], dict[int, Future]] = {}
-    # Channel ranks whose recv failed: later data from them is dropped, since
-    # the message stream may have lost whatever the failed recv was reading.
-    failed_peers: set[tuple[str, int]] = set()
+    # Channel ranks whose recv or remote get failed, mapped to the first error:
+    # later data from them is dropped, and new gets fail immediately with that
+    # error instead of waiting forever on a failed peer.
+    failed_peers: dict[tuple[str, int], Exception] = {}
     store_lock = threading.Lock()  # Protect store access
+
+    @classmethod
+    def get_peer_failure(cls, peer: tuple[str, int]) -> Optional[Exception]:
+        """Return the recorded failure for ``peer``, or ``None`` if healthy."""
+        with cls.store_lock:
+            return cls.failed_peers.get(peer)
+
+    @classmethod
+    def failed(
+        cls,
+        exc: Exception,
+        peer: tuple[str, int],
+        query_id: int = 0,
+        channel_actor: Optional[ray.actor.ActorHandle] = None,
+    ) -> "AsyncChannelCommWork":
+        """Build an already-failed work without issuing a remote call or recv."""
+        work = cls.__new__(cls)
+        work._async_comm_work = None
+        work._query_id = query_id
+        work._channel_actor = channel_actor
+        work._peer = peer
+        work._data_future = Future()
+        work._data_future.set_exception(exc)
+        return work
 
     def __init__(
         self,
@@ -520,9 +545,14 @@ class AsyncChannelCommWork(AsyncWork):
         self._channel_actor = channel_actor
         self._peer = peer
         with AsyncChannelCommWork.store_lock:
-            self._data_future = AsyncChannelCommWork.channel_data_store.setdefault(
-                peer, {}
-            ).setdefault(query_id, Future())
+            prior_exc = AsyncChannelCommWork.failed_peers.get(peer)
+            if prior_exc is not None:
+                self._data_future = Future()
+                self._data_future.set_exception(prior_exc)
+            else:
+                self._data_future = AsyncChannelCommWork.channel_data_store.setdefault(
+                    peer, {}
+                ).setdefault(query_id, Future())
         # Runs on success and on failure: a failed recv has to reach the
         # gets still waiting on this channel rank.
         self._async_comm_work.add_done_callback(lambda _: self._store_channel_data())
@@ -542,7 +572,7 @@ class AsyncChannelCommWork(AsyncWork):
                     future.set_exception(exc)
             if not self._data_future.done():
                 self._data_future.set_exception(exc)
-            AsyncChannelCommWork.failed_peers.add(self._peer)
+            AsyncChannelCommWork.failed_peers.setdefault(self._peer, exc)
 
     def _on_call_done(self, future: ConcurrentFuture) -> None:
         """Surface a remote ChannelWorker failure to all pending gets on this peer."""

@@ -2424,7 +2424,7 @@ class TestPeerCommunicationFailure:
             late.wait()
 
         assert AsyncChannelCommWork.channel_data_store.get(peer, {}) == {}
-        AsyncChannelCommWork.failed_peers.discard(peer)
+        AsyncChannelCommWork.failed_peers.pop(peer, None)
         AsyncChannelCommWork.channel_data_store.pop(peer, None)
 
     def test_channel_worker_get_and_get_batch_propagate_send_failure(self):
@@ -2471,7 +2471,7 @@ class TestPeerCommunicationFailure:
             assert AsyncChannelCommWork.channel_data_store.get(peer, {}) == {}
             assert peer in AsyncChannelCommWork.failed_peers
         finally:
-            AsyncChannelCommWork.failed_peers.discard(peer)
+            AsyncChannelCommWork.failed_peers.pop(peer, None)
             AsyncChannelCommWork.channel_data_store.pop(peer, None)
 
     def test_a_failed_remote_get_fails_all_concurrent_gets_on_same_peer(self):
@@ -2522,7 +2522,7 @@ class TestPeerCommunicationFailure:
             recvs[0](None)
             assert AsyncChannelCommWork.channel_data_store.get(peer, {}) == {}
         finally:
-            AsyncChannelCommWork.failed_peers.discard(peer)
+            AsyncChannelCommWork.failed_peers.pop(peer, None)
             AsyncChannelCommWork.channel_data_store.pop(peer, None)
 
     @pytest.mark.parametrize("async_op", [False, True])
@@ -2546,7 +2546,77 @@ class TestPeerCommunicationFailure:
             assert AsyncChannelCommWork.channel_data_store.get(peer, {}) == {}
             assert peer in AsyncChannelCommWork.failed_peers
         finally:
-            AsyncChannelCommWork.failed_peers.discard(peer)
+            AsyncChannelCommWork.failed_peers.pop(peer, None)
+            AsyncChannelCommWork.channel_data_store.pop(peer, None)
+
+    def test_subsequent_gets_on_failed_peer_fail_immediately(self):
+        """After a peer fails via call_future, later sync/async get and
+        get_batch calls fail immediately without issuing another remote call
+        or hanging on dropped recv data."""
+        peer_name = f"get_after_fail_{uuid.uuid4().hex[:8]}"
+        peer = (peer_name, 0)
+        remote_calls = 0
+        recv_calls = 0
+
+        class _CountingHandle:
+            def __getattr__(self, name):
+                def remote(*args, **kwargs):
+                    nonlocal remote_calls
+                    remote_calls += 1
+                    if remote_calls == 1:
+                        return _FailingCall(RuntimeError("first remote failed"))
+                    return _CompletedCall(None)
+
+                return SimpleNamespace(remote=remote)
+
+        def _counting_recv():
+            nonlocal recv_calls
+            recv_calls += 1
+            work = AsyncFuncWork(lambda: ("should_not_run", 0))
+            return work
+
+        channel = _get_channel(
+            peer_name, recv_factory=_counting_recv, actor_handle=_CountingHandle()
+        )
+        try:
+            with pytest.raises(RuntimeError, match="first remote failed"):
+                channel.get(async_op=False)
+            assert remote_calls == 1
+            assert recv_calls == 1
+
+            # Subsequent sync/async get and get_batch fail fast without touching
+            # the remote ChannelWorker or issuing another recv.
+            with pytest.raises(RuntimeError, match="first remote failed"):
+                channel.get(async_op=False)
+            async_get = channel.get(async_op=True)
+            assert async_get.done()
+            with pytest.raises(RuntimeError, match="first remote failed"):
+                async_get.wait()
+            with pytest.raises(RuntimeError, match="first remote failed"):
+                asyncio.run(async_get.async_wait())
+
+            with pytest.raises(RuntimeError, match="first remote failed"):
+                channel.get_batch(target_weight=1, async_op=False)
+            async_batch = channel.get_batch(target_weight=1, async_op=True)
+            assert async_batch.done()
+            with pytest.raises(RuntimeError, match="first remote failed"):
+                async_batch.wait()
+
+            assert remote_calls == 1
+            assert recv_calls == 1
+
+            # Even if AsyncChannelCommWork is constructed directly after peer
+            # failure (e.g. a concurrent race), it fails immediately and leaves
+            # no dangling entry in channel_data_store.
+            raced_recv = AsyncFuncWork(lambda: ("late_item", 42))
+            raced_work = AsyncChannelCommWork(raced_recv, 42, None, peer=peer)
+            assert raced_work.done()
+            with pytest.raises(RuntimeError, match="first remote failed"):
+                raced_work.wait()
+            raced_recv(None)
+            assert AsyncChannelCommWork.channel_data_store.get(peer, {}) == {}
+        finally:
+            AsyncChannelCommWork.failed_peers.pop(peer, None)
             AsyncChannelCommWork.channel_data_store.pop(peer, None)
 
     def test_get_nowait_propagates_remote_failure_and_keeps_empty_sentinel(self):
@@ -2642,7 +2712,7 @@ class TestPeerCommunicationFailure:
             assert async_work.wait() == "async_item"
             assert AsyncChannelCommWork.channel_data_store.get(peer, {}) == {}
         finally:
-            AsyncChannelCommWork.failed_peers.discard(peer)
+            AsyncChannelCommWork.failed_peers.pop(peer, None)
             AsyncChannelCommWork.channel_data_store.pop(peer, None)
 
 

@@ -2359,6 +2359,31 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def _validate_agentic_tokenizer_cfg(cfg: DictConfig) -> None:
+    """Validate that agentloop.agentic_tokenizer matches rollout.sglang.tool_call_parser."""
+    agentic_tokenizer = OmegaConf.select(
+        cfg, "agentloop.agentic_tokenizer", default=None
+    )
+    if agentic_tokenizer is None or agentic_tokenizer == "default":
+        return
+    # Imported lazily: a top-level import would be circular, since
+    # rlinf.agents imports rlinf.models, which imports rlinf.config.
+    from rlinf.agents.tokenization.agentic_tokenizer import (
+        agentic_tokenizer_tool_call_parser,
+    )
+
+    expected_parser = agentic_tokenizer_tool_call_parser(agentic_tokenizer)
+    actual_parser = OmegaConf.select(
+        cfg, "rollout.sglang.tool_call_parser", default=None
+    )
+    if expected_parser is not None and actual_parser != expected_parser:
+        raise ValueError(
+            f"agentloop.agentic_tokenizer={agentic_tokenizer!r} binds "
+            f"tool_call_parser={expected_parser!r}, but "
+            f"rollout.sglang.tool_call_parser={actual_parser!r}."
+        )
+
+
 def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
     """Validate SearchR1 multi-agent training requirements before launch."""
     expected_adv_type = (
@@ -2374,6 +2399,7 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             f"Multi-turn training requires algorithm.adv_type={expected_adv_type!r}, "
             f"got {cfg.algorithm.adv_type!r}."
         )
+    _validate_agentic_tokenizer_cfg(cfg)
     reward_cfg = cfg.get("reward", None)
     if reward_cfg is None or reward_cfg.get("reward_type", None) != "searchr1":
         return cfg
@@ -2407,23 +2433,6 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             "data.apply_chat_template is False: the kwargs only reach the chat "
             "template through dataset prompt rendering. Set "
             "data.apply_chat_template: True or remove the kwargs."
-        )
-    agentic_tokenizer = cfg.agentloop.get("agentic_tokenizer", "default")
-    # Imported lazily: a top-level import would be circular, since
-    # rlinf.agents imports rlinf.models, which imports rlinf.config.
-    from rlinf.agents.tokenization.agentic_tokenizer import (
-        agentic_tokenizer_tool_call_parser,
-    )
-
-    expected_parser = agentic_tokenizer_tool_call_parser(agentic_tokenizer)
-    actual_parser = OmegaConf.select(
-        cfg, "rollout.sglang.tool_call_parser", default=None
-    )
-    if expected_parser is not None and actual_parser != expected_parser:
-        raise ValueError(
-            f"agentloop.agentic_tokenizer={agentic_tokenizer!r} binds "
-            f"tool_call_parser={expected_parser!r}, but "
-            f"rollout.sglang.tool_call_parser={actual_parser!r}."
         )
 
     if cfg.critic.get("use_critic_model", False):
@@ -2748,6 +2757,8 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
         session_cfg.chat_template_kwargs = dict(chat_template_kwargs or {})
     if not cfg.session_server.enable:
         return cfg
+
+    _validate_agentic_tokenizer_cfg(cfg)
 
     if not cfg.runner.get("async_mode", False):
         raise ValueError(

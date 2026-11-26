@@ -137,12 +137,12 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
               --load-path "${CKPT_PATH_MF}" --save-path "${CKPT_PATH_HF}" --model qwen_2.5_3b --use-gpu-num 0 --process-num 16
             # FSDP
             python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
-              convertor.train_config_path=/path/to/config.yaml \
-              convertor.ckpt_path=/path/to/checkpoints/global_step_xxx/actor/model_state_dict/full_weights.pt \
-              convertor.save_path=/path/to/hf_model
+              convertor.train_config_path=./examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml \
+              convertor.ckpt_path=./logs/checkpoints/global_step_xxx/actor/model_state_dict/full_weights.pt \
+              convertor.save_path=./hf_model
             # Standalone evaluation
             bash examples/agent/searchr1/run_eval.sh eval_qwen2.5 \
-              rollout.model.model_path=/path/to/hf_model 'data.val_data_paths=["./Search-R1-Data/eval.jsonl"]'
+              rollout.model.model_path=./hf_model 'data.val_data_paths=["./Search-R1-Data/eval.jsonl"]'
 
    .. tab-item:: 3. GLM-4.7-Flash
       :sync: searchr1-glm
@@ -207,7 +207,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
            'data.train_data_paths=["./Search-R1-Data/searchr1_train_glm.jsonl"]' \
            tools.search.server_addr=localhost:8000
 
-      See :doc:`Async Agentic RL </rst_source/guides/async_agentic>` for tuning ``max_inflight_groups``, ``max_buffered_groups``, ``max_actor_accept_staleness``, and ``rollout.pause_mode`` (retract, in_place, drain). To run with the session server, add ``session_server.enable=true`` (see :doc:`Session Server </rst_source/guides/session_server>`).
+      See :doc:`Async Agentic RL </rst_source/guides/async_agentic>` for tuning ``max_inflight_groups``, ``max_buffered_groups``, ``max_actor_accept_staleness``, and ``rollout.pause_mode`` (retract, in_place, drain). To run with the session server—including a single-node 8-GPU FSDP2 example—see :doc:`Session Server </rst_source/guides/session_server>`.
 
       .. dropdown:: Async metrics, resume, and limitations
 
@@ -215,7 +215,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
          **Resume:** checkpoints save the dataloader position to ``data/data.pt`` and skip prompts already issued before saving (192 on the default Qwen config: 128 in-flight/buffered + 64 prefetched).
 
-         **Limitations:** requires Megatron actor, multi-turn agent loop, SGLang server backend, and disaggregated placement; uses rollout logprobs directly (``algorithm.recompute_logprobs: False``); monitor ``dropped_groups`` when enabling ``reject_equal_reward`` (``max_dropped_groups_per_step`` defaults to 10 × batch size).
+         **Limitations:** requires a Megatron or FSDP actor, multi-turn agent loop, SGLang server backend, and disaggregated placement; uses rollout logprobs directly (``algorithm.recompute_logprobs: False``); monitor ``dropped_groups`` when enabling ``reject_equal_reward`` (``max_dropped_groups_per_step`` defaults to 10 × batch size).
 
 Visualization and Results
 -------------------------

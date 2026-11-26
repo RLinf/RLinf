@@ -99,6 +99,12 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
 
+    def _use_streaming_pipeline(
+        self, placement: ModelParallelComponentPlacement
+    ) -> bool:
+        """MAMegatronActor gathers the full step batch instead of streaming chunks."""
+        return False
+
     def _receive_rollout_result(
         self, channel: Channel
     ) -> RolloutResult | DynamicRolloutResult:
