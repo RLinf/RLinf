@@ -96,9 +96,13 @@ class SGLangEngineBackend(RolloutBackend):
             return_logprob=return_logprob,
         )
 
-    async def sync_weights(self, pause_mode: Optional[str] = None) -> None:
+    async def sync_weights(
+        self, pause_mode: Optional[str] = None, weight_version: Optional[int] = None
+    ) -> None:
         await self.engine.tokenizer_manager.sync_hf_weight(
-            obj=io_struct.SyncHFWeightInput(pause_mode=pause_mode)
+            obj=io_struct.SyncHFWeightInput(
+                pause_mode=pause_mode, weight_version=weight_version
+            )
         )
 
     async def offload(self, tags: Optional[list[str]] = None) -> None:
@@ -350,9 +354,13 @@ class SGLangServerBackend(RolloutBackend):
             image_data=image_data,
         )
 
-    async def sync_weights(self, pause_mode: Optional[str] = None) -> None:
+    async def sync_weights(
+        self, pause_mode: Optional[str] = None, weight_version: Optional[int] = None
+    ) -> None:
         await self.http_client.async_sync_hf_weight(
-            obj=io_struct.SyncHFWeightInput(pause_mode=pause_mode)
+            obj=io_struct.SyncHFWeightInput(
+                pause_mode=pause_mode, weight_version=weight_version
+            )
         )
 
     async def update_weight_version(self, version: int) -> None:

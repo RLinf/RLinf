@@ -40,6 +40,7 @@ from .io_struct import (
     TaskMethodInput,
     TaskMethodOutput,
 )
+from .token_metadata import accumulate_token_metadata
 
 
 # Add two methods and their communicators, input/output structs.
@@ -48,15 +49,16 @@ class TokenizerManager(_TokenizerManager):
         self,
         server_args: ServerArgs,
         port_args: PortArgs,
+        **kwargs,
     ):
         super().__init__(
             server_args=server_args,
             port_args=port_args,
+            **kwargs,
         )
 
         self.run_task_method_communicator = _Communicator(
-            self.send_to_scheduler,
-            fan_out=server_args.dp_size,
+            self.send_to_scheduler, server_args.dp_size
         )
         self.sync_hf_weight_communicator = _Communicator(
             self.send_to_scheduler, server_args.dp_size
@@ -104,7 +106,13 @@ class TokenizerManager(_TokenizerManager):
         if obj is None:
             obj = SyncHFWeightInput()
         self.auto_create_handle_loop()
-        await self.sync_hf_weight_communicator(obj)
+        responses = await self.sync_hf_weight_communicator(obj)
+        if obj.weight_version is not None and any(
+            response.weight_version != obj.weight_version for response in responses
+        ):
+            raise RuntimeError(
+                "Not all rollout schedulers acknowledged the published weight version."
+            )
 
     async def abort_generation(
         self,
@@ -114,14 +122,16 @@ class TokenizerManager(_TokenizerManager):
         self.auto_create_handle_loop()
         await self.abort_generation_communicator(obj)
 
-    # to return output_ids and response_text simaltaneously in sglang 0.4.x.
-    # copied from srt/managers/tokenizer_manager.py (0.4.6) and only add "output_ids" in out_dict when isinstance(recv_obj, BatchStrOut) is True
     def _handle_batch_output(
         self,
         recv_obj,
     ):
         import json
         import time
+
+        # Component-based SGLang unwraps and accumulates packet metadata itself.
+        if not hasattr(_TokenizerManager, "update_request_meta_info"):
+            accumulate_token_metadata(recv_obj, self.rid_to_state)
 
         # for sglang 0.5.0 and later, we use the original _handle_batch_output
         if not self.patch_return_output_ids:

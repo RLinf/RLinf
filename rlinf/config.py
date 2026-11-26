@@ -98,6 +98,7 @@ SupportedModel.QWEN2_5 = SupportedModel.register("qwen2.5", force=True)
 SupportedModel.QWEN2_5_VL = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3 = SupportedModel.register("qwen3", force=True)
 SupportedModel.QWEN3_VL = SupportedModel.register("qwen3_vl", force=True)
+SupportedModel.QWEN3_5 = SupportedModel.register("qwen3_5", force=True)
 SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
 SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
@@ -446,6 +447,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         or "Qwen3MoeForCausalLM" in hf_config.architectures
         or "Qwen3VLForConditionalGeneration" in hf_config.architectures
         or "Qwen3VLMoeForConditionalGeneration" in hf_config.architectures
+        or "Qwen3_5ForConditionalGeneration" in hf_config.architectures
+        or "Qwen3_5ForCausalLM" in hf_config.architectures
     ):
         qk_layernorm = True
     else:
@@ -463,7 +466,9 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             # reported as rope_scaling=None and so left this untouched.
             cfg.model.seq_len_interpolation_factor = None
         model_type = getattr(cfg.model, "model_type", None)
-        if model_type == "qwen3_vl" or model_type == "qwen3_vl_moe":
+        if model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen3_5") and hasattr(
+            hf_config, "text_config"
+        ):
             # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
             hf_config = hf_config.text_config
 
@@ -490,6 +495,16 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         )
         if cfg.model.head_dim is not None:
             cfg.model.kv_channels = cfg.model.head_dim
+        if model_type == "qwen3_5":
+            cfg.model.attention_output_gate = hf_config.attn_output_gate
+            for key in (
+                "linear_conv_kernel_dim",
+                "linear_key_head_dim",
+                "linear_value_head_dim",
+                "linear_num_key_heads",
+                "linear_num_value_heads",
+            ):
+                cfg.model[key] = getattr(hf_config, key)
 
         # MoE model
         cfg.model.num_moe_experts = getattr(hf_config, "num_experts", None)
@@ -3342,6 +3357,11 @@ def build_transformer_config(cfg) -> "TransformerConfig":
                 model_parallel_config, field.name
             )
 
+    if isinstance(transformer_config_dict.get("attention_backend"), str):
+        from megatron.core.transformer.enums import AttnBackend
+
+        backend = transformer_config_dict["attention_backend"]
+        transformer_config_dict["attention_backend"] = AttnBackend[backend]
     transformer_config = TransformerConfig(**transformer_config_dict)
 
     # pass mcore customization configs directly to mcore
@@ -3412,3 +3432,23 @@ def _build_model_parallel_config(cfg: DictConfig) -> "ModelParallelConfig":
     model_parallel_config = ModelParallelConfig(**mp_config_dict)
 
     return model_parallel_config
+
+
+def release_image_replay_enabled(rollout: DictConfig | dict | None) -> bool:
+    """Whether SGLang uses the RLinf external Qwen-VL image-capture processor."""
+    return (
+        rollout is not None
+        and (rollout.get("env_vars") or {}).get("SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE")
+        == "rlinf.hybrid_engines.sglang.multimodal"
+    )
+
+
+def sampling_batch_size(cfg: DictConfig) -> int:
+    """Return the candidate batch size (oversampling >= rollout_batch_size)."""
+    effective = cfg.data.rollout_batch_size
+    candidates = cfg.data.get("sampling_batch_size", effective)
+    if type(candidates) is not int or candidates < effective:
+        raise ValueError(
+            f"data.sampling_batch_size must be an int >= rollout_batch_size={effective}, got {candidates!r}"
+        )
+    return candidates

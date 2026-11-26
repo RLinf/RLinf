@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import logging
+from dataclasses import fields
+from functools import wraps
 from importlib.metadata import version
 from typing import Any, Callable, Literal, Optional
 
@@ -26,13 +28,14 @@ except ImportError:
     # sglang 0.5.2/0.5.4 lack this symbol; these values are stable across versions.
     GPU_MEMORY_ALL_TYPES = ["weights", "kv_cache", "cuda_graph"]
 from sglang.srt.managers.io_struct import (
+    AbortReq,
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
 )
 from sglang.srt.managers.scheduler import Scheduler as _Scheduler
 from sglang.srt.managers.scheduler import logger
 from sglang.srt.managers.scheduler import (
-    run_scheduler_process as _run_scheduler_process,
+    run_scheduler_process as ORIG__run_scheduler_process,
 )
 
 from rlinf.scheduler import Worker, WorkerAddress
@@ -71,16 +74,98 @@ def patch_glm4_moe_lite_shared_expert_tp1():
         Glm4MoeLiteSparseMoeBlock._shared_expert_tp1 = False
 
 
+def patch_sglang_presharded_weights(model: torch.nn.Module) -> None:
+    """Adapt unquantized Qwen3.5 shards to SGLang's native parameter loaders.
+
+    Full-checkpoint loads retain their original behavior. The adapters only
+    handle the packed inputs and local tensors missing from 0.5.12.post1.
+    """
+    from sglang.srt.layers.linear import QKVParallelLinear
+    from sglang.srt.model_loader.weight_utils import default_weight_loader
+    from sglang.srt.models.qwen3_5 import Qwen3_5GatedDeltaNet
+
+    def packed_loader(module, original):
+        @wraps(original)
+        def load(param, weight, shard_id=None):
+            if module.use_presharded_weights and isinstance(shard_id, tuple):
+                sizes = [module.output_sizes[i] // module.tp_size for i in shard_id]
+                dim = param.output_dim
+                for index, chunk in zip(
+                    shard_id, weight.split(sizes, dim), strict=True
+                ):
+                    original(param, chunk, index)
+            else:
+                original(param, weight, shard_id)
+
+        return load
+
+    def local_loader(module, original):
+        @wraps(original)
+        def load(param, weight):
+            if module.use_presharded_weights:
+                default_weight_loader(param, weight)
+            else:
+                original(param, weight)
+
+        return load
+
+    def qkv_loader(module, original):
+        @wraps(original)
+        def load(param, weight, shard_id=None):
+            if module.use_presharded_weights and shard_id is None:
+                sizes = (
+                    module.num_heads * module.head_size,
+                    module.num_kv_heads * module.head_size,
+                    module.num_kv_heads * module.v_head_size,
+                )
+                dim = param.output_dim
+                for index, chunk in zip("qkv", weight.split(sizes, dim), strict=True):
+                    original(param, chunk, index)
+            else:
+                original(param, weight, shard_id)
+
+        return load
+
+    for module in model.modules():
+        if getattr(module, "_rlinf_presharded_loader_patched", False):
+            continue
+        if isinstance(module, Qwen3_5GatedDeltaNet):
+            projection = module.in_proj_qkvz
+            projection.weight.weight_loader = packed_loader(
+                projection, projection.weight.weight_loader
+            )
+            for param in (module.A_log, module.dt_bias, module.conv1d.weight):
+                param.weight_loader = local_loader(projection, param.weight_loader)
+        elif isinstance(module, QKVParallelLinear):
+            for param in (module.weight, module.bias):
+                if param is not None:
+                    param.weight_loader = qkv_loader(module, param.weight_loader)
+        else:
+            continue
+        module._rlinf_presharded_loader_patched = True
+
+
 class Scheduler(_Scheduler):
     """
     Overridden class of SGLang's TP worker class _Scheduler.
     A Scheduler is a Task that manages the TP worker, and performs necessary weight synchronization with actor and weight offloading.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, server_args, *args, **kwargs):
+        self._rlinf_weight_version = None
+        self._rlinf_generated_tokens = 0
         # Must run before super().__init__, which builds the model.
         patch_glm4_moe_lite_shared_expert_tp1()
-        super().__init__(*args, **kwargs)
+        if server_args.device in ("cuda", "hip"):
+            from triton.runtime import driver
+
+            # Driver discovery must finish before model setup captures CUDA graphs.
+            _ = driver.active
+        super().__init__(server_args, *args, **kwargs)
+        if not hasattr(self, "tp_rank"):
+            from sglang.srt.runtime_context import get_parallel
+
+            self.tp_rank = get_parallel().tp_rank
         # `TpModelWorkerClient` is used when ServerArgs.enable_overlap=True, and it has 'worker' attribute.
         # But in early SGLang version, `TpModelWorker` doesn't have 'worker' attribute.
         if not hasattr(self.tp_worker, "worker"):
@@ -91,6 +176,8 @@ class Scheduler(_Scheduler):
             (TaskMethodInput, self.run_task_method),
             (SyncHFWeightInput, self.sync_hf_weight),
             (AbortGenerationInput, self.abort_generation),
+            (ReleaseMemoryOccupationReqInput, self.release_memory_occupation),
+            (ResumeMemoryOccupationReqInput, self.resume_memory_occupation),
         ]
         if isinstance(self._request_dispatcher._mapping, dict):
             for _ty, _fn in _extra_req_mapping:
@@ -146,10 +233,12 @@ class Scheduler(_Scheduler):
             f"{sorted(already_offloaded)} already offloaded. "
             f"offload_state={self.offloaded_tags}"
         )
+        result = getattr(self, "weight_updater", super()).release_memory_occupation(
+            recv_req
+        )
         for tag in requested_tags:
             self.offloaded_tags[tag] = True
         self.is_weight_offloaded = self.offloaded_tags.get("weights", False)
-        result = super().release_memory_occupation(recv_req)
         return result
 
     def resume_memory_occupation(self, recv_req: ResumeMemoryOccupationReqInput):
@@ -162,10 +251,12 @@ class Scheduler(_Scheduler):
             f"{sorted(not_offloaded)} are not offloaded (already onloaded). "
             f"offload_state={self.offloaded_tags}"
         )
+        result = getattr(self, "weight_updater", super()).resume_memory_occupation(
+            recv_req
+        )
         for tag in requested_tags:
             self.offloaded_tags[tag] = False
         self.is_weight_offloaded = self.offloaded_tags.get("weights", False)
-        result = super().resume_memory_occupation(recv_req)
         if self.weight_reload == "cpu":
             model = self.tp_worker.worker.model_runner.model
             model.load_state_dict(self.cpu_state_dict)
@@ -242,9 +333,6 @@ class Scheduler(_Scheduler):
         assert self.weight_reload == "sync", (
             "only sglang with 'sync' can run 'sync_hf_weight'"
         )
-        use_cudagraph = not self.cfg.rollout.enforce_eager
-        assert use_cudagraph, "use_cudagraph must be True now."
-
         # Under overlap scheduling an already-launched batch may still be on
         # the GPU when a pause leaves it unprocessed; wait before load_weights.
         Worker.torch_platform.synchronize()
@@ -313,8 +401,49 @@ class Scheduler(_Scheduler):
                 )
             self.weight_norm_dict = None
 
+        if self.model_config.is_multimodal:
+            from sglang.srt.managers import mm_utils
+
+            if mm_utils.embedding_cache is not None:
+                mm_utils.embedding_cache.clear()
         self._handle_cache_after_sync(recv_req.pause_mode)
-        return SyncHFWeightOutput()
+        if recv_req.weight_version is not None:
+            self._rlinf_weight_version = recv_req.weight_version
+        return SyncHFWeightOutput(weight_version=self._rlinf_weight_version)
+
+    def maybe_collect_customized_info(self, i, req, logits_output):
+        super().maybe_collect_customized_info(i, req, logits_output)
+        self._stamp_generated_weight_versions(req)
+
+    def init_batch_result_processor(self) -> None:
+        """Install the token-version hook on component-based SGLang schedulers."""
+        super().init_batch_result_processor()
+        processor = self.batch_result_processor
+        stamp_versions = self._stamp_generated_weight_versions
+
+        class VersionedBatchResultProcessor(type(processor)):
+            def _maybe_collect_customized_info(self, i, req, logits_output):
+                super()._maybe_collect_customized_info(i, req, logits_output)
+                stamp_versions(req)
+
+        self.batch_result_processor = VersionedBatchResultProcessor(
+            **{
+                field.name: getattr(processor, field.name)
+                for field in fields(processor)
+                if field.init
+            }
+        )
+
+    def _stamp_generated_weight_versions(self, req) -> None:
+        if self._rlinf_weight_version is not None:
+            if req.customized_info is None:
+                req.customized_info = {}
+            versions = req.customized_info.setdefault("rollout_weight_versions", [])
+            count = len(req.output_ids) - len(versions)
+            if count < 0:
+                raise RuntimeError("Generated token prefixes must survive retraction.")
+            versions.extend([self._rlinf_weight_version] * count)
+            self._rlinf_generated_tokens += count
 
     def _handle_cache_after_sync(self, pause_mode: Optional[str]):
         """Handle prefix tree / KV caches at the end of `sync_hf_weight`.
@@ -387,21 +516,21 @@ class Scheduler(_Scheduler):
         return TaskMethodOutput(method_name=obj.method_name, result=result)
 
     def abort_generation(self, recv_req: AbortGenerationInput):
-        # clear waiting reqs
-        waiting_reqs = []
-        # waiting_reqs.append(self.waiting_queue)
-        for req in self.waiting_queue:
-            req.to_abort = True
-
-        # abort every running req with no kvcache
-        running_reqs = []
-        running_reqs.append(self.running_batch.reqs)
-        for req in self.running_batch.reqs:
-            req.to_abort = True
-        res = AbortGenerationOutput(
-            waiting_reqs=waiting_reqs, running_reqs=running_reqs
+        """Cancel through the native scheduler and acknowledge only request IDs."""
+        waiting_ids = [req.rid for req in self.waiting_queue]
+        running = (
+            list(self.running_batch.reqs) if self.running_batch is not None else []
         )
-        return res
+        current = getattr(self, "cur_batch", None)
+        if current is not None and current is not self.running_batch:
+            running.extend(current.reqs)
+        running_ids = list(dict.fromkeys(req.rid for req in running))
+        # Native abort handles queued, chunked-prefill and running requests,
+        # including their KV/Mamba release and tokenizer notifications.
+        self.abort_request(AbortReq(abort_all=True))
+        # Req contains process-local locks in recent SGLang versions. Sending
+        # it through the scheduler's ZMQ response crashes the model server.
+        return AbortGenerationOutput(waiting_reqs=waiting_ids, running_reqs=running_ids)
 
     def init_rlinf_worker(
         self,
@@ -440,8 +569,12 @@ class Scheduler(_Scheduler):
                 False if self.cfg.actor.training_backend == "fsdp" else True
             )
             model = self.tp_worker.worker.model_runner.model
-            # it's important to use load_weight to load resharded weight from megatron
-            for _, module in model.named_modules():
+            if (
+                self.cfg.rollout.model.model_type == "qwen3_5"
+                and self.cfg.actor.training_backend == "megatron"
+            ):
+                patch_sglang_presharded_weights(model)
+            for module in model.modules():
                 if hasattr(module, "use_presharded_weights"):
                     module.use_presharded_weights = use_presharded_weights
 
@@ -483,17 +616,32 @@ class Scheduler(_Scheduler):
             )
 
     def get_scheduler_running_state(self):
-        num_used = self.max_total_num_tokens - (
-            self.token_to_kv_pool_allocator.available_size()
-            + self.tree_cache.evictable_size()
-        )
+        capacity = self.max_total_num_tokens
+        get_pool_stats = getattr(self, "get_pool_stats", None)
+        observer = getattr(self, "pool_stats_observer", None)
+        if observer is not None:
+            stats = observer.get_pool_stats()
+            num_used = stats.full_num_used
+            if stats.full_capacity is not None:
+                capacity = stats.full_capacity
+            token_usage = stats.full_token_usage
+        elif get_pool_stats is not None:
+            # Hybrid caches account for full KV tokens and recurrent slots separately.
+            num_used = get_pool_stats().full_num_used
+            token_usage = num_used / capacity
+        else:
+            num_used = capacity - (
+                self.token_to_kv_pool_allocator.available_size()
+                + self.tree_cache.evictable_size()
+            )
+            token_usage = num_used / capacity
         num_running_reqs = len(self.running_batch.reqs)
         return {
             "num_running_reqs": num_running_reqs,
             "max_running_reqs": self.max_running_requests,
             "num_used_tokens": num_used,
-            "max_total_num_tokens": self.max_total_num_tokens,
-            "token_usage": num_used / self.max_total_num_tokens,
+            "max_total_num_tokens": capacity,
+            "token_usage": token_usage,
             "num_queue_reqs": len(self.waiting_queue),
         }
 
@@ -786,4 +934,4 @@ def run_scheduler_process(*args, **kwargs):
         "rlinf.hybrid_engines.sglang.common.sgl_scheduler.Scheduler",
     )
     Patcher.apply()
-    _run_scheduler_process(*args, **kwargs)
+    ORIG__run_scheduler_process(*args, **kwargs)
