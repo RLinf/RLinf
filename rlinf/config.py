@@ -3241,9 +3241,15 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.get("critic", None) is not None:
         if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":
+            from transformers import AutoConfig
+
+            critic_hf_config = AutoConfig.from_pretrained(
+                cfg.rollout.model.model_path, trust_remote_code=True
+            )
+            _resolve_megatron_model_type(cfg.critic.model, critic_hf_config)
             cfg.critic = validate_megatron_cfg(cfg.critic)
             cfg.critic = validate_model_cfg_by_hf_config(
-                cfg.critic, cfg.rollout.model.model_path
+                cfg.critic, cfg.rollout.model.model_path, hf_config=critic_hf_config
             )
         elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
             cfg.critic = validate_fsdp_cfg(cfg.critic)

@@ -2337,6 +2337,97 @@ class TestMegatronModelConfig:
             assert result.model.model_type == model_type
             assert result.megatron.get("mbridge", False) is bool(mbridge)
 
+    @pytest.mark.placement
+    @pytest.mark.parametrize("explicit_type", [False, True])
+    @pytest.mark.parametrize(
+        "checkpoint_type,mbridge,mtp_options,error",
+        [
+            ("qwen3_5", True, {}, None),
+            ("qwen3_5", True, {"load_mtp": False}, None),
+            ("qwen3_5", True, {"load_mtp": True, "mtp_loss_scaling_factor": 0.2}, None),
+            ("qwen3_5", False, {}, "mbridge=True"),
+            ("qwen3_5", True, {"load_mtp": "false"}, "load_mtp"),
+            (
+                "qwen3_5",
+                True,
+                {"mtp_loss_scaling_factor": "invalid"},
+                "mtp_loss_scaling_factor",
+            ),
+            ("qwen2.5", False, {}, None),
+            ("qwen2.5", True, {}, None),
+        ],
+    )
+    def test_critic_model_identity_before_megatron_validation(
+        self, tmp_path, explicit_type, checkpoint_type, mbridge, mtp_options, error
+    ):
+        from transformers import Qwen2Config, Qwen3_5Config
+
+        from rlinf.config import validate_cfg
+
+        actor_path = tmp_path / "actor"
+        critic_path = tmp_path / "critic"
+        Qwen2Config(architectures=["Qwen2ForCausalLM"]).save_pretrained(actor_path)
+        hf = (
+            Qwen3_5Config(architectures=["Qwen3_5ForConditionalGeneration"])
+            if checkpoint_type == "qwen3_5"
+            else Qwen2Config(architectures=["Qwen2ForCausalLM"])
+        )
+        hf.save_pretrained(critic_path)
+        actor = {
+            "training_backend": "megatron",
+            "global_batch_size": 1,
+            "micro_batch_size": 1,
+            "model": {
+                "model_type": "qwen2.5",
+                "model_path": str(actor_path),
+                "precision": "bf16",
+                "activation": "swiglu",
+                "normalization": "rmsnorm",
+            },
+            "megatron": {"mbridge": True, "use_hf_ckpt": True},
+            "optim": {},
+            "lr_sched": {},
+        }
+        critic = copy.deepcopy(actor)
+        critic["use_critic_model"] = True
+        critic["model"]["model_path"] = str(critic_path)
+        if explicit_type:
+            critic["model"]["model_type"] = checkpoint_type
+        else:
+            del critic["model"]["model_type"]
+        critic["model"].update(mtp_options)
+        critic["megatron"]["mbridge"] = mbridge
+        cfg = OmegaConf.create(
+            {
+                "runner": {"task_type": "sft"},
+                "cluster": {"num_nodes": 1, "component_placement": {}},
+                "data": {"train_data_paths": ["unused"]},
+                "actor": actor,
+                "critic": critic,
+                "rollout": {"model": {"model_path": str(critic_path)}},
+            }
+        )
+        if error:
+            with pytest.raises(AssertionError, match=error):
+                validate_cfg(cfg)
+            return
+        result = validate_cfg(cfg).critic
+        text = hf.text_config if checkpoint_type == "qwen3_5" else hf
+        assert result.model.hidden_size == text.hidden_size
+        assert result.megatron.mbridge is mbridge
+        if checkpoint_type == "qwen3_5":
+            assert result.model.model_type == checkpoint_type
+            assert result.model.load_mtp is mtp_options.get("load_mtp", False)
+            assert result.model.mtp_loss_scaling_factor == mtp_options.get(
+                "mtp_loss_scaling_factor", 0.1
+            )
+        else:
+            assert result.model.get("model_type") == (
+                checkpoint_type if explicit_type else None
+            )
+            assert "load_mtp" not in result.model
+            assert "mtp_loss_scaling_factor" not in result.model
+
     def test_qwen35_rejects_text_only_architecture(self, tmp_path):
         import transformers
         from omegaconf import OmegaConf

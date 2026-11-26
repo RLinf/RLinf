@@ -54,7 +54,6 @@ from rlinf.runners.async_weight_sync_mixin import AsyncWeightSyncMixin
 from rlinf.scheduler import AcceleratorType, Worker
 from rlinf.utils.env_helpers import SmoothInterveneController  # noqa: E402
 from rlinf.utils.utils import collect_param_names_need_sync
-from rlinf.workers.env.env_worker import EnvWorker  # noqa: E402
 from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
@@ -2023,6 +2022,8 @@ def test_teardown_is_a_noop_without_a_pending_sync(runner_cls) -> None:
 
 class TestOverlapEnvBootstrap(unittest.TestCase):
     def setUp(self):
+        from rlinf.workers.env.env_worker import EnvWorker
+
         self.cfg = OmegaConf.create(
             {
                 "env": {
@@ -2338,6 +2339,8 @@ def sglang_args_worker(monkeypatch):
         weight_reload="sync",
     ):
         worker = object.__new__(SGLangWorker)
+        worker._logger = logging.getLogger("sglang-args-test")
+        worker._stacklevel = 1
         worker._rank = 1
         # The port-lock service normally lives in the scheduler process.
         worker._port_lock = SimpleNamespace(acquire=lambda port: True)
@@ -2882,14 +2885,39 @@ class TestMegatronSGLangWeightSync:
             "/unused/checkpoint" if load_mtp else None
         )
 
+    @pytest.mark.parametrize("legacy_fields", [False, True])
     @pytest.mark.parametrize("model_type", ["qwen3_5", "deepseek_v3", "glm4_moe_lite"])
     @pytest.mark.parametrize(
         "training_backend,weight_reload",
         [("megatron", "sync"), ("fsdp", "sync"), (None, None)],
     )
     def test_sglang_options_reach_all_model_backends(
-        self, model_type, training_backend, weight_reload, sglang_args_worker
+        self,
+        model_type,
+        training_backend,
+        weight_reload,
+        sglang_args_worker,
+        caplog,
+        monkeypatch,
+        legacy_fields,
     ):
+        import dataclasses
+
+        from rlinf.workers.rollout.sglang import sglang_worker
+
+        if legacy_fields:
+            fields = dict(sglang_worker.ServerArgs.__dataclass_fields__)
+            for name in ("mm_enable_dp_encoder", "mamba_scheduler_strategy"):
+                fields.pop(name, None)
+            monkeypatch.setattr(
+                sglang_worker.ServerArgs, "__dataclass_fields__", fields
+            )
+            monkeypatch.setattr(
+                sglang_worker,
+                "_SERVER_ARGS_FIELDS",
+                {field.name for field in dataclasses.fields(sglang_worker.ServerArgs)},
+            )
+
         options = {
             "mm_enable_dp_encoder": True,
             "disable_radix_cache": False,
@@ -2912,7 +2940,11 @@ class TestMegatronSGLangWeightSync:
         )
         args = worker._build_server_args()
         for name, value in options.items():
-            assert args[name] == value
+            if name in sglang_worker._SERVER_ARGS_FIELDS:
+                assert args[name] == value
+            else:
+                assert name not in args
+                assert f"has no field {name!r}" in caplog.text
 
     @pytest.mark.parametrize("load_mtp", [False, True])
     @pytest.mark.parametrize(
@@ -2959,7 +2991,6 @@ class TestMegatronSGLangWeightSync:
         monkeypatch,
     ):
         from sglang.srt.managers import mm_utils
-        from sglang.srt.managers.scheduler import Scheduler as NativeScheduler
 
         from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
 
@@ -2977,9 +3008,6 @@ class TestMegatronSGLangWeightSync:
         monkeypatch.setattr(mm_utils, "embedding_cache", embedding_cache)
         if pause_mode in ("in_place", "retract"):
             scheduler.waiting_queue.append(object())
-        monkeypatch.setattr(
-            NativeScheduler, "is_fully_idle", lambda self: not self.waiting_queue
-        )
         waiting_queue = scheduler.waiting_queue
         waiting_requests = list(waiting_queue)
         scheduler.sync_hf_weight(SyncHFWeightInput(pause_mode=pause_mode))

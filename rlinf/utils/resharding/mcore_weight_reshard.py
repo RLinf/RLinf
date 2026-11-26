@@ -158,28 +158,6 @@ class MegatronCoreWeightReshard:
             model_bucket_list.append({})
         return model_bucket_list
 
-    def gather_and_reshard_model(
-        self,
-        bucket_weight,
-        dst_tp_rank,
-        dst_ep_rank=None,
-        dst_lm_head_rank=None,
-        dst_shared_rank=None,
-    ):
-        """Gather once and narrow once, for the single-target inference reshard.
-
-        The rollout path calls the two halves directly so that one gather can
-        serve several targets.
-        """
-        full_sd = self.gather_full_model(bucket_weight)
-        return self.narrow_to_target(
-            full_sd,
-            dst_tp_rank,
-            dst_ep_rank,
-            dst_lm_head_rank=dst_lm_head_rank,
-            dst_shared_rank=dst_shared_rank,
-        )
-
     def gather_full_model(self, bucket_weight):
         """Gather one bucket's parameters into full tensors.
 
