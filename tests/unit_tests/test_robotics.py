@@ -78,6 +78,7 @@ from rlinf.robotics.parts.arms import (
 from rlinf.robotics.parts.arms.franka import FrankaRobotState
 from rlinf.robotics.parts.cameras.uvc import UVCCamera
 from rlinf.robotics.parts.end_effectors import BaseHand
+from rlinf.robotics.parts.mobility import Go2Base
 from rlinf.robotics.parts.mobility.lekiwi import (
     body_to_wheel_raw,
     limit_wheel_raw,
@@ -5958,6 +5959,97 @@ def test_ros_parts_share_one_session_per_process():
             ROSController._shared = None
 
 
+@pytest.mark.parametrize(
+    "probe", ["exit 0", "exit 1", "exec sleep 10"], ids=["healthy", "offline", "hung"]
+)
+def test_ros_checks_master_before_reusing_roscore(monkeypatch, tmp_path, probe):
+    from robot_mocks import mocked_sdks
+
+    master_uri = "http://remapped-master:11311/"
+    rosparam = tmp_path / "rosparam"
+    rosparam.write_text(
+        f'#!/bin/sh\n[ "$1" = list ] && [ "$ROS_MASTER_URI" = "{master_uri}" ] '
+        f"|| exit 2\n{probe}\n"
+    )
+    rosparam.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("ROS_MASTER_URI", "http://default-master:11311/")
+    with mocked_sdks(
+        extra={
+            "rosgraph": SimpleNamespace(get_master_uri=lambda: master_uri),
+            "rosgraph.network": SimpleNamespace(
+                is_local_address=lambda host: False,
+                parse_http_host_and_port=lambda uri: ("remapped-master", 11311),
+            ),
+        }
+    ):
+        import rospy
+
+        from rlinf.robotics.parts.transports.ros import ros_controller
+
+        core = SimpleNamespace(name=lambda: "roscore")
+        monkeypatch.setattr(ros_controller.psutil, "process_iter", lambda: [core])
+        init_node = mock.Mock()
+        monkeypatch.setattr(rospy, "init_node", init_node)
+        if probe == "exit 0":
+            ros_controller.ROSController()
+            init_node.assert_called_once()
+        else:
+            with pytest.raises(RuntimeError, match="ROS_MASTER_URI"):
+                ros_controller.ROSController()
+            init_node.assert_not_called()
+
+
+def test_ros_starts_local_target_without_replacing_another_master(monkeypatch):
+    import subprocess
+
+    from robot_mocks import mocked_sdks
+
+    master_uri = "http://127.0.0.1:11312/"
+    with mocked_sdks(
+        extra={
+            "rosgraph": SimpleNamespace(get_master_uri=lambda: master_uri),
+            "rosgraph.network": SimpleNamespace(
+                is_local_address=lambda host: host == "127.0.0.1",
+                parse_http_host_and_port=lambda uri: ("127.0.0.1", 11312),
+            ),
+        }
+    ):
+        import rospy
+
+        from rlinf.robotics.parts.transports.ros import ros_controller
+
+        other_core = mock.Mock()
+        other_core.name.return_value = "roscore"
+        monkeypatch.setattr(ros_controller.psutil, "process_iter", lambda: [other_core])
+        connect = mock.Mock(side_effect=ConnectionRefusedError)
+        launch = mock.Mock()
+        launch.return_value.poll.return_value = None
+        probe = mock.Mock(
+            side_effect=[
+                subprocess.CalledProcessError(1, ["rosparam", "list"]),
+                subprocess.CalledProcessError(1, ["rosparam", "list"]),
+                subprocess.CompletedProcess(["rosparam", "list"], 0),
+            ]
+        )
+        init_node = mock.Mock()
+        monkeypatch.setattr(ros_controller.socket, "create_connection", connect)
+        monkeypatch.setattr(ros_controller.psutil, "Popen", launch)
+        monkeypatch.setattr(ros_controller.subprocess, "run", probe)
+        monkeypatch.setattr(ros_controller.time, "sleep", lambda _: None)
+        monkeypatch.setattr(rospy, "init_node", init_node)
+
+        ros_controller.ROSController()
+
+        connect.assert_called_once_with(("127.0.0.1", 11312), timeout=0.5)
+        assert launch.call_args.args == (["roscore", "-p", "11312"],)
+        assert launch.call_args.kwargs["env"]["ROS_MASTER_URI"] == master_uri
+        assert probe.call_count == 3
+        other_core.kill.assert_not_called()
+        other_core.terminate.assert_not_called()
+        init_node.assert_called_once()
+
+
 def test_a_ros_hand_opens_without_an_arm_to_hand_it_a_session():
     from robot_mocks import mocked_sdks
 
@@ -9400,3 +9492,741 @@ def test_lekiwi_camera_save_failure_returns_error(monkeypatch, tmp_path, capsys)
     assert result == 1
     assert "Could not save camera frame" in output.err
     assert "Saved the last frame" not in output.out
+
+
+def test_go2_sdk2_reads_fresh_distinct_checksum_valid_state(go2_sdk):
+    from robot_mocks.unitree_go2 import lowstate
+
+    from toolkits.realworld_check.check_go2_lowstate import Go2SDK2
+
+    transport = Go2SDK2("test0")
+    transport.connect()
+    try:
+        transport.wait_for_state()
+        first = transport.read()
+        with pytest.raises(TypeError):
+            first.q[0] = 1.0
+        duplicate = lowstate()
+        duplicate.motor_state[0].q = 1.0
+        go2_sdk.callback(duplicate)
+        assert transport.read() == first
+        corrupt = lowstate(tick=2)
+        corrupt.crc = 0
+        go2_sdk.callback(corrupt)
+        assert transport.read() == first
+        go2_sdk.callback(lowstate(tick=3))
+        assert transport.read().timestamp > first.timestamp
+    finally:
+        transport.close()
+    assert go2_sdk.events == [
+        ("dds", 0, "test0"),
+        ("subscribe", "rt/lowstate"),
+        ("close",),
+    ]
+
+
+@pytest.mark.parametrize("publish", [True, False])
+def test_go2_sdk2_state_command_closes_subscription(go2_sdk, monkeypatch, publish):
+    from toolkits.realworld_check.check_go2_lowstate import main
+
+    go2_sdk.publish_initial = publish
+    monkeypatch.setattr(sys, "argv", ["sdk2", "--interface", "test0"])
+    if publish:
+        main()
+    else:
+        with pytest.raises(TimeoutError, match="fresh checksum-valid"):
+            main()
+    assert go2_sdk.events == [
+        ("dds", 0, "test0"),
+        ("subscribe", "rt/lowstate"),
+        ("close",),
+    ]
+
+
+@pytest.fixture
+def go2_sdk(monkeypatch):
+    """Replace only SDK2 modules; tests cannot reach DDS or hardware."""
+    from robot_mocks.unitree_go2 import FakeGo2SDK
+
+    from rlinf.robotics import go2_dds
+    from rlinf.robotics.parts.mobility.unitree_go2 import _sport_transport
+
+    monkeypatch.setattr(go2_dds, "_interface", None)
+    _sport_transport.cache_clear()
+    sdk = FakeGo2SDK()
+    for name, module in sdk.modules().items():
+        monkeypatch.setitem(sys.modules, name, module)
+    yield sdk
+    _sport_transport.cache_clear()
+
+
+@pytest.fixture
+def connect_go2(go2_sdk, request):
+    def connect(**timeouts):
+        base = Go2Base("fake-go2", enable_motion=True, **timeouts)
+        base.connect()
+        request.addfinalizer(base.disconnect)
+        return base
+
+    return connect
+
+
+@pytest.mark.parametrize("motion", [False, True])
+def test_go2_rejects_preinitialized_native_interface(go2_sdk, motion):
+    from unitree_sdk2py.core.channel import ChannelFactoryInitialize
+
+    ChannelFactoryInitialize(0, "external0")
+    with pytest.raises(RuntimeError, match="Cannot verify"):
+        Go2Base("other0", enable_motion=motion).connect()
+    assert go2_sdk.events == [("dds", 0, "external0")]
+
+
+def test_go2_adapters_share_process_dds(go2_sdk):
+    from toolkits.realworld_check.check_go2_lowstate import Go2SDK2
+
+    base = Go2Base("test0")
+    reader = Go2SDK2("test0")
+    base.connect()
+    try:
+        with pytest.raises(RuntimeError, match="exclusive"):
+            reader.connect()
+        with pytest.raises(RuntimeError, match="exclusive"):
+            Go2Base("test0", enable_motion=True).connect()
+        base.get_observation()
+        assert ("close",) not in go2_sdk.events
+    finally:
+        base.disconnect()
+
+    with pytest.raises(RuntimeError, match="DDS interface"):
+        Go2SDK2("test1").connect()
+    reader.connect()
+    try:
+        with pytest.raises(RuntimeError, match="exclusive"):
+            base.connect()
+        reader.wait_for_state()
+    finally:
+        reader.close()
+    with pytest.raises(RuntimeError, match="DDS interface"):
+        Go2Base("test1").connect()
+    assert go2_sdk.events.count(("dds", 0, "test0")) == 1
+
+
+@pytest.mark.parametrize("flag", ["false", "0", "true", 0, 1, None])
+def test_go2_motion_requires_boolean_opt_in(go2_sdk, flag):
+    with pytest.raises(TypeError, match="enable_motion"):
+        Go2Base("fake-go2", enable_motion=flag)
+    assert go2_sdk.events == []
+
+
+def test_go2_readonly_never_creates_motion_client(go2_sdk):
+    base = Go2Base("fake-go2")
+    base.connect()
+    try:
+        obs = base.get_observation()
+        assert obs["joint_position"].shape == (12,)
+        np.testing.assert_array_equal(obs["foot_force_raw"], [40, 0, 0, 0])
+        assert obs["battery_voltage"][0] == pytest.approx(31.52)
+        obs["joint_position"][:] = 99
+        assert base.get_observation()["joint_position"][0] == 0
+        base.send_action({"velocity": [0, 0, 0]})
+        with pytest.raises(PermissionError, match="read-only"):
+            base.send_action({"velocity": [0.3, 0, 0]})
+    finally:
+        base.disconnect()
+    assert not any(e[0] in ("client", "move", "stop") for e in go2_sdk.events)
+
+
+def test_go2_motion_preserves_sdk_units_and_stops_on_reset_and_close(go2_sdk):
+    from rlinf.robotics import Go2Robot
+
+    robot = Go2Robot.build(interface="fake-go2", enable_motion=True)
+    assert go2_sdk.events == []
+    robot.connect()
+    robot.send_action({"base": {"velocity": [0.3, -0.3, 0.5]}})
+    move = next(e for e in go2_sdk.events if e[0] == "move")
+    assert move[1:] == pytest.approx((0.3, -0.3, 0.5))
+    robot.reset()
+    robot.disconnect()
+    robot.disconnect()
+    assert [e[0] for e in go2_sdk.events].count("stop") == 3
+    assert go2_sdk.events[-1] == ("close",)
+
+
+def test_go2_dispatches_the_validated_velocity_snapshot(
+    go2_sdk, connect_go2, monkeypatch
+):
+    from unitree_sdk2py.go2.sport.sport_client import SportClient
+
+    base = connect_go2()
+    velocity = np.array([0.1, 0, 0], dtype=np.float32)
+    set_timeout = SportClient.SetTimeout
+
+    def reuse_input(client, timeout):
+        velocity[0] = 1.0
+        set_timeout(client, timeout)
+
+    monkeypatch.setattr(SportClient, "SetTimeout", reuse_input)
+    sent = base.send_action({"velocity": velocity})
+    assert velocity[0] == 1.0
+    assert next(e[1:] for e in go2_sdk.events if e[0] == "move") == pytest.approx(
+        (0.1, 0, 0)
+    )
+    np.testing.assert_allclose(sent["velocity"], [0.1, 0, 0])
+
+
+@pytest.mark.parametrize(
+    "limiting_timeout",
+    ["command_timeout", "state_timeout", "rpc_timeout", "match_poll"],
+)
+def test_go2_move_wait_allows_only_an_already_matched_writer(
+    go2_sdk, connect_go2, monkeypatch, limiting_timeout
+):
+    from unitree_sdk2py.go2.sport.sport_client import SportClient
+
+    options = {} if limiting_timeout == "match_poll" else {limiting_timeout: 0.04}
+
+    # The pinned SDK sleeps 100 ms once if initially unmatched, deducts that
+    # interval from the allowance, then rejects when the allowance is exhausted.
+    def match_during_first_poll(client, *velocities):
+        allowance = client.timeout
+        assert 0 < allowance <= options.get(limiting_timeout, 0.1)
+        if allowance - 0.1 <= 0:
+            return 1
+        go2_sdk.events.append(("move", *velocities))
+        return 0
+
+    monkeypatch.setattr(SportClient, "Move", match_during_first_poll)
+    base = connect_go2(**options)
+    with pytest.raises(RuntimeError, match="Move send returned"):
+        base.send_action({"velocity": [0.3, 0, 0]})
+    assert not any(event[0] == "move" for event in go2_sdk.events)
+    assert go2_sdk.events[-1] == ("stop",)
+
+
+def test_go2_reconnect_shares_sport_writer_and_keeps_independent_stop_timeout(
+    go2_sdk, connect_go2
+):
+    for stop_timeout in (1.0, 2.0):
+        base = connect_go2(rpc_timeout=stop_timeout)
+        base.send_action({"velocity": [0.3, 0, 0]})
+        base.disconnect()
+    writes = go2_sdk.writes
+    assert go2_sdk.events.count(("client",)) == 1
+    assert len({writer for writer, _, _ in writes}) == 1
+    assert [method for _, method, _ in writes] == ["stop", "move", "stop"] * 2
+    assert [t for _, method, t in writes if method == "stop"] == [1.0, 1.0, 2.0, 2.0]
+    assert all(0 < t <= 0.1 for _, method, t in writes if method == "move")
+
+
+@pytest.fixture
+def stalled_go2_move(go2_sdk, monkeypatch):
+    from unitree_sdk2py.go2.sport.sport_client import SportClient
+
+    entered, release = threading.Event(), threading.Event()
+    send = SportClient.Move
+
+    def stalled_move(client, *velocities):
+        entered.set()
+        assert release.wait(3)
+        return send(client, *velocities)
+
+    monkeypatch.setattr(SportClient, "Move", stalled_move)
+    return entered, release
+
+
+@pytest.mark.parametrize("first_stop_fails", [False, True])
+def test_go2_watchdog_stops_during_stalled_move_and_again_after_return(
+    go2_sdk, connect_go2, monkeypatch, stalled_go2_move, first_stop_fails
+):
+    from unitree_sdk2py.go2.sport.sport_client import SportClient
+
+    entered, release = stalled_go2_move
+    base = connect_go2(command_timeout=0.04)
+    go2_sdk.stopped.clear()
+    stop = SportClient.StopMove
+    outcomes = iter([7]) if first_stop_fails else iter([])
+
+    def acknowledged_stop(client):
+        stop(client)
+        return next(outcomes, 0)
+
+    monkeypatch.setattr(SportClient, "StopMove", acknowledged_stop)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(base.send_action, {"velocity": [0.3, 0, 0]})
+        try:
+            assert entered.wait(2)
+            assert go2_sdk.stopped.wait(2)
+        finally:
+            release.set()
+        with pytest.raises(TimeoutError):
+            result.result(timeout=2)
+    assert [event[0] for event in go2_sdk.events[-3:]] == ["stop", "move", "stop"]
+    with pytest.raises(RuntimeError, match="reconnect"):
+        base.send_action({"velocity": [0.3, 0, 0]})
+    assert sum(event[0] == "move" for event in go2_sdk.events) == 1
+
+
+def test_go2_watchdog_keeps_stopping_until_late_move_returns(
+    go2_sdk, connect_go2, monkeypatch
+):
+    from unitree_sdk2py.go2.sport.sport_client import SportClient
+
+    base = connect_go2(command_timeout=0.04)
+    go2_sdk.stopped.clear()
+    publish = threading.Event()
+    published = threading.Event()
+    release = threading.Event()
+    stopped_after_publish = threading.Event()
+    move = SportClient.Move
+    stop = SportClient.StopMove
+
+    def late_move(client, *velocities):
+        assert publish.wait(2)
+        result = move(client, *velocities)
+        published.set()
+        assert release.wait(2)
+        return result
+
+    def observe_stop(client):
+        result = stop(client)
+        if published.is_set():
+            stopped_after_publish.set()
+        return result
+
+    monkeypatch.setattr(SportClient, "Move", late_move)
+    monkeypatch.setattr(SportClient, "StopMove", observe_stop)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(base.send_action, {"velocity": [0.3, 0, 0]})
+        try:
+            assert go2_sdk.stopped.wait(1)
+            publish.set()
+            assert published.wait(1)
+            assert stopped_after_publish.wait(1)
+            assert not result.done()
+            stop_count = go2_sdk.events.count(("stop",))
+        finally:
+            publish.set()
+            release.set()
+        with pytest.raises(TimeoutError):
+            result.result(timeout=1)
+    assert go2_sdk.events.count(("stop",)) > stop_count
+    assert go2_sdk.events[-1] == ("stop",)
+
+
+def test_go2_reset_waits_for_inflight_move(go2_sdk, connect_go2, stalled_go2_move):
+    base = connect_go2(state_timeout=5.0, command_timeout=5.0)
+    entered, release = stalled_go2_move
+    resetting = threading.Event()
+
+    def reset():
+        resetting.set()
+        base.reset()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        move = pool.submit(base.send_action, {"velocity": [0.3, 0, 0]})
+        try:
+            assert entered.wait(1)
+            stop = pool.submit(reset)
+            assert resetting.wait(1)
+            with pytest.raises(TimeoutError):
+                stop.result(timeout=0.05)
+        finally:
+            release.set()
+        move.result(timeout=1)
+        stop.result(timeout=1)
+    assert [event[0] for event in go2_sdk.events[-2:]] == ["move", "stop"]
+
+
+@pytest.mark.parametrize("stop_with", ["reset", "zero"])
+def test_go2_stop_before_next_watchdog_poll_preserves_expiry(
+    go2_sdk, connect_go2, monkeypatch, stop_with
+):
+    from rlinf.robotics.parts.mobility import unitree_go2
+
+    now = 1.0
+    monkeypatch.setattr(unitree_go2, "time", SimpleNamespace(monotonic=lambda: now))
+    base = connect_go2(state_timeout=5.0)
+    action = {"velocity": [0.3, 0, 0]}
+    base.send_action(action)
+    # Keep watchdog out until the explicit stop has completed.
+    with base._lock:
+        now += base.command_timeout + 0.001
+        if stop_with == "reset":
+            base.reset()
+        else:
+            base.send_action({"velocity": [0, 0, 0]})
+    with pytest.raises(RuntimeError, match="reconnect"):
+        base.send_action(action)
+    assert sum(e[0] == "move" for e in go2_sdk.events) == 1
+
+
+def test_go2_watchdog_stops_without_another_step_and_latches(go2_sdk, connect_go2):
+    base = connect_go2(command_timeout=0.04)
+    go2_sdk.stopped.clear()
+    base.send_action({"velocity": [0.3, 0, 0]})
+    assert go2_sdk.stopped.wait(1), "Watchdog failed to request StopMove"
+    base.reset()
+    with pytest.raises(RuntimeError, match="reconnect"):
+        base.send_action({"velocity": [0.3, 0, 0]})
+    assert sum(e[0] == "move" for e in go2_sdk.events) == 1
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_go2_watchdog_retries_unconfirmed_stop_and_keeps_motion_latched(
+    monkeypatch, go2_sdk, connect_go2, raises
+):
+    from unitree_sdk2py.go2.sport.sport_client import SportClient
+
+    base = connect_go2(command_timeout=0.04)
+    attempts = []
+    confirmed = threading.Event()
+
+    def flaky_stop(client):
+        attempts.append(time.monotonic())
+        if len(attempts) == 1:
+            if raises:
+                raise OSError("temporary disconnect")
+            return 9
+        confirmed.set()
+        return 0
+
+    monkeypatch.setattr(SportClient, "StopMove", flaky_stop)
+    base.send_action({"velocity": [0.3, 0, 0]})
+    assert confirmed.wait(2)
+    assert attempts[1] - attempts[0] >= 0.2
+    time.sleep(0.25)
+    assert len(attempts) == 2
+    with pytest.raises(RuntimeError):
+        base.send_action({"velocity": [0.3, 0, 0]})
+    assert sum(e[0] == "move" for e in go2_sdk.events) == 1
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"velocity": [float("nan"), 0, 0]},
+        {"velocity": [0.31, 0, 0]},
+        {"velocity": [0, 0, 0.51]},
+        {"velocity": [0, 0]},
+        {"unexpected": [0, 0, 0]},
+    ],
+)
+def test_go2_invalid_actions_stop_instead_of_clipping(go2_sdk, connect_go2, action):
+    base = connect_go2()
+    with pytest.raises(ValueError):
+        base.send_action(action)
+    assert not any(e[0] == "move" for e in go2_sdk.events)
+    assert go2_sdk.events[-1] == ("stop",)
+
+
+def test_go2_stale_state_stops_motion_even_when_command_is_recent(go2_sdk, connect_go2):
+    base = connect_go2(state_timeout=0.04, command_timeout=0.5)
+    go2_sdk.stopped.clear()
+    base.send_action({"velocity": [0.3, 0, 0]})
+    assert go2_sdk.stopped.wait(1)
+    with pytest.raises(TimeoutError, match="expired"):
+        base.get_observation()
+    go2_sdk.publish()
+    with pytest.raises(RuntimeError, match="reconnect"):
+        base.send_action({"velocity": [0.3, 0, 0]})
+
+
+def test_go2_missing_initial_state_rolls_back_connection(go2_sdk):
+    go2_sdk.publish_initial = False
+    base = Go2Base("fake-go2", enable_motion=True, state_timeout=0.01)
+    with pytest.raises(TimeoutError, match="No valid"):
+        base.connect()
+    assert not base.is_connected
+    assert go2_sdk.events[-1] == ("close",)
+    assert not any(e[0] == "client" for e in go2_sdk.events)
+    go2_sdk.publish_initial = True
+    base.connect()
+    base.disconnect()
+
+
+def test_go2_watchdog_start_failure_releases_connection(go2_sdk, monkeypatch):
+    base = Go2Base("fake-go2", enable_motion=True)
+    unavailable = RuntimeError("can't start new thread")
+    with monkeypatch.context() as patch:
+        patch.setattr(threading.Thread, "start", mock.Mock(side_effect=unavailable))
+        with pytest.raises(RuntimeError) as failure:
+            base.connect()
+    assert failure.value is unavailable
+    assert not base.is_connected
+    assert go2_sdk.events[-3:] == [("stop",), ("stop",), ("close",)]
+
+    reader = Go2Base("fake-go2")
+    reader.connect()
+    try:
+        assert reader.get_observation()["joint_position"].shape == (12,)
+    finally:
+        reader.disconnect()
+
+
+@pytest.mark.parametrize("raise_error", [False, True])
+def test_go2_move_send_failure_requests_stop(go2_sdk, connect_go2, raise_error):
+    base = connect_go2()
+    go2_sdk.move_error = raise_error
+    go2_sdk.move_code = 7
+    with pytest.raises((OSError, RuntimeError)):
+        base.send_action({"velocity": [0.3, 0, 0]})
+    assert go2_sdk.events[-1] == ("stop",)
+
+
+def test_go2_stop_failure_is_reported_and_subscriber_still_closes(go2_sdk, connect_go2):
+    base = connect_go2()
+    go2_sdk.stop_code = 9
+    with pytest.raises(RuntimeError, match="remote emergency stop"):
+        base.disconnect()
+    assert not base.is_connected
+    assert go2_sdk.events[-1] == ("close",)
+    base.disconnect()
+
+
+def test_go2_dummy_and_registration_never_import_sdk():
+    import gymnasium as gym
+
+    from rlinf.envs.real.go2 import Go2DriveEnv
+
+    assert gym.spec("Go2DriveEnv-v1") is not None
+    env = Go2DriveEnv({"is_dummy": True, "step_frequency": 100})
+    try:
+        obs, _ = env.reset(seed=7)
+        assert env.observation_space.contains(obs)
+        with pytest.raises(ValueError):
+            env.step(np.array([np.nan, 0, 0]))
+        with pytest.raises(RuntimeError, match="Reset"):
+            env.step(np.zeros(3))
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize(
+    ("hardware", "stop_code"),
+    [({}, 0), ({"enable_motion": True}, 0), ({"enable_motion": True}, 9)],
+    ids=["readonly", "motion", "stop-fails-during-cleanup"],
+)
+def test_go2_registration_releases_hardware_after_wrapper_failure(
+    go2_sdk, monkeypatch, hardware, stop_code
+):
+    import gymnasium as gym
+
+    from rlinf.robotics import Go2Config
+
+    config = Go2Config(node_rank=0, interface="fake-go2", **hardware)
+    discovery = RobotDiscovery.registry["UnitreeGo2"].discovery_cls
+    info = discovery.enumerate(0, [config]).infos[0]
+
+    def make(**env_cfg):
+        return gym.make(
+            "rlinf.envs.real.go2:Go2DriveEnv-v1",
+            override_cfg={},
+            worker_info=None,
+            robot_info=info,
+            env_idx=0,
+            env_cfg=env_cfg,
+        )
+
+    with pytest.raises(ValueError, match="Unsupported teleop device"):
+        make(teleop="spacemouse")
+    assert go2_sdk.events == []
+
+    def open_missing_keyboard(path):
+        go2_sdk.stop_code = stop_code
+        raise FileNotFoundError(path)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "evdev",
+        SimpleNamespace(
+            InputDevice=open_missing_keyboard, ecodes={}, list_devices=list
+        ),
+    )
+    with pytest.raises(
+        RuntimeError, match="keyboard_device='missing' does not exist"
+    ) as failure:
+        make(keyboard_reward_wrapper="single_stage", keyboard_device="missing")
+    assert isinstance(failure.value.__cause__, FileNotFoundError)
+    assert go2_sdk.events[-1] == ("close",)
+    assert go2_sdk.events.count(("stop",)) == (2 if config.enable_motion else 0)
+    assert go2_sdk.events.count(("client",)) == int(config.enable_motion)
+
+    go2_sdk.stop_code = 0
+    with pytest.warns(
+        DeprecationWarning, match="'teleop_device' is retired"
+    ) as notices:
+        with make(teleop_device="none") as env:
+            observation, _ = env.reset()
+            assert env.observation_space.contains(observation)
+    assert len(notices) == 1
+    assert go2_sdk.events.count(("dds", 0, "fake-go2")) == 1
+    assert go2_sdk.events.count(("subscribe", "rt/lowstate")) == 2
+    assert go2_sdk.events.count(("close",)) == 2
+    assert not any(event[0] == "move" for event in go2_sdk.events)
+
+
+def test_go2_close_cannot_be_followed_by_a_racing_move(go2_sdk, connect_go2):
+    base = connect_go2()
+    go2_sdk.close_release.clear()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        closed = pool.submit(base.disconnect)
+        try:
+            assert go2_sdk.close_entered.wait(1)
+            with pytest.raises(RuntimeError, match="closing"):
+                base.send_action({"velocity": [0.3, 0, 0]})
+            assert not any(e[0] == "move" for e in go2_sdk.events)
+        finally:
+            go2_sdk.close_release.set()
+            closed.result(timeout=2)
+    assert not base.is_connected
+
+
+def test_go2_sport_six_directions_and_episode_boundary(go2_sdk):
+    from rlinf.envs.real.go2 import Go2DriveEnv
+    from rlinf.robotics import Go2Config
+    from toolkits.realworld_check.check_go2_sport import COMMANDS
+
+    expected = {
+        "forward": (0.3, 0, 0),
+        "backward": (-0.3, 0, 0),
+        "left": (0, 0.3, 0),
+        "right": (0, -0.3, 0),
+        "turn_left": (0, 0, 0.5),
+        "turn_right": (0, 0, -0.5),
+    }
+    config = Go2Config(node_rank=0, interface="fake-go2", enable_motion=True)
+    discovery = RobotDiscovery.registry["UnitreeGo2"].discovery_cls
+    info = discovery.enumerate(0, [config]).infos[0]
+    env = Go2DriveEnv(
+        {"step_frequency": 100, "max_num_steps": len(expected)}, robot_info=info
+    )
+    try:
+        obs, _ = env.reset()
+        assert env.observation_space.contains(obs)
+        for step, direction in enumerate(expected, start=1):
+            go2_sdk.publish()
+            obs, reward, terminated, truncated, _ = env.step(COMMANDS[direction])
+            assert env.observation_space.contains(obs)
+            assert (reward, terminated, truncated) == (
+                0.0,
+                False,
+                step == len(expected),
+            )
+        assert go2_sdk.events[-1] == ("stop",)
+        with pytest.raises(RuntimeError, match="Reset"):
+            env.step(COMMANDS["forward"])
+    finally:
+        env.close()
+    moves = [e[1:] for e in go2_sdk.events if e[0] == "move"]
+    np.testing.assert_allclose(moves, list(expected.values()))
+    assert go2_sdk.events[-2:] == [("stop",), ("close",)]
+
+
+@pytest.mark.parametrize("direction", [None, "forward"])
+def test_go2_sport_manual_check_records_observations_and_closes(go2_sdk, direction):
+    from toolkits.realworld_check.check_go2_sport import run_check
+
+    with go2_sdk.streaming():
+        report = run_check("fake-go2", direction, 1)
+    assert report["errors"] == []
+    assert report["close_completed"]
+    assert len(report["steps"]) == 10
+    assert all(row["observation_valid"] for row in report["steps"])
+    assert report["operator_confirmed_motion_and_stop"] is None
+    assert report["uses_ppo"] is False
+    if direction:
+        assert report["sdk_stop_estimate"] == "below_thresholds"
+        assert sum(e[0] == "move" for e in go2_sdk.events) == 10
+        assert go2_sdk.events[-1] == ("sport_close",)
+    else:
+        assert not any(e[0] in ("client", "move", "stop") for e in go2_sdk.events)
+
+
+@pytest.mark.parametrize("failure", ["move", "feedback"])
+def test_go2_sport_manual_failures_preserve_report_and_cleanup(go2_sdk, failure):
+    from toolkits.realworld_check.check_go2_sport import run_check
+
+    go2_sdk.move_error = failure == "move"
+    go2_sdk.publish_sport = failure != "feedback"
+    with go2_sdk.streaming():
+        report = run_check("fake-go2", "forward", 1)
+    assert report["errors"]
+    assert report["close_completed"]
+    assert ("stop",) in go2_sdk.events
+    assert ("close",) in go2_sdk.events
+    assert ("sport_close",) in go2_sdk.events
+    if failure == "feedback":
+        assert not any(e[0] == "move" for e in go2_sdk.events)
+
+
+@pytest.mark.parametrize("mode", ["dry-run", "cancel"])
+def test_go2_sport_preview_and_cancel_never_open_sdk(
+    monkeypatch, go2_sdk, tmp_path, mode
+):
+    from toolkits.realworld_check import check_go2_sport
+
+    output = tmp_path / "report.json"
+    argv = [
+        "go2-sport",
+        "--interface",
+        "fake-go2",
+        "--direction",
+        "forward",
+        "--output",
+        str(output),
+    ]
+    if mode == "dry-run":
+        argv += ["--dry-run"]
+    else:
+        monkeypatch.setattr(check_go2_sport, "competing_processes", lambda: [])
+        monkeypatch.setattr("builtins.input", lambda _: "CANCEL")
+    monkeypatch.setattr(sys, "argv", argv)
+    check_go2_sport.main()
+    assert go2_sdk.events == []
+    assert not output.exists()
+
+
+def test_go2_sport_speed_estimates_require_fresh_stationary_window(monkeypatch):
+    from toolkits.realworld_check.check_go2_sport import SpeedLog
+
+    now = [10.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    speeds = SpeedLog()
+    for index in range(7):
+        now[0] = 10 + index * 0.1
+        speeds.callback(SimpleNamespace(velocity=[0, 0, 0], yaw_speed=0))
+    assert speeds.stopped(10)
+    speeds.callback(SimpleNamespace(velocity=[float("nan"), 0, 0], yaw_speed=0))
+    assert len(speeds.snapshot()) == 7
+    now[0] += 0.21
+    assert not speeds.fresh()
+    assert not speeds.stopped(10)
+    speeds.callback(SimpleNamespace(velocity=[0.3, 0, 0], yaw_speed=0))
+    assert speeds.fresh()
+    assert not speeds.stopped(10)
+
+
+def test_go2_sport_conflicts_only_include_potential_motion_commands(
+    tmp_path, monkeypatch
+):
+    from toolkits.realworld_check import check_go2_sport as run
+
+    commands = [
+        ["-m", "examples.embodiment.go2_abc.deploy", "--frames", "go2_frames.py"],
+        ["-m", "toolkits.realworld_check.check_go2_lowstate", "--interface", "eth0"],
+        ["-m", "toolkits.realworld_check.check_go2_sport", "--readonly"],
+        ["-m", "toolkits.realworld_check.check_go2_sport", "--direction", "left"],
+        ["go2_move.py", "-m", "examples.embodiment.go2_abc.deploy"],
+    ]
+    for pid, command in enumerate(commands, 20):
+        process = tmp_path / str(pid)
+        process.mkdir()
+        (process / "cmdline").write_bytes(
+            b"\0".join(arg.encode() for arg in ["python", *command, ""])
+        )
+    path_type = type(tmp_path)
+    monkeypatch.setattr(
+        run, "Path", lambda value: tmp_path if value == "/proc" else path_type(value)
+    )
+    monkeypatch.setattr(run.os, "getpid", lambda: 100)
+    assert sorted(run.competing_processes()) == [23, 24]

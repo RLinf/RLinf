@@ -123,6 +123,7 @@
   Franka（双臂） <rst_source/examples/embodied/dual_franka_index>
   Franka（单臂） <rst_source/examples/embodied/franka_index>
   GimArm <rst_source/examples/embodied/gim_arm>
+  Go2 EDU <rst_source/examples/embodied/go2>
   LeKiwi <rst_source/examples/embodied/lekiwi>
   Robbyant R2 <rst_source/examples/embodied/r2>
   SO-101 <rst_source/examples/embodied/so101>

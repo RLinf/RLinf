@@ -139,7 +139,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "supermimic" "simple" "robolab" "dexjoco")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "supermimic" "simple" "robolab" "dexjoco" "go2_sport")
 
 #=======================Utility Functions=======================
 
@@ -3612,7 +3612,7 @@ install_env_only() {
     # A robot host trains in its env venv, so it takes the same embodied extra,
     # training dependencies and system libraries as a model install.
     case "$ENV_NAME" in
-        franka|franka-ros|so101|lekiwi|piper|dosw1|gim_arm|xsquare_turtle2|yam)
+        franka|franka-ros|so101|lekiwi|piper|dosw1|gim_arm|xsquare_turtle2|yam|go2_sport)
             install_common_embodied_deps
             ;;
     esac
@@ -3647,6 +3647,9 @@ install_env_only() {
         embodichain)
             install_common_embodied_deps
             install_embodichain_env
+            ;;
+        go2_sport)
+            install_go2_sport_env
             ;;
         gim_arm)
             install_gim_arm_env
@@ -4057,6 +4060,28 @@ install_simple_env() {
     UV_NO_CACHE=1 UV_LINK_MODE=copy \
         UV_PROJECT_ENVIRONMENT="$(realpath "$VENV_DIR")" \
         bash "$simple_dir/scripts/install_curobo.sh"
+}
+
+install_go2_sport_env() {
+    local sdk_source=https://github.com/unitreerobotics/unitree_sdk2_python.git@814556d15970dd2ecf1c9984e845ca02ab07e206
+    local sdk_ref="${sdk_source##*@}"
+    local sdk_dir
+    sdk_dir=$(clone_or_reuse_repo UNITREE_SDK2_PATH "$VENV_DIR/unitree_sdk2_python" \
+        "${sdk_source%@*}")
+    if [ -n "${UNITREE_SDK2_PATH:-}" ]; then
+        if [ "$(git -C "$sdk_dir" rev-parse HEAD)" != "$sdk_ref" ]; then
+            echo "UNITREE_SDK2_PATH must point to Unitree SDK2 commit $sdk_ref." >&2
+            return 1
+        fi
+    else
+        if ! git -C "$sdk_dir" cat-file -e "${sdk_ref}^{commit}" 2>/dev/null; then
+            git -C "$sdk_dir" fetch --depth 1 origin "$sdk_ref"
+        fi
+        git -C "$sdk_dir" checkout --detach "$sdk_ref"
+    fi
+    # The SDK wheel omits the CRC libraries that CRC() loads beside its source.
+    uv pip install -e "$sdk_dir"
+    python -c 'from unitree_sdk2py.utils.crc import CRC; CRC()'
 }
 
 install_isaaclab_env() {
