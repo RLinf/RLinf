@@ -275,11 +275,15 @@ class EmbodiedComponentPlacement(HybridComponentPlacement):
             super().__init__(config, cluster)
             return
 
-        server = config.rollout.sglang.get("server") or {}
-        self._rollout_tp_size = int(server.get("tp_size") or 1)
-        self._rollout_sp_degree = int(server.get("sp_degree") or 1)
-        self._rollout_dp_size = int(server.get("dp_size") or 1)
-        self._rollout_cfg_parallel_degree = int(server.get("cfg_parallel_degree") or 1)
+        server = {
+            k: v
+            for k, v in (config.rollout.sglang.get("server") or {}).items()
+            if v is not None
+        }
+        self._rollout_tp_size = int(server.get("tp_size", 1))
+        self._rollout_sp_degree = int(server.get("sp_degree", 1))
+        self._rollout_dp_size = int(server.get("dp_size", 1))
+        self._rollout_cfg_parallel_degree = int(server.get("cfg_parallel_degree", 1))
         if (
             min(
                 self._rollout_tp_size,
@@ -292,7 +296,7 @@ class EmbodiedComponentPlacement(HybridComponentPlacement):
             raise ValueError(
                 "Expected positive SGLang dp_size, tp_size, sp_degree, and cfg_parallel_degree"
             )
-        if int(server.get("nnodes") or 1) != 1:
+        if int(server.get("nnodes", 1)) != 1:
             raise ValueError(
                 "Embodied SGLang model instances must fit on one node; "
                 "use separate server instances for cross-node DP"

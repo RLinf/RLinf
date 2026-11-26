@@ -209,9 +209,7 @@ def main(cfg) -> None:
     )
 
     runner.init_workers()
-    rollout_router_group = launch_embodied_sglang_router(
-        cfg, cluster, rollout_group
-    )
+    rollout_router_group = launch_embodied_sglang_router(cfg, cluster, rollout_group)
     runner.run()
 
     if rollout_router_group is not None:

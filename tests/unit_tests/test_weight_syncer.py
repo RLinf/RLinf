@@ -2685,6 +2685,8 @@ def test_embodied_weight_sync_checks_all_server_ranks(
     scheduler.weight_syncer = None
     scheduler._sync_failed = False
     scheduler._weights_ready = True
+    scheduler._offloaded_modules = {}
+    scheduler._is_offloaded = False
     world = SimpleNamespace(world_size=2, cpu_group=object())
     monkeypatch.setattr(distributed, "get_world_group", lambda: world)
 
