@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Locomotion tasks from the Unitree Go2 benchmark."""
+"""Isaac Lab locomotion tasks for Unitree Go2."""
 
 from functools import partial
 from typing import TYPE_CHECKING
@@ -30,6 +30,30 @@ if TYPE_CHECKING:
 FLAT = "MTL-Velocity-Flat-Unitree-Go2-A2-Omni-v0"
 ROUGH = "MTL-Velocity-Rough-Unitree-Go2-B1-RoughWalk-v0"
 STAIRS = "MTL-Velocity-Rough-Unitree-Go2-B2-StairClimb-v0"
+
+
+def register_go2_tasks() -> None:
+    """Register the three Go2 tasks used by the training and evaluation recipes."""
+    cfg_module = f"{__package__}.go2_task_cfg"
+    runner = (
+        "isaaclab_tasks.manager_based.locomotion.velocity.config.go2.agents."
+        "rsl_rl_ppo_cfg:UnitreeGo2RoughPPORunnerCfg"
+    )
+    for task_id, config in (
+        (FLAT, "Go2A2OmniWalkEnvCfg"),
+        (ROUGH, "Go2B1RoughWalkEnvCfg"),
+        (STAIRS, "Go2B2StairClimbEnvCfg"),
+    ):
+        entry = f"{cfg_module}:{config}"
+        spec = gym.registry.get(task_id)
+        if spec is not None and spec.kwargs.get("env_cfg_entry_point") == entry:
+            continue
+        gym.register(
+            id=task_id,
+            entry_point="isaaclab.envs:ManagerBasedRLEnv",
+            disable_env_checker=True,
+            kwargs={"env_cfg_entry_point": entry, "rsl_rl_cfg_entry_point": runner},
+        )
 
 
 def terrain_base_height_l2(
@@ -80,7 +104,6 @@ def _make_go2_env(params, seed: int, num_envs: int, max_episode_steps: int):
         args.append("--/app/extensions/excluded/0=omni.kit.telemetry")
     app = AppLauncher(headless=True, enable_cameras=False, kit_args=" ".join(args)).app
     try:
-        from envs.registry import register_tasks
         from isaaclab.envs import ManagerBasedRLEnv
         from isaaclab_tasks.utils import load_cfg_from_registry
 
@@ -105,7 +128,7 @@ def _make_go2_env(params, seed: int, num_envs: int, max_episode_steps: int):
                         self.terminal_observation = obs["policy"].clone()
                 return super()._reset_idx(env_ids)
 
-        register_tasks()
+        register_go2_tasks()
         cfg = load_cfg_from_registry(params.id, "env_cfg_entry_point")
         cfg.rewards.base_height.func = terrain_base_height_l2
         cfg.seed = seed

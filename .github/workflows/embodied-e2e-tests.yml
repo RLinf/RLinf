@@ -997,7 +997,6 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          uv pip install --no-deps -r requirements/embodied/envs/go2_abc.txt
           source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
           python -m pytest -q tests/e2e_tests/embodied/test_go2_reset.py
           bash tests/e2e_tests/embodied/run.sh isaaclab_go2_c_ppo_smoke

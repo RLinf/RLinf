@@ -14,7 +14,7 @@ Setup and Run
 
       **1. Install the Go2 runtime**
 
-      The Go2 installer sets up Isaac Lab 2.3.2, Isaac Sim 5.1, RSL-RL 3.1.2 for evaluation, and the three task definitions from the `Go2 locomotion benchmark <https://github.com/viktoriageorrg04/bsc-thesis-multi-task-RL-env>`_.
+      The Go2 installer sets up Isaac Lab 2.3.2, Isaac Sim 5.1, and RSL-RL 3.1.2. RLinf includes the three Go2 task definitions and their evaluator.
 
       .. code-block:: bash
 
@@ -59,23 +59,7 @@ Setup and Run
 Evaluate a Trained Policy
 -------------------------
 
-From the RLinf repository root, fetch the evaluation scripts for tasks A, B, and C.
-
-.. code-block:: bash
-
-   (
-     set -e
-     runtime=../public-evaluator
-     mkdir -p "$runtime/a40" "$runtime/benchmark/scripts"
-     wrappers=https://raw.githubusercontent.com/QuincyQAQ/RLinf/b405f67382ce63af2401a2a9ff5b0b3c7f28ccb7/a40
-     for module in evaluate_continuation evaluate_dual passage_metrics b1_numerical_boundary; do
-       curl -fsSL "$wrappers/$module.py" -o "$runtime/a40/$module.py"
-     done
-     benchmark=https://raw.githubusercontent.com/viktoriageorrg04/bsc-thesis-multi-task-RL-env/743ac04d9543b04b7854f1100bfa0cc69c993106
-     curl -fsSL "$benchmark/scripts/evaluate.py" -o "$runtime/benchmark/scripts/evaluate.py"
-   )
-
-In a Slurm GPU allocation, select the task you trained and its run directory. The example uses the stairs run above. For a standard launch, use the timestamped run directory under ``logs/``. Set the training seed to the value used for that checkpoint, or omit the seed option if unknown.
+On an NVIDIA GPU, evaluate a saved RLinf policy from the repository root. Set the task and run directory to those used for the checkpoint.
 
 .. code-block:: bash
 
@@ -84,21 +68,9 @@ In a Slurm GPU allocation, select the task you trained and its run directory. Th
    CHECKPOINT="$RUN_DIR/${TASK}_rlinf/checkpoints/global_step_1000/actor/model_state_dict/full_weights.pt"
    python -m examples.embodiment.go2_abc.evaluate --task "$TASK" --train-seed 0 "$CHECKPOINT" "$RUN_DIR/eval"
 
-Set ``TASK=A`` for flat ground or ``TASK=B`` for rough terrain. Use a fresh output directory for each checkpoint. For a local asset mirror, append ``--asset-root "$GO2_ASSET_ROOT"``. To verify that both the actor and critic changed during training, pass their starting weights with ``--initial-checkpoint``.
+Use a new output directory for each checkpoint. For local Isaac Sim assets, add ``--asset-root "$GO2_ASSET_ROOT"``. Set ``--train-seed`` to the checkpoint's training seed or omit it if unknown.
 
-The evaluator collects at least 1,024 episodes in 256 parallel environments for each evaluation seed (23456 and 34567). Each seed directory contains its episode records. The pooled tracking count and rate go into ``summary.json``. Task C also reports stair passage.
-
-For the RSL-RL PPO comparison, place the pinned `train.py <https://github.com/viktoriageorrg04/bsc-thesis-multi-task-RL-env/blob/743ac04d9543b04b7854f1100bfa0cc69c993106/scripts/train.py>`_ beside ``evaluate.py``. Place ``train_continuation_rsl.py`` from the `trainer sources <https://github.com/QuincyQAQ/RLinf/tree/b405f67382ce63af2401a2a9ff5b0b3c7f28ccb7/a40>`_ in ``../public-evaluator/a40/``. For task B, also copy ``train_legacy_distribution.py`` from the trainer sources.
-
-Select your task’s ``*_ppo.json`` file from the `training recipes <https://github.com/QuincyQAQ/RLinf/tree/23f16691d4dede5dab949a5cbf7934f6021e7ddf/examples/embodiment/go2_abc/config>`_. Run ``train_continuation_rsl.py`` with the arguments and environment variables in that file. Set the frozen checkpoint and asset paths for your machine and choose training seed 0 or 2 with ``--seed``.
-
-Add this RLinf checkout to ``PYTHONPATH`` and append ``env.rewards.base_height.func=rlinf.envs.sim.isaaclab.tasks.go2:terrain_base_height_l2`` to both training and evaluation commands.
-
-For evaluation, use the same task's ``*_baseline.json`` with ``evaluate_continuation.py``. Set ``--checkpoint`` to the frozen input or the final RSL-RL checkpoint (``model_999.pt`` for A and B, ``model_960.pt`` for C after its 1,000 updates).
-
-For any RSL-RL task trained with seed 2, replace the ``_s0`` suffix with ``_s2`` in both the training run name and the evaluation report label. For example, train task A with ``--seed 2 --run_name A_ppo_s2`` and evaluate that checkpoint with ``--report_train_task A2_omni_s2``.
-
-Set ``GO2_EVAL_SEED`` to 23456 for the first evaluation and 34567 for the second. Pass a fresh ``--output_dir`` for each.
+To score an existing frozen baseline or an RSL-RL PPO checkpoint, use the same command with ``--checkpoint-format rsl-rl`` and that checkpoint's path. The evaluator runs seeds 23456 and 34567, pools completed episodes in ``summary.json``, and reports stair passage for task C.
 
 Simulation Results
 ------------------

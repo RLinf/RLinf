@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[3]
-RUNTIME = PROJECT.parent / "public-evaluator"
 MIN_EPISODES = 1024
 EVAL_SEEDS = (23456, 34567)
 
@@ -173,7 +172,10 @@ def main(*, legacy_stairs: bool = False) -> None:
     else:
         parser.add_argument("--task", choices=TASKS, required=True)
     parser.add_argument(
-        "checkpoint", type=Path, help="RLinf step 1,000 full_weights.pt"
+        "checkpoint", type=Path, help="RLinf or RSL-RL policy checkpoint"
+    )
+    parser.add_argument(
+        "--checkpoint-format", choices=("rlinf", "rsl-rl"), default="rlinf"
     )
     parser.add_argument("output", type=Path, help="New directory for policy and scores")
     parser.add_argument("--asset-root", type=Path, help="Local Isaac Sim 5.1 assets")
@@ -188,8 +190,8 @@ def main(*, legacy_stairs: bool = False) -> None:
     args = parser.parse_args()
     if args.train_seed is not None and args.train_seed < 0:
         parser.error("--train-seed must be nonnegative")
-    if not os.environ.get("SLURM_JOB_ID"):
-        parser.error("run inside a Slurm GPU allocation")
+    if args.checkpoint_format == "rsl-rl" and args.initial_checkpoint is not None:
+        parser.error("--initial-checkpoint compares updates in an RLinf checkpoint")
 
     from rlinf.utils.logging import get_logger
 
@@ -200,26 +202,23 @@ def main(*, legacy_stairs: bool = False) -> None:
 
     output = args.output.resolve()
     output.mkdir(parents=True)
-    policy = output / "policy.pt"
-    export_policy(args.checkpoint.resolve(), args.initial_checkpoint, policy)
-
-    imports = [str(PROJECT), str(RUNTIME / "benchmark"), str(RUNTIME / "a40")]
-    if os.environ.get("PYTHONPATH"):
-        imports.append(os.environ["PYTHONPATH"])
-    env = dict(os.environ, PYTHONPATH=os.pathsep.join(imports))
-    if args.task == "B":
-        env["GO2_B1_NUMERIC_GUARD"] = "1"
-    else:
-        env.pop("GO2_B1_NUMERIC_GUARD", None)
-
-    entry = RUNTIME / "a40/evaluate_continuation.py"
+    policy = args.checkpoint.resolve(strict=True)
+    if args.checkpoint_format == "rlinf":
+        policy = output / "policy.pt"
+        export_policy(args.checkpoint.resolve(), args.initial_checkpoint, policy)
     episodes = tracking = passage = 0
     for seed in EVAL_SEEDS:
         directory = output / str(seed)
         argv = evaluation_args(task, train_name, policy, directory, args.asset_root)
         subprocess.run(
-            [sys.executable, str(entry), *argv],
-            env={**env, "GO2_EVAL_SEED": str(seed)},
+            [
+                sys.executable,
+                "-m",
+                "examples.embodiment.go2_abc._evaluate_runtime",
+                *argv,
+                f"--eval-seed={seed}",
+            ],
+            cwd=PROJECT,
             check=True,
         )
         rows = read_episodes(directory, task, train_name)

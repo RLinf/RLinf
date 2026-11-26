@@ -4073,7 +4073,6 @@ install_go2_abc_env() {
     # TensorDict 0.15 requires a newer torch than the Go2 runtime's 2.7.
     UV_LINK_MODE=hardlink uv pip install "${index_args[@]}" \
         "isaaclab[isaacsim]==2.3.2" "rsl-rl-lib==3.1.2" "tensordict<0.15"
-    uv pip install --no-deps -r "$SCRIPT_DIR/embodied/envs/go2_abc.txt"
 }
 
 install_isaaclab_env() {

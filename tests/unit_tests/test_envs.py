@@ -123,17 +123,26 @@ def test_go2_rejects_episode_modes_its_simulator_cannot_honor(
 
 
 @pytest.mark.parametrize(
-    "task,task_id,family_id,label,seed,legacy",
+    "task,task_id,family_id,label,seed,legacy,checkpoint_format",
     [
-        ("A", 1, 0, "A2_omni", None, False),
-        ("B", 2, 1, "B1_rough", 2, False),
-        ("C", 3, 1, "B2_stairs", None, False),
-        ("C", 3, 1, "B2_stairs", None, True),
-        ("C", 3, 1, "B2_stairs", 2, True),
+        ("A", 1, 0, "A2_omni", None, False, "rlinf"),
+        ("B", 2, 1, "B1_rough", 2, False, "rlinf"),
+        ("C", 3, 1, "B2_stairs", None, False, "rlinf"),
+        ("C", 3, 1, "B2_stairs", None, False, "rsl-rl"),
+        ("C", 3, 1, "B2_stairs", None, True, "rlinf"),
+        ("C", 3, 1, "B2_stairs", 2, True, "rlinf"),
     ],
 )
 def test_go2_evaluator_pools_same_task_episodes(
-    tmp_path, monkeypatch, task, task_id, family_id, label, seed, legacy
+    tmp_path,
+    monkeypatch,
+    task,
+    task_id,
+    family_id,
+    label,
+    seed,
+    legacy,
+    checkpoint_format,
 ):
     import json
     import sys
@@ -148,24 +157,30 @@ def test_go2_evaluator_pools_same_task_episodes(
     report_seed = 0 if legacy and seed is None else seed
     train_name = label if report_seed is None else f"{label}_s{report_seed}"
     checkpoint, output = tmp_path / "full_weights.pt", tmp_path / "output"
-    torch.save(Go2Policy().state_dict(), checkpoint)
+    weights = Go2Policy().state_dict()
+    torch.save(
+        {"model_state_dict": weights} if checkpoint_format == "rsl-rl" else weights,
+        checkpoint,
+    )
     seeds = []
 
-    def run_benchmark(command, env, check):
+    def run_benchmark(command, cwd, check):
         assert check
-        assert Path(command[1]).name == "evaluate_continuation.py"
-        options = command[2:]
+        assert cwd == evaluate.PROJECT
+        assert command[1:3] == ["-m", "examples.embodiment.go2_abc._evaluate_runtime"]
+        options = command[3:]
         assert options[options.index("--task") + 1] == gym_id
         assert options[options.index("--eval_task") + 1] == label
         assert options[options.index("--report_train_task") + 1] == train_name
         assert options[options.index("--num_envs") + 1] == "256"
         assert options[options.index("--num_episodes") + 1] == "1024"
+        policy = checkpoint if checkpoint_format == "rsl-rl" else output / "policy.pt"
+        assert options[options.index("--checkpoint") + 1] == str(policy)
         assert (
             "--kit_args=--/app/extensions/excluded/0=omni.kit.telemetry "
             f"--/persistent/isaac/asset_root/cloud={tmp_path / 'assets'}"
         ) in options
-        assert env.get("GO2_B1_NUMERIC_GUARD") == ("1" if task == "B" else None)
-        eval_seed = int(env["GO2_EVAL_SEED"])
+        eval_seed = int(options[-1].removeprefix("--eval-seed="))
         seeds.append(eval_seed)
         directory = Path(options[options.index("--output_dir") + 1]) / train_name
         assert directory == output / str(eval_seed) / train_name
@@ -194,6 +209,8 @@ def test_go2_evaluator_pools_same_task_episodes(
 
     monkeypatch.setenv("GO2_ABC_DATA", str(tmp_path))
     arguments = [] if legacy else ["--task", task]
+    if checkpoint_format == "rsl-rl":
+        arguments += ["--checkpoint-format", checkpoint_format]
     if legacy:
         initial = tmp_path / "models/C/baseline.pt"
         if seed is not None:
@@ -207,8 +224,7 @@ def test_go2_evaluator_pools_same_task_episodes(
         [str(checkpoint), str(output), "--asset-root", str(tmp_path / "assets")]
     )
     monkeypatch.setattr(sys, "argv", ["evaluate", *arguments])
-    monkeypatch.setenv("SLURM_JOB_ID", "test")
-    monkeypatch.setenv("GO2_B1_NUMERIC_GUARD", "0")
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
     monkeypatch.setattr(evaluate, "subprocess", SimpleNamespace(run=run_benchmark))
     (evaluate_stairs.main if legacy else evaluate.main)()
 
@@ -221,6 +237,31 @@ def test_go2_evaluator_pools_same_task_episodes(
     if task == "C":
         expected.update(passage_successes=1026, passage_rate=1026 / 2050)
     assert json.loads((output / "summary.json").read_text()) == expected
+
+
+def test_go2_registers_in_tree_task_configs(monkeypatch):
+    import gymnasium as gym
+
+    from rlinf.envs.sim.isaaclab.tasks.go2 import (
+        FLAT,
+        ROUGH,
+        STAIRS,
+        register_go2_tasks,
+    )
+
+    monkeypatch.setattr(gym.envs.registration, "registry", {})
+    monkeypatch.setattr(gym, "registry", gym.envs.registration.registry)
+    register_go2_tasks()
+    assert set(gym.registry) == {FLAT, ROUGH, STAIRS}
+    cfgs = {
+        FLAT: "Go2A2OmniWalkEnvCfg",
+        ROUGH: "Go2B1RoughWalkEnvCfg",
+        STAIRS: "Go2B2StairClimbEnvCfg",
+    }
+    for task_id, name in cfgs.items():
+        assert gym.spec(task_id).kwargs["env_cfg_entry_point"] == (
+            f"rlinf.envs.sim.isaaclab.tasks.go2_task_cfg:{name}"
+        )
 
 
 def test_go2_evaluator_rejects_negative_training_seed(monkeypatch, capsys):
