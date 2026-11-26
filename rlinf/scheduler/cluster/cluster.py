@@ -463,12 +463,19 @@ class Cluster:
                 self._distributed_log_collector.stop()
 
             with without_http_proxies():
-                alive_actors = list_actors(
-                    filters=[
-                        ("STATE", "=", "ALIVE"),
-                        ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
-                    ]
-                )
+                # The state API lets RAY_ADDRESS override even an explicit address.
+                saved_ray_address = os.environ.pop("RAY_ADDRESS", None)
+                try:
+                    alive_actors = list_actors(
+                        address=ray.get_runtime_context().gcs_address,
+                        filters=[
+                            ("STATE", "=", "ALIVE"),
+                            ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
+                        ],
+                    )
+                finally:
+                    if saved_ray_address is not None:
+                        os.environ["RAY_ADDRESS"] = saved_ray_address
             self._close_actors([ray.get_actor(actor.name) for actor in alive_actors])
 
             if ray.is_initialized():
