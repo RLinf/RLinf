@@ -449,6 +449,123 @@ jobs:
         run: |
           rm -rf .venv
 
+  embodied-supermimic-g1-mimic-test:
+    runs-on: embodied
+    env:
+      SUPERMIMIC_MOTION_PATH: /workspace/results/g1_mimic_supermimic_clips
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment (supermimic)
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env supermimic
+
+      - name: SuperMimic unit tests with mjlab
+        timeout-minutes: 10
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          export MUJOCO_GL=egl
+          source .venv/bin/activate
+          pytest tests/unit_tests/test_supermimic.py
+
+      - name: Write a standing G1 clip
+        run: |
+          rm -rf /workspace/results/g1_mimic_supermimic*
+          export PYTHONPATH=$(pwd)
+          export MUJOCO_GL=egl
+          source .venv/bin/activate
+          python - <<'EOF'
+          import os
+
+          import torch
+
+          from rlinf.envs.sim.g1_mimic.constants import G1_JOINT_NAMES, JOINT_POS
+          from rlinf.envs.sim.g1_mimic.kinematics.g1_fk import asset_default_state
+
+          pose = asset_default_state()
+          os.makedirs(os.environ["SUPERMIMIC_MOTION_PATH"], exist_ok=True)
+          clip = {
+              "fps": 50.0,
+              "joint_names": list(G1_JOINT_NAMES),
+              "q0": pose[JOINT_POS],
+              "state": pose.repeat(64, 1),
+          }
+          torch.save(clip, os.path.join(os.environ["SUPERMIMIC_MOTION_PATH"], "clip_000.pt"))
+          EOF
+
+      - name: SuperMimic training test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh g1_mimic_supermimic
+
+      - name: SuperMimic resume test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh g1_mimic_supermimic \
+            runner.max_epochs=7 \
+            runner.resume_dir=/workspace/results/g1_mimic_supermimic/ci-test/checkpoints/global_step_5
+
+      - name: Check the resumed training state
+        run: |
+          source .venv/bin/activate
+          python - <<'EOF'
+          import json
+          import os
+          import re
+
+          log_root = "/workspace/results/g1_mimic_supermimic"
+          root = os.path.join(log_root, "ci-test/checkpoints")
+
+          def read(step, *parts):
+              with open(os.path.join(root, f"global_step_{step}", *parts)) as file:
+                  return json.load(file)
+
+          before = read(5, "actor", "supermimic_counters.json")["optimizer_steps"]
+          after = read(7, "actor", "supermimic_counters.json")["optimizer_steps"]
+          for phase, steps in before.items():
+              assert steps > 0 and steps % 5 == 0, (phase, before)
+              assert after[phase] == steps // 5 * 7, (phase, before, after)
+          env_steps = [read(step, "runner_state.json")["env_steps"] for step in (5, 7)]
+          assert env_steps[1] > env_steps[0] > 0, env_steps
+          with open(os.path.join(log_root, "metrics.log")) as file:
+              metrics = file.read()
+          logged = [int(n) for n in re.findall(r"Global Step:\s+(\d+)/7\b", metrics)]
+          assert logged and min(logged) > 5 and max(logged) == 7, logged
+          EOF
+
+      - name: SuperMimic MaxCoord test on two GPUs
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh g1_mimic_supermimic_maxcoord
+
+      - name: SuperMimic evaluation test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh g1_mimic_supermimic_eval
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv /workspace/results/g1_mimic_supermimic*
+
   embodied-mlp-ppo-mujoco-warp-test:
     runs-on: embodied
     steps:

@@ -15,12 +15,14 @@
 
 from __future__ import annotations
 
+import ctypes
 import dataclasses
 import os
 import shlex
 import signal
 import subprocess
 import sys
+import threading
 import time
 from typing import Optional
 
@@ -121,10 +123,13 @@ class SGLangRouterWorker(Worker):
             replaced by dashes); keys MUST match :class:`RouterArgs` field
             names. Typically ``config.rollout.router`` when used inside a
             rollout, but any compatible block works (the router isn't tied
-            to the rollout pipeline). The ``host`` and ``port`` keys
-            control the router's bind address; if ``port`` is missing or
-            ``None``, a free port is grabbed via the worker's PortLock at
-            :meth:`init_router` time. ``host`` defaults to ``0.0.0.0``.
+            to the rollout pipeline). Of the RLinf-side keys, ``host``
+            reaches the CLI as a RouterArgs field (default ``0.0.0.0``);
+            ``port`` never does — it is passed to the subprocess
+            separately, and a missing or ``None`` port grabs a free one
+            via the worker's PortLock at :meth:`init_router` time — and
+            ``type``, the selector of whether a router runs at all, is
+            popped before CLI assembly.
     """
 
     def __init__(
@@ -161,7 +166,12 @@ class SGLangRouterWorker(Worker):
         assert self._proc is None, "router subprocess already started."
 
         router_cfg = OmegaConf.to_container(self._router_cfg, resolve=True)
-        self._port = router_cfg.pop("port", self.acquire_free_port())
+        # `port: null` in the config must also grab a free port, and the
+        # grab must only happen when no usable port was configured.
+        self._port = router_cfg.pop("port", None) or self.acquire_free_port()
+        # RLinf-side selector of whether a router runs at all; not a
+        # RouterArgs field, so it never reaches the CLI.
+        router_cfg.pop("type", None)
 
         cmd = [
             sys.executable,
@@ -183,12 +193,44 @@ class SGLangRouterWorker(Worker):
         # request received" and keeps registration stuck retrying. The child
         # inherits the (stripped) env at fork; the parent's env is restored
         # on context exit.
+        # PDEATHSIG fires when the thread that spawned the router exits,
+        # not when the whole actor process exits: on a thread-pool thread
+        # (max_concurrency > 1) it would kill the router while the actor
+        # is still alive, so only the main thread may spawn it. A raise,
+        # not an assert: -O strips asserts and the violation would then
+        # kill a live router silently.
+        if threading.current_thread() is not threading.main_thread():
+            raise RuntimeError(
+                f"init_router must run on the actor's main thread, got "
+                f"{threading.current_thread().name!r}: PR_SET_PDEATHSIG "
+                f"fires when the spawning thread exits and would kill the "
+                f"router while the actor is alive."
+            )
         with no_proxy_env():
             # start_new_session=True makes the child a session leader, so a
             # SIGTERM to it doesn't propagate to the Ray actor (and vice
             # versa). stdout/stderr inherit the actor's so router logs land
             # in the same place as the worker's own logs.
-            self._proc = subprocess.Popen(cmd, start_new_session=True)
+            # prctl is resolved before the fork so the preexec callback
+            # only issues the syscall in the child.
+            libc = ctypes.CDLL(None)
+
+            def _arm_parent_death_signal() -> None:
+                # 1 is PR_SET_PDEATHSIG (linux/prctl.h). The router is a
+                # session leader, so nothing else (signals to the actor,
+                # sglang's own child chains) reaps it when the actor is
+                # SIGKILLed; without this the router process leaks.
+                libc.prctl(1, signal.SIGKILL)
+                if os.getppid() == 1:
+                    # The parent died between fork and prctl, so the
+                    # signal was never armed for it.
+                    os.kill(os.getpid(), signal.SIGKILL)
+
+            self._proc = subprocess.Popen(
+                cmd,
+                start_new_session=True,
+                preexec_fn=_arm_parent_death_signal,
+            )
 
         if self._advertise_host is None:
             self._advertise_host = ray.util.get_node_ip_address()
@@ -269,9 +311,13 @@ class SGLangRouterWorker(Worker):
 
         ``POST /workers`` returns 202 immediately and the router runs the
         registration workflow asynchronously (probe metadata, activate,
-        load tokenizer, …). This method blocks until ``GET /workers/<id>``
+        load tokenizer, …). This method blocks until that workflow's job
+        has finished (the worker row's ``job_status`` disappears - see
+        ``job_queue.rs::record_job_completion``, which removes the entry
+        on success and only keeps it on failure) and ``GET /workers/<id>``
         reports ``is_healthy=true``, so a follow-up ``/generate`` won't
-        race against an unactivated worker (which would return 503).
+        race against an unactivated worker (which would return 503) and
+        the metadata check below won't race the metadata attach.
 
         Equivalent to::
 
@@ -283,12 +329,14 @@ class SGLangRouterWorker(Worker):
             server_url: ``http://host:port`` of the sglang server to add.
             worker_type: ``"regular"`` (default), ``"prefill"`` or
                 ``"decode"`` for PD-disaggregated setups.
-            timeout: Total seconds to wait for the worker to reach
-                ``is_healthy=true``. Failed registrations raise sooner.
+            timeout: Total seconds to wait for the registration job to
+                finish and the worker to reach ``is_healthy=true``. Failed
+                registrations raise sooner.
             poll_interval: Seconds between ``GET /workers/<id>`` polls.
 
         Returns:
-            The final worker-status dict from ``GET /workers/<id>``.
+            The final worker-status dict from ``GET /workers/<id>``, with
+            its metadata verified (see the Raises section).
         """
         assert self._router_url is not None, "init_router() has not been called."
         self.log_info(f"Registering worker {server_url!r} ({worker_type}) on router.")
@@ -320,19 +368,50 @@ class SGLangRouterWorker(Worker):
                 continue  # router hasn't persisted the row yet — keep polling
             r.raise_for_status()
             status = r.json()
+            job = status.get("job_status") or {}
+            if job.get("status") == "failed":
+                raise RuntimeError(f"Router refused worker {server_url!r}: {job!r}")
+            if job.get("status") in ("pending", "processing"):
+                # is_healthy flips true mid-workflow, before the
+                # registration job finishes; verifying that early races
+                # the metadata attach.
+                continue
             if status.get("is_healthy"):
                 self.log_info(
                     f"Worker {server_url!r} active (id={worker_id}, "
                     f"model_id={status.get('model_id')!r})."
                 )
+                self._verify_worker_metadata(server_url, worker_id)
                 return status
-            job = status.get("job_status") or {}
-            if job.get("status") == "failed":
-                raise RuntimeError(f"Router refused worker {server_url!r}: {job!r}")
         raise RuntimeError(
             f"Worker {server_url!r} (id={worker_id}) did not become healthy "
             f"within {timeout:.0f}s; last status={status!r}."
         )
+
+    def _verify_worker_metadata(self, server_url: str, worker_id: str) -> None:
+        """Read a registered worker's row back and require /server_info metadata.
+
+        The router only warns ("Failed to fetch metadata") when a worker's
+        /server_info or /model_info discovery fails and registers it anyway.
+        Require ``dp_size``, which the router's discovery only copies into
+        the worker metadata when /server_info answered, so a worker whose
+        /server_info failed fails loudly here instead of silently losing
+        dp_size-dependent routing.
+        """
+        r = requests.get(
+            f"{self._router_url}/workers/{worker_id}",
+            timeout=10,
+            proxies={"http": None, "https": None},
+        )
+        r.raise_for_status()
+        row = r.json()
+        metadata = row.get("metadata") or {}
+        if "dp_size" not in metadata:
+            raise RuntimeError(
+                f"router registered worker {server_url!r} without dp_size "
+                f"in its metadata (dp_size comes from the worker's "
+                f"/server_info; its discovery must have failed): {row!r}"
+            )
 
     def unregister_server(self, server_url: str, timeout: float = 60.0) -> dict:
         """Remove a previously-registered server from the router.

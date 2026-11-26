@@ -1,17 +1,15 @@
-使用 GRPO 训练 Math 推理任务
-========================================
+Qwen2.5 数学推理（GRPO）
+========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
    :height: 16px
    :class: inline-icon
 
-使用本配方在数学数据上用 GRPO 训练 Qwen 系列推理模型。相比监督微调，RL 鼓励模型探索更多样的推理路径，同时优化最终答案正确性。
+使用 :doc:`GRPO </rst_source/reference/algorithms/grpo>` 在 AReaL-boba 数学数据上训练 DeepSeek-R1-Distill-Qwen 1.5B 或 7B 模型；在 AIME 24、AIME 25 与 GPQA-diamond 上的平均分分别达到 40.84（1.5B）和 56.23（7B）。
 
-概述
-----------------------------------------
-
-使用本配方在数学数据上通过 GRPO 训练 Qwen 系列推理模型。
+概览
+----
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -19,153 +17,111 @@
    .. grid-item-card:: 模型
       :text-align: center
 
-      Qwen2.5-1.5B 与 Qwen2.5-7B
+      DeepSeek-R1-Distill-Qwen-1.5B · 7B
 
    .. grid-item-card:: 算法
       :text-align: center
 
-      GRPO，使用 token-level loss 与 minibatch early-stop
+      GRPO（token 级 Loss，Megatron + SGLang）
 
-   .. grid-item-card:: 数据
+   .. grid-item-card:: 任务
       :text-align: center
 
-      AReaL-boba 数学推理数据
+      数学推理（AReaL-boba）
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      多节点 Megatron 训练
+      默认 16 节点（单机快速启动 ≥ 2 / 4 张 GPU）
 
-数据集
-----------------------------------------
+| **你将完成：** 安装 ``agentic`` 依赖 → 下载模型与 AReaL-boba 数据集 → 运行 ``run_main_grpo_math.sh`` → 观察训练曲线并评测。
+| **前置条件：** :doc:`安装与硬件参考 </rst_source/start/installation>` · 单机快速启动需至少 2 张 GPU（1.5B）或 4 张 GPU（7B），默认配置为 16 节点。
 
-我们使用 `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`_ 数据集。
-该数据集整合了 DeepScaleR、Open-Reasoner-Zero、Light-R1、DAPO、NuminaMath（AoPS/Olympiad 子集）和 ZebraLogic。
-过于简单的问题会被过滤，以保证数据集质量和有效性。
+安装与运行
+----------
 
-一个训练样例如下：
+中国大陆用户可在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。预构建镜像见 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__。
 
-.. code-block:: json
+.. tab-set::
 
-   {
-      "prompt": "<｜User｜>\nProblem description... Please reason step by step, and put your final answer within \\boxed{}.<｜Assistant｜><think>\n",
-      "task": "math",
-      "query_id": "xx",
-      "solutions": ["\\boxed{x}"]
-   }
+   .. tab-item:: DeepSeek-R1-Distill-Qwen-1.5B
 
-.. note::
+      **1. 安装环境**
 
-  请确认数据集格式是按照上述结构配置。
-  否则，请仔细阅读下方的配置指南，使用 RLinf 适配您的数据集。
+      .. code-block:: bash
 
-我们支持导入其他类型结构的数据集。
-如需导入不同的数据集并作出特殊处理，您可根据需求调整配置。
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-- **Prompt key 和 answer key 配置**
+      **2. 下载模型与数据**
 
-  默认配置要求数据集使用 `prompt` 和 `solutions` 键分别用于获取提示词信息和答案信息。
+      下载基础模型和 `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`__：
 
-  但不同数据集可能使用不同的键名或结构，您可自定义配置以匹配数据集格式。
-  在配置 yaml 文件中修改 `prompt_key` 和 `answer_key` 的值，使其指向数据集中对应的字段即可。
+      .. code-block:: bash
 
-  比如说，如果您的数据集使用如下所示的 `prompt` 和 `label` 作为键名，您需要设置：
+         hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --local-dir ./DeepSeek-R1-Distill-Qwen-1.5B
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
 
-  .. code-block:: yaml
+      **3. 启动训练**
 
-      prompt_key: "prompt"
-      answer_key: "label"
+      .. warning::
 
-- **apply_chat_template 配置**
+         ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml`` 默认面向 **16 节点**\ （``cluster.num_nodes: 16``）。单机快速启动需覆盖 ``cluster.num_nodes=1``\ （TP=2 至少需要 2 张 GPU）。
 
-  部分数据集的提示词信息可能需要使用 tokenizer 中的 chat template 进行特殊处理。
-  若需此功能，需在配置中启用 `apply_chat_template` 选项。
+      .. code-block:: bash
 
-  .. code-block:: yaml
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron \
+           cluster.num_nodes=1 \
+           rollout.model.model_path=./DeepSeek-R1-Distill-Qwen-1.5B \
+           actor.tokenizer.tokenizer_model=./DeepSeek-R1-Distill-Qwen-1.5B \
+           data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+           data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]'
 
-      apply_chat_template: true
+   .. tab-item:: DeepSeek-R1-Distill-Qwen-7B
 
-  比如说，如果您的数据集使用如下所示的特定结构对话消息，则需启用该选项以正确格式化提示词信息：
+      **1. 安装环境**
 
-  .. code-block:: json
+      .. code-block:: bash
 
-      {
-          "prompt": [{"content": "<str>", "role": "<str>"},],
-          "label": "<str>",
-      }
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic && source .venv/bin/activate
 
-  启用该选项后，原始数据集将通过 `tokenizer.apply_chat_template()` 方法处理，按照使用模型的 tokenizer 中对话模板对提示词信息进行格式化。
-  处理完成后，提示词信息将转换为字符串格式，用于模型输入。
+      **2. 下载模型与数据**
 
-GRPO 工作方式
-----------------------------------------
+      下载基础模型和 `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`__：
 
-我们采用 GRPO（Group Relative Policy Optimization），并做了如下改进：
+      .. code-block:: bash
 
-- **Token 级别的损失**：不是在整个响应序列上平均损失，而是在 token 级别上平均（类似 DAPO）。
-  这样可以避免过长的回答主导训练，减少它们对梯度的影响。
+         hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-7B --local-dir ./DeepSeek-R1-Distill-Qwen-7B
+         hf download --repo-type dataset inclusionAI/AReaL-boba-Data --local-dir ./AReaL-boba-Data
 
-- **小批次提前停止**：如果一个 minibatch 中的重要性比率过大，则丢弃该批次，以稳定训练。
+      **3. 启动训练**
 
-奖励函数：
+      .. warning::
 
-- 最终 boxed/数值答案正确：+5
-- 错误：-5
+         ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml`` 默认面向 **16 节点**\ （``cluster.num_nodes: 16``）。单机快速启动需覆盖 ``cluster.num_nodes=1``\ （TP=4 至少需要 4 张 GPU）。
 
-运行
-----------------------------------------
+      .. code-block:: bash
 
-**1. 关键参数配置**
+         bash examples/reasoning/run_main_grpo_math.sh qwen2.5-7b-grpo-megatron \
+           cluster.num_nodes=1 \
+           rollout.model.model_path=./DeepSeek-R1-Distill-Qwen-7B \
+           actor.tokenizer.tokenizer_model=./DeepSeek-R1-Distill-Qwen-7B \
+           data.train_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]' \
+           data.val_data_paths='["./AReaL-boba-Data/AReaL-boba-106k.jsonl"]'
 
-在启动前，检查配置文件。主要字段包括：
+.. dropdown:: 进阶配置：多节点、vLLM 与自定义数据集（可选）
 
-- 集群设置：``cluster.num_nodes`` （节点数）。
-- 路径：``runner.output_dir`` （保存训练日志与检查点的路径）、``rollout.model.model_path`` （基础模型本地路径）、``data.train_data_paths`` （训练数据路径）等。
+   - **完整 16 节点训练**：按 :doc:`/rst_source/guides/multi_node` 启动 Ray 集群后，去掉 ``cluster.num_nodes=1`` 并将模型与数据指向共享存储路径，在 head 节点运行启动命令。
 
-通用的 cluster、runner、rollout 与 data 字段见 :doc:`训练配置 <../../../reference/configuration>`。
+   - **切换 vLLM rollout 后端**：执行 ``bash requirements/install.sh agentic --engine vllm`` 安装环境，启动时追加 ``rollout.rollout_backend=vllm``。详见 :doc:`Rollout 引擎版本 </rst_source/guides/version>` 与 :doc:`训练配置 </rst_source/reference/configuration>`。
 
-**2. 配置文件**
-
-推荐配置示例：
-
-- ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
-- ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``
-
-**3. 启动命令**
-
-运行以下命令以启动 Ray 集群并开始训练：
-
-.. code-block:: bash
-
-   cd /path_to_RLinf/ray_utils;
-   rm /path_to_RLinf/ray_utils/ray_head_ip.txt;
-   export TOKENIZERS_PARALLELISM=false
-   bash start_ray.sh;
-   if [ "$RANK" -eq 0 ]; then
-       bash check_ray.sh 128;
-       cd /path_to_RLinf;
-       bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron # 修改配置文件
-   else
-     if [ "$RANK" -eq 1 ]; then
-         sleep 3m
-     fi
-     sleep 10d
-   fi
-
-   sleep 10d
+   - **自定义数据集格式**：默认配置读取 ``prompt`` 与 ``solutions`` 字段（boxed 答案正确得 +5 Reward，错误得 -5）。使用其他数据集时可覆盖 ``data.prompt_key`` 与 ``data.answer_key``；若提示词为对话消息列表，开启 ``data.apply_chat_template=True``。
 
 可视化与结果
-----------------------------------------
+------------
 
-我们基于 DeepSeek-R1-Distill-Qwen 训练了 1.5B 和 7B 模型。
-
-训练启动后，通过以下命令监控指标：
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-通用指标含义见 :doc:`训练指标 <../../../reference/metrics>`。下面展示训练曲线。
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看训练曲线；各指标含义及 W&B / SwanLab 配置见 :doc:`训练指标 </rst_source/reference/metrics>`。
 
 .. raw:: html
 
@@ -180,12 +136,7 @@ GRPO 工作方式
      </div>
    </div>
 
-最终性能
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-我们提供了评估 `工具包 <https://github.com/RLinf/LLMEvalKit>`_。
-
-在 AIME24、AIME25 和 GPQA-diamond 上的评测结果表明，RLinf 达到了 SOTA 性能。
+使用 `LLMEvalKit <https://github.com/RLinf/LLMEvalKit>`__ 在 AIME 24、AIME 25 与 GPQA-diamond 上评测。训练好的 checkpoint 已发布在 `RLinf-math-1.5B <https://huggingface.co/RLinf/RLinf-math-1.5B>`__ 与 `RLinf-math-7B <https://huggingface.co/RLinf/RLinf-math-7B>`__。
 
 .. list-table:: **1.5 B 模型结果**
    :header-rows: 1
@@ -196,7 +147,7 @@ GRPO 工作方式
      - AIME 25
      - GPQA-diamond
      - 平均值
-   * - |huggingface| `DeepSeek-R1-Distill-Qwen-1.5B (基础模型) <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B>`_
+   * - |huggingface| `DeepSeek-R1-Distill-Qwen-1.5B（基础模型） <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B>`_
      - 28.33
      - 24.90
      - 27.45
@@ -232,7 +183,7 @@ GRPO 工作方式
      - **38.46**
      - **40.84**
 
-\* 我们使用默认配置对模型进行了 600 步重训。
+\* 使用默认配置重训 600 步。
 
 .. list-table:: **7 B 模型结果**
    :header-rows: 1
@@ -243,7 +194,7 @@ GRPO 工作方式
      - AIME 25
      - GPQA-diamond
      - 平均值
-   * - |huggingface| `DeepSeek-R1-Distill-Qwen-7B (基础模型) <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B>`_
+   * - |huggingface| `DeepSeek-R1-Distill-Qwen-7B（基础模型） <https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B>`_
      - 54.90
      - 40.20
      - 45.48
@@ -273,11 +224,3 @@ GRPO 工作方式
      - 52.19
      - **48.18**
      - **56.23**
-
-公开检查点
-----------------------------------------
-
-我们在 Hugging Face 上发布了训练好的模型，供大家使用：
-
-- `RLinf-math-1.5B <https://huggingface.co/RLinf/RLinf-math-1.5B>`_
-- `RLinf-math-7B <https://huggingface.co/RLinf/RLinf-math-7B>`_

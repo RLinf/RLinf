@@ -1,344 +1,232 @@
-LeKiwi Mobile Base Setup and Control
-====================================
+LeKiwi Mobile Base
+==================
 
-This page takes a LeKiwi omnidirectional base and its front camera from the
-box to a running ``LeKiwiDriveEnv-v1`` environment. It installs the environment,
-numbers the wheel motors, checks each part with one command, and then shows the
-config that hands the base to a policy or a controller.
+Take a LeKiwi 3-omniwheel mobile base and its front UVC camera from unboxing to a running ``LeKiwiDriveEnv-v1`` environment by checking the wheels, camera, and keyboard teleoperation in order.
 
-Work through the three checks in order. Each one covers a single part, so when
-a later step fails you already know the wheels, the camera, and the keyboard
-work.
+Overview
+--------
 
-What You Need
--------------
+Work through the checks in order—wheels, camera, then keyboard—so any later failure narrows directly to the new layer. The base driver converts planar velocity commands into three Feetech STS3215 wheel speeds and scales all three down together when any wheel exceeds ``max_raw`` so the heading and turn rate stay intact.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Robot
+      :text-align: center
+
+      LeKiwi · 3× Feetech STS3215 omniwheels
+
+   .. grid-item-card:: Sensors & Teleop
+      :text-align: center
+
+      Front UVC webcam · local / TCP keyboard
+
+   .. grid-item-card:: Workflow
+      :text-align: center
+
+      Motor IDs · Part checks · Teleop · DriveEnv
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      Raspberry Pi / Linux · USB servos · no GPU
+
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 70
+   :widths: 24 76
+
+   * - Field
+     - Description
+   * - Observation
+     - Measured planar body velocity plus RGB camera frames (captured at ``640x480`` by default, center-cropped to aspect ratio, and resized to ``frame_size``, default ``128x128``).
+   * - Action
+     - Planar base velocity ``[x, y, theta]`` (forward ``m/s``, lateral ``m/s``, yaw ``deg/s``), held for one control period at ``step_frequency`` and stopped afterward.
+   * - Reward
+     - Always ``0`` with no early termination; task success is defined by the caller or a custom task.
+
+Hardware and Safety
+-------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
 
    * - Component
      - Requirement
-   * - Base
-     - LeKiwi mobile base with three Feetech STS3215 wheel servos, its servo
-       controller, and the kit's power supply.
-   * - Camera
-     - UVC webcam mounted on the front, connected to the same computer as the
-       servo controller.
+   * - Base & camera
+     - LeKiwi mobile base (three Feetech STS3215 wheel servos, servo controller, kit power supply) and a front-mounted UVC webcam on the same host.
    * - Controller computer
-     - Linux computer with a USB port for the servo controller. A Raspberry Pi
-       on the robot is the usual choice; it needs no GPU.
-   * - Keyboard computer
-     - Optional. Any computer on the same network, macOS included, with a
-       Python 3.11+ environment with ``pynput`` installed. It does not need an
-       RLinf install.
+     - Linux host with USB (typically a Raspberry Pi 5 on the base); no GPU required.
+   * - Keyboard computer (optional)
+     - Any LAN host (including macOS) with Python 3.11+ and ``pynput``; no RLinf install required.
 
-Assembly is not covered here: follow the `LeKiwi assembly guide
-<https://github.com/SIGRobotics-UIUC/LeKiwi/blob/main/Assembly.md>`_, and
-LeRobot's `LeKiwi guide <https://huggingface.co/docs/lerobot/en/lekiwi>`_ for
-the same robot in its own stack.
+For mechanical assembly, follow the `LeKiwi assembly guide <https://github.com/SIGRobotics-UIUC/LeKiwi/blob/main/Assembly.md>`__ (and LeRobot's `LeKiwi guide <https://huggingface.co/docs/lerobot/en/lekiwi>`__ for upstream usage).
 
-How the Pieces Fit
-------------------
+.. warning::
 
-The LeKiwi base uses three omniwheels driven by Feetech STS3215 servos in
-velocity mode. A policy outputs planar base commands ``[x, y, theta]``—forward
-velocity in ``m/s``, lateral velocity in ``m/s``, and yaw rate in ``deg/s``—while
-the servo controller expects per-wheel raw speed commands.
+   Put the base on blocks so all three wheels spin free for initial wheel and keyboard checks, and keep the servo power switch within reach. Run only one motor-control program on the serial port at a time. Normal exit, lost input, and exceptions stop the wheels and drop torque, but a cut USB cable or a killed process can leave wheels spinning—use the servo power switch immediately if that happens.
 
-``LeKiwiBase`` bridges the two: its planar kinematics map ``[x, y, theta]`` to
-three wheel speeds, and if any wheel would exceed ``max_raw`` it scales all
-three wheel speeds down by the same factor so the base slows down without
-changing its trajectory or turn rate. ``LeKiwiRobot`` pairs that base with
-``UVCCamera`` cameras, and ``LeKiwiDriveEnv-v1`` wraps the robot as a
-Gymnasium environment so a policy receives image observations and base
-velocities and sends ``[x, y, theta]`` actions at ``step_frequency``. Each
-part's observation and action contracts are in :doc:`Robotics Interface
-</rst_source/concepts/robotics>`.
-
-Install the Environment
------------------------
-
-Run these steps on the computer (for example, a Raspberry Pi 5) wired to the
-servo controller, not on your laptop.
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
-   :end-before: Then set up the dependencies
 
-Install the robot dependencies from the repository root:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: 1. Install & Hardware Check
 
-   # Mainland China users can add --use-mirror for faster downloads.
-   bash requirements/install.sh embodied --env lekiwi --install-rlinf --no-root
-   source .venv/bin/activate
+      **1. Install RLinf on the base controller computer**
 
-The installer includes LeRobot with Feetech support and OpenCV's headless
-build, which captures frames without the system GL libraries a camera window
-needs. ``--no-root`` skips the system libraries the installer would otherwise
-add with sudo: the checks below use only the serial port and that headless
-build, so a base computer needs none of them. Drop the flag if you also train
-or run simulators on this computer. ``--install-rlinf`` installs RLinf itself.
-Platform prerequisites are in :doc:`Installation
-</rst_source/start/installation>`. Run every command below from the repository
-root with this virtual environment active, using
-``toolkits/realworld_check/test_lekiwi_env.py``.
+      Run on the computer wired to the servo controller (for example a Raspberry Pi 5). ``--no-root`` skips sudo system GL libraries because the headless OpenCV build only captures frames (drop ``--no-root`` if you also train or run simulators on this host):
 
-Find the Servo Port
--------------------
+      .. code-block:: bash
 
-Every command takes the serial port of the servo controller. With the
-controller plugged in and nothing else on its USB path, run:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --env lekiwi --install-rlinf --no-root && source .venv/bin/activate
 
-.. code-block:: bash
+      **2. Find the servo port and assign wheel motor IDs**
 
-   lerobot-find-port
+      Identify the servo controller serial port (examples assume ``/dev/ttyACM0``; prefer ``/dev/serial/by-id/...`` for fixed setups), then number factory-fresh STS3215 motors one at a time (writes left 7, back 8, right 9; skip if already numbered):
 
-Unplug the controller when prompted, then reconnect it. The device it reports
-is the port to use below; these examples assume ``/dev/ttyACM0``, and on macOS
-the path looks like ``/dev/tty.usbmodem...``. A name under
-``/dev/serial/by-id/`` survives replugging into a different socket, so prefer
-it when the base stays in one place. The port stays the same for all the checks
-below.
+      .. code-block:: bash
 
-Assign the Wheel Motor IDs
---------------------------
+         lerobot-find-port
+         lerobot-setup-motors --robot.type=lekiwi --robot.port=/dev/ttyACM0
 
-A factory-fresh STS3215 answers on the same default ID, so the wheels are
-numbered one at a time. LeRobot's setup command prompts for each wheel; connect
-only the wheel it names:
+      **3. Check the wheels**
 
-.. code-block:: bash
+      With the base on blocks and all three motors connected, spin each wheel for 0.6 s at raw command 100 (adjust with ``--raw`` and ``--seconds``):
 
-   lerobot-setup-motors --robot.type=lekiwi --robot.port=/dev/ttyACM0
+      .. code-block:: bash
 
-It writes left wheel 7, back wheel 8, and right wheel 9, the IDs this driver
-expects. Skip this step on a base whose wheels are already numbered.
+         python -m toolkits.realworld_check.test_lekiwi_env wheels --port /dev/ttyACM0
 
-Check the Wheels
-----------------
+      Expected output:
 
-Put the base on blocks so the wheels spin free, connect all three motors, and
-run:
+      .. code-block:: text
 
-.. code-block:: bash
+         Spinning the left wheel at raw 100
+         left  commanded    100  measured     98  ok
+         back  commanded    100  measured     97  ok
+         right commanded    100  measured     99  ok
 
-   python -m toolkits.realworld_check.test_lekiwi_env wheels --port /dev/ttyACM0
+      **4. Check the front camera**
 
-Each wheel turns for 0.6 seconds at raw command 100 and stops, and the command
-reports the velocity its encoder sent back:
+      Verify the camera actually delivers frames and inspect ``check.png`` (use ``--device`` when multiple cameras are attached):
 
-.. code-block:: text
+      .. code-block:: bash
 
-   Spinning the left wheel at raw 100
-   left  commanded    100  measured     98  ok
-   back  commanded    100  measured     97  ok
-   right commanded    100  measured     99  ok
+         python -m toolkits.realworld_check.test_lekiwi_env camera --save check.png
 
-``--raw`` makes the spin faster and ``--seconds`` makes it longer.
+      Expected output (copy the printed identifier into ``camera_names`` below):
 
-Check the Camera
-----------------
+      .. code-block:: text
 
-.. code-block:: bash
+         Webcams found: /dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0
+         Using /dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0 at 640x480
+         Captured 10 frames in 0.34 s (29.4 fps)
+         Frame shape (480, 640, 3), dtype uint8, mean brightness 96.2
 
-   python -m toolkits.realworld_check.test_lekiwi_env camera --save check.png
+   .. tab-item:: 2. Keyboard Drive & Env
 
-The command lists the webcams it finds, opens one, and reports the frames it
-actually delivers, because a camera can open and still send nothing:
+      **1. Test keyboard input and drive the base**
 
-.. code-block:: text
+      Keep the wheels off the ground for the first test. Verify key capture with ``--dry-run`` before engaging the motors (override defaults with ``--wheel-radius`` 0.05, ``--base-radius`` 0.125, ``--max-raw``, and ``--fps``):
 
-   Webcams found: /dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0
-   Using /dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0 at 640x480
-   Captured 10 frames in 0.34 s (29.4 fps)
-   Frame shape (480, 640, 3), dtype uint8, mean brightness 96.2
+      .. code-block:: bash
 
-Write the printed identifier into ``camera_names`` later in this page. Open
-``check.png`` to see what the robot sees, and adjust the mount before
-collecting data. With several cameras attached, choose one with
-``--device``.
+         python -m toolkits.realworld_check.test_lekiwi_env teleop --dry-run
+         python -m toolkits.realworld_check.test_lekiwi_env teleop --port /dev/ttyACM0
 
-Drive the Base with the Keyboard
---------------------------------
+      .. list-table::
+         :header-rows: 1
+         :widths: 35 65
 
-Keep the wheels off the ground for the first run and keep servo power within
-reach. Check the key handling without touching the motors first:
+         * - Key
+           - Action
+         * - ``W / S`` · ``A / D`` · ``Z / X``
+           - Forward / backward · strafe left / right · turn left / right
+         * - ``R / F``
+           - Step speed up / down across Slow (0.1 m/s, 30 deg/s), Medium (0.2 m/s, 60 deg/s), and Fast (0.3 m/s, 90 deg/s)
+         * - ``Q / Esc / Ctrl+C`` · release keys
+           - Quit, stop wheels, and drop torque · command zero velocity
 
-.. code-block:: bash
+      .. dropdown:: Remote keyboard teleop (headless SSH / Wayland / macOS)
 
-   python -m toolkits.realworld_check.test_lekiwi_env teleop --dry-run
+         Local capture requires a desktop X11 session. For headless SSH, Wayland, or driving from another machine (start the receiver first; TCP port 5555 via ``--remote-port``, ``--fps`` 30 Hz, ``--connect-timeout``, ``--input-timeout`` 2 s):
 
-Then drive:
+         .. code-block:: bash
 
-.. code-block:: bash
+            # On the robot (receiver):
+            python -m toolkits.realworld_check.test_lekiwi_env teleop --listen --port /dev/ttyACM0
 
-   python -m toolkits.realworld_check.test_lekiwi_env teleop --port /dev/ttyACM0
+            # On the keyboard host (replace with robot IP):
+            python -m toolkits.realworld_check.test_lekiwi_env teleop --remote 192.168.1.100
+
+         On a separate laptop or macOS (where ``install.sh`` is unsupported), install ``pynput`` in a Python 3.11+ venv and run from a checkout (on macOS, grant Terminal Accessibility and Input Monitoring permissions and test with receiver ``--dry-run`` first):
+
+         .. code-block:: bash
+
+            git clone https://github.com/RLinf/RLinf.git && cd RLinf
+            pip install pynput
+            python -m toolkits.realworld_check.test_lekiwi_env teleop --remote 192.168.1.100
+
+      **2. Configure LeKiwiDriveEnv-v1**
+
+      Select ``LeKiwiDriveEnv-v1`` with ``env_type: real`` (same layout as ``examples/embodiment/config/env/so101_reach.yaml``), declare ``hardware.type: LeKiwi``, and map the camera identifier to ``front`` so frames appear under ``main_image_key``:
+
+      .. code-block:: yaml
+
+         cluster:
+           node_groups:
+             - label: lekiwi
+               node_ranks: 1
+               hardware:
+                 type: LeKiwi
+                 configs:
+                   - serial_port: /dev/ttyACM0
+                     camera_serials: ["/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0"]
+                     node_rank: 1
+
+         env:
+           eval:
+             env_type: real
+             main_image_key: front
+             init_params:
+               id: "LeKiwiDriveEnv-v1"
+             override_cfg:
+               camera_names:
+                 "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0": front
+               frame_size: [128, 128]
+               max_linear_velocity: 0.5
+               max_angular_velocity: 90.0
+               step_frequency: 10.0
+
+      .. dropdown:: RPent deployment (optional)
+
+         LeKiwi ships no training config under ``examples/embodiment`` because RPent runs ``LeKiwiDriveEnv-v1`` directly. For environment server, robot configuration, and planner setup, follow the `RPent LeKiwi guide <https://github.com/RLinf/RPent/blob/main/docs/source-en/rst_source/real_world_robots/lekiwi.rst>`__.
+
+Results and Troubleshooting
+---------------------------
+
+Hardware setup is verified once all three wheels report ``ok``, ``camera --save check.png`` delivers live frames with non-zero brightness, and ``teleop --dry-run`` registers key presses before enabling the motors.
 
 .. list-table::
    :header-rows: 1
    :widths: 35 65
 
-   * - Key
-     - Action
-   * - W / S
-     - Forward / backward
-   * - A / D
-     - Left / right
-   * - Z / X
-     - Turn left / right
-   * - R / F
-     - Increase / decrease speed, once per press
-   * - Q / Esc / Ctrl+C
-     - Quit, stop the wheels, and drop torque
-   * - Release movement keys
-     - Command zero velocity
+   * - Symptom
+     - Fix
+   * - Local ``teleop`` does not receive keys over SSH or Wayland
+     - Run ``teleop --listen`` on the robot and ``teleop --remote <robot-ip>`` on a desktop host.
+   * - macOS remote sender fails to capture keys
+     - Enable Accessibility and Input Monitoring for your terminal in System Settings > Privacy & Security, restart the terminal, and verify with ``--dry-run``.
+   * - Camera opens but frames appear under ``camera_1`` instead of ``front``
+     - Map the exact identifier printed by ``test_lekiwi_env camera`` to ``front`` in ``override_cfg.camera_names``.
+   * - Receiver exits mid-session
+     - Default ``--input-timeout`` is 2 s after lost packets or disconnect; restart both receiver and sender to begin a new session.
 
-The three speed levels start at the slowest:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 35 35
-
-   * - Level
-     - Translation
-     - Rotation
-   * - Slow (initial)
-     - 0.1 m/s
-     - 30 deg/s
-   * - Medium
-     - 0.2 m/s
-     - 60 deg/s
-   * - Fast
-     - 0.3 m/s
-     - 90 deg/s
-
-Use ``--wheel-radius`` and ``--base-radius`` in metres if your geometry
-differs from the defaults of 0.05 and 0.125, ``--max-raw`` to lower the servo
-limit, and ``--fps`` to change the control rate.
-
-The command stops and releases every wheel on quit, on lost keyboard input,
-and on an exception. A cut USB cable or a killed process can still leave the
-wheels turning: use the servo power switch, and run one motor-control program
-on the port at a time.
-
-The keyboard listener reads the local desktop, so it needs a local X11
-session; it does not read a headless SSH session or Wayland. Drive the same
-base from another machine instead: ``--listen`` on the robot drives the wheels
-from keys sent over TCP, and ``--remote HOST`` where the keyboard is sends
-them.
-
-.. code-block:: bash
-
-   # On the robot, wired to the motors:
-   python -m toolkits.realworld_check.test_lekiwi_env teleop --listen --port /dev/ttyACM0
-
-   # On the machine with the keyboard:
-   python -m toolkits.realworld_check.test_lekiwi_env teleop --remote <robot-ip>
-
-The keys and speed levels are the same. Both sides use TCP port 5555 unless you
-change it with ``--remote-port``. The sender transmits the current movement keys
-and speed level at ``--fps`` (30 Hz by default). On the receiver, ``--fps``
-sets the motor-control rate. ``--listen`` also takes
-``--wheel-radius``, ``--base-radius``, ``--max-raw``, and ``--dry-run``.
-``--connect-timeout`` bounds connection and send operations; a failed connection
-exits immediately. Start the receiver first.
-
-The receiver stops and exits on disconnect or when input stops arriving for
-``--input-timeout`` seconds (default: 2). Restart both commands to begin another
-session. Q, Esc, or Ctrl+C stops the sender; loss of keyboard capture also ends
-the session.
-
-A machine installed as above already has ``pynput``, which is installed with
-LeRobot. On a separate laptop or on macOS (which ``install.sh`` does not
-support), create a Python 3.11+ virtual environment, install ``pynput``, and run
-the sender from a checkout:
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-   pip install pynput
-   PYTHONPATH=$PWD python -m toolkits.realworld_check.test_lekiwi_env teleop --remote <robot-ip>
-
-On macOS, also allow the terminal in System Settings under Privacy & Security
-in Accessibility and Input Monitoring, then restart it. Check that key presses
-reach the receiver in ``--dry-run`` before enabling the motors.
-
-The Drive Environment
----------------------
-
-``LeKiwiDriveEnv-v1`` is the registered Gymnasium task: it composes the robot from
-the hardware config, reports the measured body velocity and camera frames, and
-commands bounded velocities. A step holds the commanded velocity for one
-control period and then stops the wheels, so the base moves only while the
-caller keeps stepping.
-
-LeKiwi ships no config under ``examples/embodiment`` because RPent runs this
-environment directly rather than through a training script. Any config that uses
-the task selects it with ``init_params.id``, as every real-world task does, and
-``examples/embodiment/config/env/so101_reach.yaml`` is a shipped example of the
-same shape:
-
-.. code-block:: yaml
-
-   env_type: real
-   total_num_envs: null
-   main_image_key: front
-
-   init_params:
-     id: "LeKiwiDriveEnv-v1"
-     num_envs: null
-
-The port, the cameras, and the wheel geometry come from the hardware block of
-the node group that runs the environment:
-
-.. code-block:: yaml
-
-   cluster:
-     node_groups:
-       - label: lekiwi
-         node_ranks: 1
-         hardware:
-           type: LeKiwi
-           configs:
-             - serial_port: /dev/ttyACM0
-               camera_serials: ["/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0"]
-               node_rank: 1
-
-Per-run settings are listed under ``override_cfg`` in the training config:
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       override_cfg:
-         camera_names:
-           "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0": front
-         frame_size: [128, 128]
-         max_linear_velocity: 0.5
-         max_angular_velocity: 90.0
-         step_frequency: 10.0
-
-The keys of ``camera_names`` are the identifiers printed by
-``python -m toolkits.realworld_check.test_lekiwi_env camera``. Name the camera ``front``
-so its frames appear
-under the key ``main_image_key`` points at; a camera left unnamed reports under
-``camera_1`` and so on.
-
-``frame_size`` sets the width and height of every frame in the observation, 128
-by 128 pixels by default. A policy usually wants a small frame; a live viewer
-wants a larger one. The driver requests a ``640x480`` capture resolution by
-default and returns the frame at the size delivered by the device. The
-environment crops the center to the target aspect ratio before resizing,
-preserving object proportions.
-
-The reward is always zero and the episode never terminates early: a task
-decides success itself, as
-:doc:`New Real-World Tasks </rst_source/extending/new_task>` describes.
-
-RPent Deployment
-----------------
-
-For agent control and deployment, follow the
-`RPent LeKiwi guide <https://github.com/RLinf/RPent/blob/main/docs/source-en/rst_source/real_world_robots/lekiwi.rst>`_.
-It covers the environment server, robot configuration, and planner setup.
+For part observation and action contracts, see :doc:`Robotics Interface <../../concepts/robotics>`; to add rewards or termination logic, see :doc:`New Real-World Tasks <../../extending/new_task>`.

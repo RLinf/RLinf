@@ -12,7 +12,7 @@ RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Mi
     <table border="0">
       <tr>
         <td align="center">
-          <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/rlinf_arch.jpg" alt="mani_openvla" width="450"/>
+          <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/rlinf_arch.jpg" alt="mani_openvla" width="450"/>
         </td>
       </tr>
     </table>
@@ -41,11 +41,11 @@ RLinf 在多种数学推理 RL 设置下，吞吐量始终优于最先进的 RL 
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_verl_all.jpg" alt="mani_openvla" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/rlinf_vs_verl_all.jpg" alt="mani_openvla" width="350"/>
          <br/><strong>吞吐量（GRPO）</strong>
        </td>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/latency_breakdown_7B.jpg" alt="mani_openvlaoft" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/latency_breakdown_7B.jpg" alt="mani_openvlaoft" width="350"/>
          <br/><strong>耗时占比（GRPO，7B）</strong>
        </td>
      </tr>
@@ -61,11 +61,11 @@ RLinf 在多种数学推理 RL 设置下，吞吐量始终优于最先进的 RL 
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_verl_ppo.jpg" alt="mani_openvla" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/rlinf_vs_verl_ppo.jpg" alt="mani_openvla" width="350"/>
          <br/><strong>吞吐量（PPO）</strong>
        </td>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_verl_breakdown.jpg" alt="mani_openvlaoft" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/rlinf_vs_verl_breakdown.jpg" alt="mani_openvlaoft" width="350"/>
          <br/><strong>耗时占比（PPO，7B，32 GPUs）</strong>
        </td>
      </tr>
@@ -85,12 +85,12 @@ MoE 模型
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_slime_all.jpg" alt="mani_openvla" width="250"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/rlinf_vs_slime_all.jpg" alt="mani_openvla" width="250"/>
 
          <br/><strong>吞吐量</strong>
        </td>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/rlinf_vs_slime_breakdown.jpg" alt="mani_openvlaoft" width="350"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/rlinf_vs_slime_breakdown.jpg" alt="mani_openvlaoft" width="350"/>
          <br/><strong>耗时占比（32 GPUs）</strong>
        </td>
      </tr>
@@ -112,7 +112,7 @@ ManiSkill 和 LIBERO
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/eval_embody_all.jpg" alt="mani_openvla" width="450"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/eval_embody_all.jpg" alt="mani_openvla" width="450"/>
 
          <br/><strong>吞吐量</strong>
        </td>
@@ -124,7 +124,7 @@ ManiSkill 和 LIBERO
    <table border="0">
      <tr>
        <td align="center">
-         <img src="https://github.com/RLinf/misc/raw/main/pic/rlinf-system/evaluation/latency_breakdown_libero_maniskill.jpg" alt="mani_openvla" width="500"/>
+         <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-system/evaluation/latency_breakdown_libero_maniskill.jpg" alt="mani_openvla" width="500"/>
 
          <br/><strong>耗时占比</strong>
        </td>

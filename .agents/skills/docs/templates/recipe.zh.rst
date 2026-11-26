@@ -75,30 +75,45 @@
    * - Prompt
      - <任务指令>
 
-安装
-----
-
+安装与运行
+----------
 .. include:: _setup_common.rst
 
-<本示例专用的镜像标签或安装命令，每条命令前说明它做什么。>
+.. tab-set::
 
-下载模型
---------
+   .. tab-item:: <模型 / 任务集>
 
-<下载本示例所用权重的命令。>
+      **1. 安装环境**
 
-.. include:: _model_path.rst
+      .. code-block:: bash
 
-运行
-----
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model <model> --env <env> && source .venv/bin/activate
 
-<一句话说明这条命令做什么。>
+      **2. 下载模型**
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh <config_name>
+         hf download <org>/<repo> --local-dir ./<checkpoint>
 
-<这条命令依次做了什么，以及可以修改哪些配置项。>
+      **3. 启动训练**
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 40 30
+
+         * - 场景
+           - 配置（``examples/embodiment/config/``）
+           - 说明
+         * - <模型 + 算法>
+           - ``<config_name>.yaml``
+           - <一句话说明>
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh <config_name> actor.model.model_path=$PWD/<checkpoint>
+
+      .. include:: _model_path.rst
 
 可视化与结果
 ------------

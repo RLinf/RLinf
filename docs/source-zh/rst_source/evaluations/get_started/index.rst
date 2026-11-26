@@ -1,24 +1,27 @@
+:orphan:
+
 快速入门
 ========
 
-本节介绍 RLinf 具身评测的入门内容，涵盖评测架构、环境安装与首次 benchmark 运行流程。
+本节适合首次使用 RLinf 具身评测的读者，涵盖目录结构、环境安装与首个 benchmark 评测流程。
 
-.. list-table::
-   :header-rows: 1
+.. grid:: 1 3 3 3
+   :gutter: 2
 
-   * - 页面
-     - 内容
-   * - :doc:`概览 <overview>`
-     - 统一评测入口的工作方式，以及 ``evaluations/`` 目录下的代码与配置组织。
-   * - :doc:`安装 <installation>`
-     - 使用 ``requirements/install.sh`` 安装具身依赖，并配置各 benchmark 所需的环境变量。
-   * - :doc:`快速上手 <quick_tour>`
-     - 约 5 分钟跑通 LIBERO Spatial + OpenPI π₀.₅ 的首次评测。
+   .. grid-item-card:: 概览
+      :link: ../index
+      :link-type: doc
 
-.. toctree::
-   :hidden:
-   :maxdepth: 1
+      了解统一评测架构与 ``evaluations/`` 目录结构。
 
-   overview
-   installation
-   quick_tour
+   .. grid-item-card:: 安装
+      :link: ../../start/installation
+      :link-type: doc
+
+      使用 ``requirements/install.sh`` 安装具身依赖，并配置各 benchmark 环境变量。
+
+   .. grid-item-card:: 快速上手
+      :link: quick_tour
+      :link-type: doc
+
+      约 5 分钟跑通 LIBERO-Spatial + OpenPI π₀.₅ 首次评测。
