@@ -180,9 +180,6 @@ else
 fi
 
 CONFIG_PATH="${EVALUATIONS_PATH}/${BENCHMARK}"
-if [ "${BENCHMARK}" = "behavior" ]; then
-    SRC_FILE="${REPO_PATH}/rlinf/envs/sim/behavior/utils.py"
-fi
 if [ ! -f "${CONFIG_PATH}/${CONFIG_NAME}.yaml" ]; then
     CONFIG_PATH="${EMBODIED_PATH}/config"
     echo "Config not found under evaluations/${BENCHMARK}, fallback to ${CONFIG_PATH}"

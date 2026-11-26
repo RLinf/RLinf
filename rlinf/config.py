@@ -1399,6 +1399,12 @@ def validate_eval_env_cfg(
     Returns:
         The number of eval envs each env worker runs per pipeline stage.
     """
+    for eval_env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").values():
+        if eval_env_cfg.env_type == "behavior2026":
+            from rlinf.envs.sim.behavior.utils import resolve_step_limits
+
+            with open_dict(eval_env_cfg):
+                resolve_step_limits(eval_env_cfg, num_action_chunks)
     resolve_env_mode_cfg(cfg.env.eval, "env.eval", env_world_size)
     assert cfg.env.eval.total_num_envs > 0, (
         "Total number of parallel environments for evaluation must be greater than 0"
