@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import replace
 from typing import Optional
 
 import torch
@@ -36,7 +35,6 @@ from rlinf.data.schema.actor_batch import (
 )
 from rlinf.data.schema.reasoning_results import (
     DynamicRolloutResult,
-    GroupDelivery,
     RolloutResult,
 )
 from rlinf.hybrid_engines.megatron.utils import (
@@ -55,8 +53,7 @@ from rlinf.utils.distributed import (
 )
 from rlinf.utils.metric_utils import (
     CRITIC_EXPLAINED_VARIANCE_STAT_KEYS,
-    VersionedTrajectoryRecord,
-    compute_staleness_metrics,
+    compute_dp_staleness_metrics,
 )
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
@@ -72,11 +69,7 @@ from rlinf.workers.actor.megatron_actor_worker import (
     MegatronActor,
 )
 from rlinf.workers.megatron_worker import DynamicMegatronBatchMixin
-from rlinf.workers.rollout.session_server.assembly import (
-    assemble_group_payload,
-    verify_group_assembly,
-)
-from rlinf.workers.rollout.session_server.payload import payload_channel_for
+from rlinf.workers.rollout.session_server.assembly import receive_rollout_result
 
 
 class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
@@ -87,8 +80,8 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
     ):
         super().__init__(cfg, placement)
         self._init_auto_scheduler(role)
-        # Set by run_training for the duration of a training call and read
-        # by _assemble_delivery.
+        # Set by run_training for the duration of get_step_batch and read by
+        # _receive_rollout_result.
         self._payload_channels: Optional[list[Channel]] = None
         self.is_dynamic_rollout_batch = self.cfg.agentloop.is_dynamic_rollout_batch
         assert self.is_dynamic_rollout_batch
@@ -117,48 +110,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         the groups across data-parallel ranks and broadcasts them to the
         model-parallel ranks.
         """
-        result = channel.get()
-        if isinstance(result, GroupDelivery):
-            result = self._assemble_delivery(result)
-        return result
-
-    def _assemble_delivery(self, delivery: GroupDelivery) -> DynamicRolloutResult:
-        """Fetch and assemble the data of one delivered group.
-
-        Args:
-            delivery: The GroupDelivery the rollout buffer put on the
-                channel. The group's data is in the payload channel named
-                by its payload ref.
-
-        Returns:
-            The assembled result, with the group id and task name of the
-            delivery. With ``session_server.verify_assembly`` on, it is
-            checked against the reference data in the last payload part.
-        """
-        assert self._payload_channels is not None, (
-            "a group arrived as a GroupDelivery but this actor has no "
-            "payload channels: run_training must receive them when the "
-            "session server is enabled."
-        )
-        channel = payload_channel_for(
-            delivery.payload_ref.locator, self._payload_channels
-        )
-        payload = channel.get(key=delivery.payload_ref.key)
-        # A keyed get leaves an empty queue under the key; without this
-        # removal the payload channel keeps one empty queue per trained
-        # group. The get above has already returned the data, so the removal
-        # cannot overtake it, and a group is delivered once, so no other get
-        # waits on this key.
-        channel.remove_key(key=delivery.payload_ref.key, async_op=True)
-        result = assemble_group_payload(
-            payload, not self.cfg.algorithm.recompute_logprobs
-        )
-        result.group_id = delivery.group_id
-        result.task_name = delivery.task_name
-        verify = next(part.verify for part in payload.parts if part.last)
-        if verify is not None:
-            verify_group_assembly(result, verify, self.cfg)
-        return result
+        return receive_rollout_result(channel, self._payload_channels, self.cfg)
 
     def _restore_source_normalization(
         self, batch: DynamicActorBatch, scale_context: dict
@@ -424,11 +376,13 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 training passes no version).
             payload_channels: The payload channels for groups delivered as
                 payload refs instead of inline results; held for the
-                duration of this call, where _assemble_delivery reads them.
+                duration of fetching this step's batch.
         """
         self._payload_channels = payload_channels
-
-        batch, rollout_results = self.get_step_batch(input_channel)
+        try:
+            batch, rollout_results = self.get_step_batch(input_channel)
+        finally:
+            self._payload_channels = None
         fixed_ppo_targets = self.cfg.critic.get("use_critic_model", False)
         assert "recomputed_logprobs" in batch or "rollout_logprobs" in batch
         batch = self.compute_advantages_and_returns(batch)
@@ -448,7 +402,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         # metrics
         rollout_metrics_group = self.get_rollout_metrics_group(batch)
         rollout_metrics = self._compute_rollout_metrics(batch, rollout_metrics_group)
-        staleness_metrics = self._compute_staleness_metrics(
+        staleness_metrics = compute_dp_staleness_metrics(
             rollout_results, version, rollout_metrics_group
         )
         if staleness_metrics is not None:
@@ -562,118 +516,6 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 }
             )
         return rollout_metrics
-
-    def _extract_versioned_trajectory_records(
-        self, rollout_results: list[DynamicRolloutResult]
-    ) -> Optional[list[VersionedTrajectoryRecord]]:
-        """Extract per-trajectory weight-version records from rollout results.
-
-        Returns None when any result lacks versions (synchronous training).
-        Group indices are the position of each result in the local list, so
-        they are unique within a rank; `_compute_staleness_metrics` offsets
-        them per rank after gathering.
-        """
-        records = []
-        for result_index, rollout_result in enumerate(rollout_results):
-            if (
-                rollout_result is None
-                or rollout_result.version_start is None
-                or rollout_result.version_end is None
-            ):
-                return None
-            num_trajectories = (
-                max(rollout_result.idx_to_traj) + 1 if rollout_result.idx_to_traj else 0
-            )
-            earliest_versions = [None] * num_trajectories
-            completion_versions = [None] * num_trajectories
-            generated_tokens = [0] * num_trajectories
-            call_counts = [0] * num_trajectories
-            cross_version_calls = [0] * num_trajectories
-            turn_rewards = [0.0] * num_trajectories
-            turn_counts = [0] * num_trajectories
-            token_weighted_version_start_sums = [0] * num_trajectories
-            for turn_index, traj_index in enumerate(rollout_result.idx_to_traj):
-                turn_tokens = rollout_result.response_lengths[turn_index]
-                version_start = rollout_result.version_start[turn_index]
-                version_end = rollout_result.version_end[turn_index]
-                earliest_versions[traj_index] = (
-                    version_start
-                    if earliest_versions[traj_index] is None
-                    else min(earliest_versions[traj_index], version_start)
-                )
-                completion_versions[traj_index] = (
-                    version_end
-                    if completion_versions[traj_index] is None
-                    else max(completion_versions[traj_index], version_end)
-                )
-                generated_tokens[traj_index] += turn_tokens
-                call_counts[traj_index] += 1
-                cross_version_calls[traj_index] += int(version_start != version_end)
-                turn_rewards[traj_index] += rollout_result.rewards[turn_index]
-                turn_counts[traj_index] += 1
-                token_weighted_version_start_sums[traj_index] += (
-                    version_start * turn_tokens
-                )
-            for traj_index in range(num_trajectories):
-                records.append(
-                    VersionedTrajectoryRecord(
-                        group_index=result_index,
-                        earliest_version=earliest_versions[traj_index],
-                        completion_version=completion_versions[traj_index],
-                        generated_tokens=generated_tokens[traj_index],
-                        call_count=call_counts[traj_index],
-                        cross_version_calls=cross_version_calls[traj_index],
-                        reward=turn_rewards[traj_index]
-                        / max(turn_counts[traj_index], 1),
-                        token_weighted_version_start_sum=(
-                            token_weighted_version_start_sums[traj_index]
-                        ),
-                    )
-                )
-        return records
-
-    def _compute_staleness_metrics(
-        self,
-        rollout_results: list[DynamicRolloutResult],
-        version: Optional[int],
-        dp_group,
-    ) -> Optional[dict[str, float]]:
-        """Compute staleness metrics over all DP ranks, or None to skip.
-
-        MP ranks hold broadcast copies of the same results, so records are
-        gathered only across the DP group and group indices are offset by
-        rank to stay unique. If any DP rank lacks versions, all ranks skip
-        (the has-version flag is gathered first).
-        """
-        if version is None or dp_group is None:
-            return None
-
-        local_records = self._extract_versioned_trajectory_records(rollout_results)
-        dp_world_size = torch.distributed.get_world_size(dp_group)
-        has_version_list = [None] * dp_world_size
-        torch.distributed.all_gather_object(
-            has_version_list, local_records is not None, group=dp_group
-        )
-        if not all(flag is True for flag in has_version_list):
-            return None
-
-        local_records = local_records or []
-        records_by_rank = [None] * dp_world_size
-        torch.distributed.all_gather_object(
-            records_by_rank, local_records, group=dp_group
-        )
-        # Offset group indices by the number of records on preceding ranks
-        # (deterministic on every rank) so groups from different DP ranks
-        # stay distinct.
-        all_records = []
-        group_index_offset = 0
-        for rank_records in records_by_rank:
-            for record in rank_records:
-                all_records.append(
-                    replace(record, group_index=group_index_offset + record.group_index)
-                )
-            group_index_offset += len(rank_records)
-        return compute_staleness_metrics(all_records, version)
 
     def run_inference(
         self,

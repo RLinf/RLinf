@@ -143,7 +143,7 @@ class FSDPActor(FSDPModelManager, Worker):
         self._component_placement = placement
         self.is_pipeline = self._component_placement.is_disaggregated
         self.ref_policy_state_dict = None
-        if self.is_pipeline:
+        if self.is_pipeline and self._component_placement.has_dedicated_actor_inference:
             self._inference_group_name = cfg.inference.group_name
             self._inference_world_size = self._component_placement.get_world_size(
                 "inference"
@@ -166,6 +166,14 @@ class FSDPActor(FSDPModelManager, Worker):
         self.enable_dynamic_batch_size = cfg.runner.get(
             "enable_dynamic_batch_size", False
         )
+        self._validate_pipeline_features()
+        self.max_tokens_per_mbs = cfg.runner.get("max_tokens_per_mbs", 2048)
+        self.variable_seq_lengths = self.cfg.actor.model.get(
+            "variable_seq_lengths", False
+        )
+
+    def _validate_pipeline_features(self) -> None:
+        """Validate features unsupported by the base streaming pipeline path."""
         if self.is_pipeline:
             assert not self.enable_dp_load_balance, (
                 "DP load balance is not supported in pipeline mode."
@@ -173,10 +181,6 @@ class FSDPActor(FSDPModelManager, Worker):
             assert not self.enable_dynamic_batch_size, (
                 "Dynamic batch size is not supported in pipeline mode."
             )
-        self.max_tokens_per_mbs = cfg.runner.get("max_tokens_per_mbs", 2048)
-        self.variable_seq_lengths = self.cfg.actor.model.get(
-            "variable_seq_lengths", False
-        )
 
     def init_worker(self) -> None:
         """

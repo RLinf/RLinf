@@ -57,10 +57,10 @@ from rlinf.utils.data_iter_utils import (
 from rlinf.utils.distributed import (
     RolloutDataBalance,
     all_reduce_int,
-    balance_rollout_groups,
     broadcast_tensor_within_pp,
     compute_rollout_metrics,
     masked_normalization,
+    receive_balanced_groups,
 )
 from rlinf.utils.metric_utils import (
     CRITIC_EXPLAINED_VARIANCE_KEY,
@@ -1425,17 +1425,23 @@ class DynamicMegatronBatchMixin:
         )
         results = None
         if channel.is_local or self.is_data_io_rank:
-            results = [self._receive_rollout_result(channel) for _ in range(count)]
-            if not channel.is_local:
-                for result in results:
-                    result.extra_fields_train["source_dp"] = [
-                        parallel_state.get_data_parallel_rank()
-                    ] * result.num_sequence
-            if not channel.is_local and self.enable_dp_load_balance:
-                with self.worker_timer("ragged_dp_balance"):
-                    results = balance_rollout_groups(
-                        results, parallel_state.get_data_parallel_group()
-                    )
+            results = receive_balanced_groups(
+                lambda: self._receive_rollout_result(channel),
+                count,
+                is_local=channel.is_local,
+                source_rank=(
+                    None
+                    if channel.is_local
+                    else parallel_state.get_data_parallel_rank()
+                ),
+                dp_group=(
+                    None
+                    if channel.is_local
+                    else parallel_state.get_data_parallel_group()
+                ),
+                balance=self.enable_dp_load_balance,
+                timer_ctx=self.worker_timer,
+            )
         if not channel.is_local:
             with self.worker_timer("ragged_model_broadcast"):
                 results = self.broadcast(

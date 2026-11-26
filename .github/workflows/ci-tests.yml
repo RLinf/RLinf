@@ -213,6 +213,8 @@ jobs:
               # The agent loop, rollout buffer, agentic tokenizer, Megatron MA actor
               # and async agent runner have unit tests that import them.
               - 'rlinf/agents/**'
+              - 'rlinf/workers/actor/fsdp_actor_worker.py'
+              - 'rlinf/workers/actor/ma_fsdp_actor_worker.py'
               - 'rlinf/workers/actor/ma_megatron_actor_worker.py'
               - 'rlinf/workers/megatron_worker.py'
               - 'rlinf/workers/agent/**'
