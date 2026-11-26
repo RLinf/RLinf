@@ -42,7 +42,6 @@ from rlinf.data.schema.reasoning_results import (
 from rlinf.hybrid_engines.megatron.utils import (
     align_next_token_scores,
     postprocess_ragged_seqs,
-    prepare_ragged_model_inputs,
     preprocess_ragged_seqs,
 )
 from rlinf.scheduler import Channel
@@ -189,9 +188,6 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             label_mask, _ = preprocess_ragged_seqs(
                 [torch.arange(n, device=rows[0].device) < n - 1 for n in lengths]
             )
-            input_ids, attention_mask, position_ids, packed_params = (
-                prepare_ragged_model_inputs(rows, model)
-            )
 
             def logits_processor(logits, label, label_mask):
                 assert logits.shape[:2] == label.shape[:2]
@@ -224,21 +220,21 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 mtp_mask, _ = preprocess_ragged_seqs(
                     [torch.cat((mask[1:], mask.new_zeros(1))) for mask in response_rows]
                 )
-            output = self.custom_forward(
-                model,
-                input_ids,
-                attention_mask,
-                position_ids,
-                sequence_parallel=self.transformer_config.sequence_parallel,
-                logits_processor=logits_processor,
-                logits_processor_args=logits_processor_args,
-                mtp_labels=label if train_mtp else None,
-                mtp_loss_mask=mtp_mask,
-                temperature=self.cfg.algorithm.sampling_params.temperature,
-                packed_seq_params=packed_params,
-            )
+            module = unwrap_model(model)
+            with self.ragged_model_inputs(batch, module, rows) as model_inputs:
+                packed_params = model_inputs["packed_seq_params"]
+                output = self.custom_forward(
+                    model,
+                    **model_inputs,
+                    sequence_parallel=self.transformer_config.sequence_parallel,
+                    logits_processor=logits_processor,
+                    logits_processor_args=logits_processor_args,
+                    mtp_labels=label if train_mtp else None,
+                    mtp_loss_mask=mtp_mask,
+                    temperature=self.cfg.algorithm.sampling_params.temperature,
+                )
 
-            if unwrap_model(model).post_process:
+            if module.post_process:
                 output_rows = {
                     key: postprocess_ragged_seqs(value, packed_params, lengths)
                     for key, value in output.items()
@@ -255,7 +251,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     )
                 width = self.cfg.actor.model.encoder_seq_length
                 output = DynamicRolloutResult.materialize_actor_batch(
-                    output_rows, width, 0, input_ids.device
+                    output_rows, width, 0, rows[0].device
                 )
                 batch = DynamicRolloutResult.materialize_actor_batch(
                     {
@@ -272,7 +268,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     },
                     width,
                     self.tokenizer.eos_token_id,
-                    input_ids.device,
+                    rows[0].device,
                 )
 
             if not self.return_loss:

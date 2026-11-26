@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import time
+from contextlib import nullcontext
 from functools import partial
 from typing import Callable, Optional
 
@@ -41,7 +42,10 @@ from rlinf.data.schema.reasoning_results import (
 from rlinf.hybrid_engines.megatron.megatron_model_manager import (
     MegatronModelManager,
 )
-from rlinf.hybrid_engines.megatron.utils import collect_mtp_loss
+from rlinf.hybrid_engines.megatron.utils import (
+    collect_mtp_loss,
+    prepare_ragged_model_inputs,
+)
 from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_channel,
@@ -1432,6 +1436,35 @@ class MegatronWorker(MegatronModelManager, Worker):
 class DynamicMegatronBatchMixin:
     """Shared real-length group transport and microbatch scheduling."""
 
+    def ragged_model_inputs(
+        self, batch: DynamicActorBatch, model: torch.nn.Module, rows: list[torch.Tensor]
+    ):
+        """Prepare ragged forward inputs for text-only or multimodal microbatches."""
+        if "multi_modal_inputs" in batch:
+            from rlinf.config import rollout_aligns_multimodal_inputs
+
+            if not rollout_aligns_multimodal_inputs(self.cfg):
+                raise ValueError(
+                    f"Received multi_modal_inputs on {self.role} with "
+                    "rollout.sglang.align_multimodal_inputs disabled."
+                )
+            from rlinf.hybrid_engines.megatron.multimodal_inputs import (
+                ragged_multimodal_inputs,
+            )
+
+            return ragged_multimodal_inputs(batch, model, rows, aligned_mode=True)
+        input_ids, attention_mask, position_ids, packed_params = (
+            prepare_ragged_model_inputs(rows, model)
+        )
+        return nullcontext(
+            {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "position_ids": position_ids,
+                "packed_seq_params": packed_params,
+            }
+        )
+
     def _receive_rollout_result(
         self, channel: Channel
     ) -> RolloutResult | DynamicRolloutResult:
@@ -1578,9 +1611,10 @@ class DynamicMegatronBatchMixin:
                 else self.megatron_forward_backward_record
             )
             forward_backward_record.start()
+        data_iterator = self.make_data_iterator_list(batch_iter)
         forward_outputs = fwd_bwd_function(
             forward_step_func=self.get_forward_step_func(),
-            data_iterator=self.make_data_iterator_list(batch_iter),
+            data_iterator=data_iterator,
             model=self.model,
             num_microbatches=num_microbatches,
             forward_only=forward_only,

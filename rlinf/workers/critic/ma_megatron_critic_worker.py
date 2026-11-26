@@ -20,10 +20,7 @@ from omegaconf import DictConfig
 from rlinf.algorithms.registry import calculate_adv_and_returns
 from rlinf.data.schema.actor_batch import DynamicActorBatch
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
-from rlinf.hybrid_engines.megatron.utils import (
-    postprocess_ragged_seqs,
-    prepare_ragged_model_inputs,
-)
+from rlinf.hybrid_engines.megatron.utils import postprocess_ragged_seqs
 from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
@@ -52,9 +49,6 @@ class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
         assert cfg.agentloop.is_dynamic_rollout_batch and not self.is_pipeline, (
             "Multi-agent critic requires dynamic rollout batches and synchronous execution."
         )
-        assert self.enable_dp_load_balance, (
-            "Multi-agent critic requires enable_dp_load_balance=True."
-        )
         self.pack_traj = cfg.actor.get("pack_traj", True)
 
     def get_forward_step_func(self):
@@ -64,18 +58,15 @@ class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
             batch = next(dataloader_iter)
             rows = [row.to(self.torch_device_type) for row in batch["input_ids"]]
             lengths = list(map(len, rows))
-            input_ids, attention_mask, position_ids, packed_params = (
-                prepare_ragged_model_inputs(rows, model)
-            )
-            output = self.custom_forward(
-                model,
-                input_ids,
-                attention_mask,
-                position_ids,
-                sequence_parallel=self.transformer_config.sequence_parallel,
-                packed_seq_params=packed_params,
-            )
-            if unwrap_model(model).post_process:
+            module = unwrap_model(model)
+            with self.ragged_model_inputs(batch, module, rows) as model_inputs:
+                packed_params = model_inputs["packed_seq_params"]
+                output = self.custom_forward(
+                    model,
+                    **model_inputs,
+                    sequence_parallel=self.transformer_config.sequence_parallel,
+                )
+            if module.post_process:
                 value_rows = [
                     torch.nn.functional.pad(row.squeeze(-1).float()[:-1], (1, 0))
                     for row in postprocess_ragged_seqs(output, packed_params, lengths)
@@ -88,13 +79,13 @@ class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
                     return output, lambda output, non_loss_data=True: values
                 width = self.role_cfg.model.encoder_seq_length
                 output = DynamicRolloutResult.materialize_actor_batch(
-                    {"values": value_rows}, width, 0, input_ids.device
+                    {"values": value_rows}, width, 0, rows[0].device
                 )["values"]
                 batch = DynamicRolloutResult.materialize_actor_batch(
                     {key: batch[key] for key in ("values", "returns", "response_mask")},
                     width,
                     0,
-                    input_ids.device,
+                    rows[0].device,
                 )
 
             if not self.return_loss:
@@ -217,7 +208,7 @@ class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
                 if self.cfg.algorithm.use_valid_token_scale:
                     self._setup_valid_token_scale(global_batch)
                 assert len(global_batch["input_ids"]) > 0, (
-                    "Dynamic DP load balancing must produce nonempty critic minibatches."
+                    "Ragged batch padding must produce nonempty critic minibatches."
                 )
                 dp_size = parallel_state.get_data_parallel_world_size()
                 configure_batch_sizes(

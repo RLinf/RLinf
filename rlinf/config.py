@@ -325,7 +325,30 @@ def _inherit_rollout_model_path(
                 rollout_model.model_path = actor_model_path
 
 
-def _validate_megatron_mtp_cfg(cfg: DictConfig) -> None:
+def align_multimodal_inputs_enabled(cfg: DictConfig | dict | None) -> bool:
+    """Read the opt-in flag for aligned multi-turn multimodal rollout/training."""
+    if cfg is None:
+        return False
+    key = "align_multimodal_inputs"
+    enabled = cfg.get(key, False)
+    if type(enabled) is not bool:
+        raise ValueError(f"rollout.sglang.{key} must be a boolean, got {enabled!r}.")
+    return enabled
+
+
+def rollout_aligns_multimodal_inputs(cfg: DictConfig | dict | None) -> bool:
+    """Whether the rollout config enables aligned multi-turn multimodal inputs."""
+    if cfg is None:
+        return False
+    rollout = cfg.get("rollout")
+    if rollout is None:
+        return False
+    if rollout.get("rollout_backend", "sglang") != "sglang":
+        return False
+    return align_multimodal_inputs_enabled(rollout.get("sglang"))
+
+
+def _validate_megatron_mtp_cfg(cfg: DictConfig, role: str = "actor") -> None:
     if cfg.model.get("model_type") != SupportedModel.QWEN3_5.value:
         return
     with open_dict(cfg.model):
@@ -333,7 +356,7 @@ def _validate_megatron_mtp_cfg(cfg: DictConfig) -> None:
         cfg.model.setdefault("mtp_loss_scaling_factor", 0.1)
     load_mtp = cfg.model.load_mtp
     assert isinstance(load_mtp, bool), (
-        f"actor.model.load_mtp must be a boolean, got {load_mtp!r}."
+        f"{role}.model.load_mtp must be a boolean, got {load_mtp!r}."
     )
     scale = cfg.model.mtp_loss_scaling_factor
     assert (
@@ -369,6 +392,11 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
             f"backend_type=server; the server backend is only implemented for "
             f"the default serving worker (leave serving_mode unset)."
         )
+        if align_multimodal_inputs_enabled(cfg) and serving_mode is not None:
+            raise ValueError(
+                "Aligned multimodal rollouts require the default SGLang rollout worker, "
+                f"got rollout.sglang.serving_mode={serving_mode!r}."
+            )
         return cfg
 
     def validate_vllm_cfg(cfg):
@@ -798,10 +826,10 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
-def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
+def validate_megatron_cfg(cfg: DictConfig, role: str = "actor") -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
-    _validate_megatron_mtp_cfg(cfg)
+    _validate_megatron_mtp_cfg(cfg, role=role)
     with open_dict(cfg):
         if cfg.model.get("model_type") == SupportedModel.QWEN3_5.value:
             assert cfg.megatron.get("mbridge", False), (
@@ -3125,6 +3153,50 @@ def adv_requires_group_baseline(
     return False
 
 
+def validate_multimodal_learner_cfg(cfg: DictConfig) -> None:
+    """Validate aligned multimodal rollout and Megatron-Bridge learner constraints."""
+    align_enabled = rollout_aligns_multimodal_inputs(cfg)
+    if not align_enabled:
+        return
+    active_roles = ["actor"]
+    critic_cfg = cfg.get("critic") or {}
+    if critic_cfg.get("use_critic_model", False):
+        active_roles.append("critic")
+
+    for role in active_roles:
+        learner = cfg.get(role) or {}
+        megatron = learner.get("megatron") or {}
+        if learner.get("training_backend") != "megatron" or not megatron.get(
+            "mbridge", False
+        ):
+            raise ValueError(
+                f"rollout.sglang.align_multimodal_inputs=True requires "
+                f"{role} to use Megatron with megatron.mbridge=True."
+            )
+
+    placement = OmegaConf.select(cfg, "cluster.component_placement", default=None) or {}
+    placed_components = {
+        part.strip() for key in placement.keys() for part in str(key).split(",")
+    }
+    dedicated_inference = sorted(
+        placed_components & {"inference", "actor_inference", "critic_inference"}
+    )
+    if dedicated_inference:
+        raise ValueError(
+            "rollout.sglang.align_multimodal_inputs=True does not support "
+            f"dedicated inference placement ({', '.join(dedicated_inference)}); "
+            "recompute logprobs/values in-place on actor/critic."
+        )
+    if not OmegaConf.select(cfg, "agentloop.is_dynamic_rollout_batch", default=False):
+        raise ValueError(
+            "Aligned multimodal rollouts require agentloop.is_dynamic_rollout_batch=True."
+        )
+    if OmegaConf.select(cfg, "session_server.enable", default=False):
+        raise ValueError(
+            "Aligned multimodal rollouts are not supported with session_server.enable=True."
+        )
+
+
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
@@ -3171,6 +3243,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         f"task_type must be one of {SUPPORTED_TASK_TYPE}"
     )
     actor_hf_config = None
+    actor_hf_path = None
     if OmegaConf.select(
         cfg, "actor.training_backend"
     ) == "megatron" and cfg.runner.task_type not in ("embodied_eval", "reasoning_eval"):
@@ -3254,19 +3327,28 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.get("critic", None) is not None:
         if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":
-            from transformers import AutoConfig
+            critic_hf_path = cfg.rollout.model.model_path
+            if actor_hf_config is not None and critic_hf_path == actor_hf_path:
+                critic_hf_config = actor_hf_config
+            else:
+                from transformers import AutoConfig
 
-            critic_hf_config = AutoConfig.from_pretrained(
-                cfg.rollout.model.model_path, trust_remote_code=True
-            )
+                critic_hf_config = AutoConfig.from_pretrained(
+                    critic_hf_path, trust_remote_code=True
+                )
             _resolve_megatron_model_type(cfg.critic.model, critic_hf_config)
-            cfg.critic = validate_megatron_cfg(cfg.critic)
+            cfg.critic = validate_megatron_cfg(cfg.critic, role="critic")
             cfg.critic = validate_model_cfg_by_hf_config(
-                cfg.critic, cfg.rollout.model.model_path, hf_config=critic_hf_config
+                cfg.critic, critic_hf_path, hf_config=critic_hf_config
             )
+            if cfg.critic.model.get("load_mtp", False):
+                raise ValueError(
+                    "Dedicated critic models do not support critic.model.load_mtp=True."
+                )
         elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
             cfg.critic = validate_fsdp_cfg(cfg.critic)
 
+    validate_multimodal_learner_cfg(cfg)
     if cfg.runner.task_type == "reasoning":
         cfg = validate_searchr1_cfg(cfg)
 
@@ -3472,6 +3554,17 @@ def build_transformer_config(cfg) -> "TransformerConfig":
                 model_parallel_config, field.name
             )
 
+    if isinstance(transformer_config_dict.get("attention_backend"), str):
+        from megatron.core.transformer.enums import AttnBackend
+
+        backend = transformer_config_dict["attention_backend"]
+        try:
+            transformer_config_dict["attention_backend"] = AttnBackend[backend]
+        except KeyError as error:
+            valid = ", ".join(AttnBackend.__members__)
+            raise ValueError(
+                f"Unknown Megatron attention backend {backend!r}; expected one of: {valid}."
+            ) from error
     transformer_config = TransformerConfig(**transformer_config_dict)
 
     # pass mcore customization configs directly to mcore

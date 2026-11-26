@@ -109,6 +109,7 @@ rollout
       decode_log_interval: 500000
       use_torch_compile: False
       torch_compile_max_bs: 128
+      align_multimodal_inputs: False
 
     vllm:
       attention_backend: FLASH_ATTN  # [FLASH_ATTN, XFORMERS]
@@ -172,6 +173,8 @@ rollout
      - Enable ``torch.compile`` inside SGLang.
    * - ``rollout.sglang.torch_compile_max_bs``
      - Max batch size eligible for ``torch.compile``.
+   * - ``rollout.sglang.align_multimodal_inputs``
+     - Enable multi-turn SGLang image alignment for Megatron-Bridge training.
 
 **vLLM backend (``rollout.vllm``):**
 

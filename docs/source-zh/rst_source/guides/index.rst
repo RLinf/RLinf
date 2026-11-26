@@ -14,7 +14,7 @@
      - 常见需求
      - 入口
    * - 把任务配好并稳定运行
-     - 日志曲线、断点续训、Checkpoint 转换、LoRA 省显存、多 Env 混训
+     - 日志曲线、断点续训、Checkpoint 转换、LoRA 省显存、多 Env 混训、Qwen3.5 多轮视觉 Agent 训练
      - :doc:`配置与运行 <configure/index>`
    * - 单卡 / 单机不够，要上集群
      - 多节点训练、异构集群、云边协同、自动 Placement、5D 并行、动态调度

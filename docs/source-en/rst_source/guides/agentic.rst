@@ -8,6 +8,7 @@ RL training, multi-agent systems, and tool integration.
 
 For end-to-end examples, see the :doc:`Agentic Examples <../examples/agentic/index>` gallery,
 which includes reasoning, coding online RL, Search-R1, rStar2, and WideSeek-R1 workflows.
+For multi-turn Qwen3.5 visual Agent RL, see :doc:`Multi-Turn Visual Agent Training (Qwen3.5) <qwen35_multi_turn_images>`.
 
 .. note::
 

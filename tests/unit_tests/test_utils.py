@@ -2732,3 +2732,355 @@ class TestMegatronModelConfig:
                 AssertionError, match="load_mtp|mtp_loss_scaling_factor"
             ):
                 validate_megatron_cfg(cfg)
+
+    def test_build_transformer_config_converts_string_attention_backend(
+        self, monkeypatch
+    ):
+        from megatron.core.model_parallel_config import ModelParallelConfig
+        from megatron.core.transformer.enums import AttnBackend
+        from omegaconf import OmegaConf
+
+        import rlinf.config as cfg_mod
+
+        monkeypatch.setattr(
+            cfg_mod, "_build_model_parallel_config", lambda cfg: ModelParallelConfig()
+        )
+
+        def make_cfg(backend):
+            return OmegaConf.create(
+                {
+                    "num_layers": 2,
+                    "hidden_size": 16,
+                    "num_attention_heads": 2,
+                    "ffn_hidden_size": 32,
+                    "activation": "swiglu",
+                    "attention_backend": backend,
+                }
+            )
+
+        tf_cfg = cfg_mod.build_transformer_config(make_cfg("flash"))
+        assert tf_cfg.attention_backend is AttnBackend.flash
+        with pytest.raises(ValueError, match="Unknown Megatron attention backend"):
+            cfg_mod.build_transformer_config(make_cfg("not_a_backend"))
+
+
+def test_materialize_multimodal_inputs_and_dense_token_inputs():
+    from rlinf.utils.multimodal import dense_token_inputs, materialize_multimodal_inputs
+
+    shared_img = torch.arange(8, dtype=torch.float32).reshape(4, 2)
+    extra_img = torch.arange(8, 16, dtype=torch.float32).reshape(4, 2)
+    entry_inline = {
+        "pixel_values": shared_img,
+        "image_grid_thw": torch.tensor([[1, 2, 2]]),
+        "mm_token_type_ids": torch.tensor([0, 1, 0], dtype=torch.uint8),
+    }
+    entry_cached_list = {
+        "pixel_values": [shared_img, extra_img],
+        "image_grid_thw": torch.tensor([[1, 2, 2], [1, 2, 2]]),
+        "mm_token_type_ids": torch.tensor([0, 1, 0, 1], dtype=torch.uint8),
+    }
+
+    dense0 = dense_token_inputs(
+        {
+            "input_ids": [torch.tensor([1, 2]), torch.tensor([10, 11, 12, 13])],
+            "multi_modal_inputs": [None, entry_inline],
+        }
+    )
+    res0 = materialize_multimodal_inputs(
+        dense0["multi_modal_inputs"],
+        "cpu",
+        input_ids=dense0["input_ids"],
+        attention_mask=dense0["attention_mask"],
+        aligned_mode=True,
+    )
+    assert torch.equal(res0["pixel_values"], shared_img)
+    assert res0["mm_token_type_ids"].tolist() == [[0, 0, 0, 0], [0, 1, 0, 0]]
+
+    dense1 = dense_token_inputs(
+        {
+            "input_ids": [torch.tensor([20, 21, 22, 23]), torch.tensor([5, 6])],
+            "attention_mask": [torch.ones(4), torch.ones(2)],
+            "multi_modal_inputs": [entry_cached_list, None],
+        }
+    )
+    res1 = materialize_multimodal_inputs(
+        dense1["multi_modal_inputs"],
+        "cpu",
+        input_ids=dense1["input_ids"],
+        attention_mask=dense1["attention_mask"],
+        aligned_mode=True,
+    )
+    assert torch.equal(res1["pixel_values"], torch.cat([shared_img, extra_img]))
+    assert res1["mm_token_type_ids"].tolist() == [[0, 1, 0, 1], [0, 0, 0, 0]]
+
+    dense2 = dense_token_inputs(
+        {
+            "input_ids": [torch.tensor([7, 8, 9])],
+            "attention_mask": [torch.ones(3)],
+            "multi_modal_inputs": [None],
+        }
+    )
+    res2 = materialize_multimodal_inputs(
+        dense2["multi_modal_inputs"],
+        "cpu",
+        input_ids=dense2["input_ids"],
+        attention_mask=dense2["attention_mask"],
+        aligned_mode=True,
+    )
+    assert "pixel_values" not in res2
+    assert res2["mm_token_type_ids"].tolist() == [[0, 0, 0]]
+
+    # Backward compatibility: non-aligned mode rejects mm_token_type_ids.
+    with pytest.raises(ValueError, match="align_multimodal_inputs=True"):
+        materialize_multimodal_inputs([entry_inline], "cpu", aligned_mode=False)
+
+    # Misaligned batch raises clearly.
+    with pytest.raises(ValueError, match="mm_token_type_ids"):
+        materialize_multimodal_inputs(
+            [
+                {
+                    "pixel_values": torch.ones(1),
+                    "image_grid_thw": torch.ones(1, 3, dtype=torch.long),
+                }
+            ],
+            "cpu",
+            input_ids=torch.tensor([[1, 2]]),
+            attention_mask=torch.ones(1, 2),
+            aligned_mode=True,
+        )
+
+
+def test_process_single_image_cache_precision_and_limit_policy(monkeypatch):
+    import io
+
+    from PIL import Image
+
+    from rlinf.utils.multimodal import process_single_image
+
+    class FakeImageProc:
+        patch_size = 14
+        merge_size = 2
+        size = {"shortest_edge": 56 * 56, "longest_edge": 100000}
+
+        def __init__(self):
+            self.seen_sizes = []
+
+        def __call__(self, images, return_tensors="pt", size=None):
+            self.seen_sizes.append((images[0].size, size))
+            return {
+                "pixel_values": (
+                    torch.arange(256, dtype=torch.float32) / 255.0
+                ).reshape(16, 16),
+                "image_grid_thw": torch.tensor([[1, 4, 4]]),
+            }
+
+    buf = io.BytesIO()
+    Image.new("RGB", (200, 100), "red").save(buf, format="PNG")
+    raw = buf.getvalue()
+    ip = FakeImageProc()
+    cache = {}
+
+    px1, grid1, ntok1 = process_single_image(
+        raw, ip, dtype=torch.float16, cache=cache, cache_max_items=2
+    )
+    px2, _, _ = process_single_image(
+        raw, ip, dtype=torch.float16, cache=cache, cache_max_items=2
+    )
+    assert px1.dtype == torch.float16 and px1 is px2 and len(ip.seen_sizes) == 1
+    assert ntok1 == 4 and grid1.tolist() == [[1, 4, 4]]
+
+    monkeypatch.setenv("SGLANG_VLM_QWEN_LIMIT_PIXEL", "true")
+    ip2 = FakeImageProc()
+    ip2.size["longest_edge"] = 16777216
+    process_single_image(raw, ip2, dtype=torch.bfloat16)
+    seen_wh, seen_policy = ip2.seen_sizes[0]
+    assert seen_policy["longest_edge"] == 16777216 // 16
+    assert seen_wh[0] % 28 == 0 and seen_wh[1] % 28 == 0
+
+
+def _multimodal_cfg(**overrides):
+    base = {
+        "cluster": {"component_placement": {"actor,critic,rollout": "0-1"}},
+        "agentloop": {"is_dynamic_rollout_batch": True},
+        "session_server": {"enable": False},
+        "rollout": {
+            "rollout_backend": "sglang",
+            "sglang": {"align_multimodal_inputs": True},
+        },
+        "actor": {
+            "training_backend": "megatron",
+            "model": {"pipeline_model_parallel_size": 2, "context_parallel_size": 2},
+            "megatron": {"mbridge": True},
+        },
+        "critic": {"use_critic_model": False, "training_backend": "fsdp"},
+    }
+    return OmegaConf.merge(OmegaConf.create(base), overrides)
+
+
+@pytest.mark.parametrize(
+    "overrides,error",
+    [
+        ({"rollout": {"sglang": {"align_multimodal_inputs": False}}}, None),
+        (
+            {
+                "critic": {
+                    "use_critic_model": True,
+                    "training_backend": "megatron",
+                    "model": {
+                        "pipeline_model_parallel_size": 2,
+                        "context_parallel_size": 2,
+                    },
+                    "megatron": {"mbridge": True},
+                }
+            },
+            None,
+        ),
+        (
+            {
+                "runner": {"task_type": "embodied"},
+                "rollout": {"sglang": {"align_multimodal_inputs": False}},
+                "actor": {"training_backend": "fsdp"},
+            },
+            None,
+        ),
+        (
+            {
+                "rollout": {"rollout_backend": "vllm"},
+                "actor": {"training_backend": "fsdp"},
+                "critic": {"use_critic_model": False},
+            },
+            None,
+        ),
+        ({"inference": {"model": {"pipeline_model_parallel_size": 2}}}, None),
+        ({"actor": {"training_backend": "fsdp"}}, "requires actor to use Megatron"),
+        ({"actor": {"megatron": {"mbridge": False}}}, "megatron.mbridge=True"),
+        (
+            {"agentloop": {"is_dynamic_rollout_batch": False}},
+            "is_dynamic_rollout_batch=True",
+        ),
+        ({"session_server": {"enable": True}}, "session_server.enable=True"),
+        (
+            {"rollout": {"sglang": {"align_multimodal_inputs": "false"}}},
+            "must be a boolean",
+        ),
+        (
+            {"critic": {"use_critic_model": True, "training_backend": "fsdp"}},
+            "requires critic to use Megatron",
+        ),
+        (
+            {
+                "cluster": {
+                    "component_placement": {
+                        "actor,critic,rollout": "0-1",
+                        "inference": "2-3",
+                    }
+                }
+            },
+            "dedicated inference placement",
+        ),
+        (
+            {
+                "cluster": {
+                    "component_placement": {
+                        "actor,critic": "0-1",
+                        "actor_inference,rollout": "2-3",
+                    }
+                }
+            },
+            "dedicated inference placement",
+        ),
+        (
+            {
+                "cluster": {
+                    "component_placement": {
+                        "actor,critic,rollout": "0-1",
+                        "critic_inference": "2-3",
+                    }
+                }
+            },
+            "dedicated inference placement",
+        ),
+    ],
+)
+def test_validate_multimodal_learner_cfg(overrides, error):
+    from rlinf.config import (
+        rollout_aligns_multimodal_inputs,
+        validate_multimodal_learner_cfg,
+    )
+
+    assert rollout_aligns_multimodal_inputs(OmegaConf.create({})) is False
+    cfg = _multimodal_cfg(**overrides)
+    if error:
+        with pytest.raises(ValueError, match=error):
+            validate_multimodal_learner_cfg(cfg)
+    else:
+        snapshot = OmegaConf.to_container(cfg)
+        validate_multimodal_learner_cfg(cfg)
+        assert OmegaConf.to_container(cfg) == snapshot
+
+
+def test_http_client_generate_body_encodes_bytes_and_nested_lists():
+    import base64
+
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    raw_a, raw_b = b"\x89PNG-a", bytearray(b"\xff\xd8-b")
+    body = InferenceHTTPClient._generate_body(
+        prompt=None,
+        input_ids=[1, 2],
+        sampling_params={"temperature": 0},
+        return_logprob=True,
+        image_data=(raw_a, (raw_b, "already-encoded")),
+    )
+    assert body["image_data"] == [
+        base64.b64encode(raw_a).decode("ascii"),
+        [base64.b64encode(raw_b).decode("ascii"), "already-encoded"],
+    ]
+
+
+def test_multimodal_config_and_materialization_boundaries():
+    from rlinf.config import validate_megatron_cfg, validate_rollout_cfg
+    from rlinf.utils.multimodal import (
+        build_mm_token_type_ids,
+        materialize_multimodal_inputs,
+    )
+
+    with pytest.raises(AssertionError, match="critic.model.load_mtp must be a boolean"):
+        validate_megatron_cfg(
+            OmegaConf.create(
+                {
+                    "model": {"model_type": "qwen3_5", "load_mtp": "false"},
+                    "megatron": {"mbridge": True, "use_hf_ckpt": True},
+                }
+            ),
+            role="critic",
+        )
+
+    with pytest.raises(ValueError, match="default SGLang rollout worker"):
+        validate_rollout_cfg(
+            OmegaConf.create(
+                {
+                    "rollout_backend": "sglang",
+                    "return_logprobs": False,
+                    "model": {"model_type": "qwen3_5", "model_path": "/tmp/model"},
+                    "sglang": {
+                        "serving_mode": "worker_http",
+                        "align_multimodal_inputs": True,
+                    },
+                }
+            ),
+            OmegaConf.create({"recompute_logprobs": False}),
+        )
+
+    with pytest.raises(ValueError, match="requires both input_ids and attention_mask"):
+        materialize_multimodal_inputs([], "cpu", aligned_mode=True)
+
+    with pytest.raises(ValueError, match="align_multimodal_inputs=True"):
+        materialize_multimodal_inputs(
+            [{"mm_token_type_ids": [0, 1], "pixel_values": torch.ones(2, 2)}],
+            "cpu",
+            aligned_mode=False,
+        )
+
+    with pytest.raises(ValueError, match="strictly inside sequence length"):
+        build_mm_token_type_ids(4, [[0, 2]])
