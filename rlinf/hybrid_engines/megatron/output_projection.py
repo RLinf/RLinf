@@ -75,7 +75,7 @@ class _ChunkedProjection:
             hidden.transpose(0, 1),
             weight,
             bias=self.bias,
-            tp_group=group,
+            tp_group=group if group.size() > 1 else None,
             gradient_accumulation_fusion=self.gradient_accumulation_fusion,
             **scoring[1],
         )

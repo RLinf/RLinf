@@ -268,6 +268,8 @@ def chunked_vocab_parallel_log_probs(
         raise ValueError(
             f"Hidden and weight dtypes must match, got {hidden.dtype}, {weight.dtype}"
         )
+    if tp_group is not None and dist.get_world_size(tp_group) <= 1:
+        tp_group = None
     flat_mask = label_mask.reshape(-1).bool()
     positions = (
         torch.arange(labels.numel(), device=labels.device)

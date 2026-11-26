@@ -842,13 +842,26 @@ def _pipeline_output_projection(rank, rendezvous):
                 assert list(model.state_dict()) == keys
                 assert {k: id(v) for k, v in model.named_parameters()} == params
 
-            with chunked_scoring(
-                model,
-                labels=labels,
-                label_mask=torch.ones_like(labels, dtype=torch.bool),
-                chunk_size=2,
+            all_reduce_calls = 0
+            orig_all_reduce = dist.all_reduce
+
+            def _count_all_reduce(*args, **kwargs):
+                nonlocal all_reduce_calls
+                all_reduce_calls += 1
+                return orig_all_reduce(*args, **kwargs)
+
+            with (
+                pytest.MonkeyPatch.context() as count_mp,
+                chunked_scoring(
+                    model,
+                    labels=labels,
+                    label_mask=torch.ones_like(labels, dtype=torch.bool),
+                    chunk_size=2,
+                ),
             ):
+                count_mp.setattr(dist, "all_reduce", _count_all_reduce)
                 scores, _ = model.output_layer(hidden)
+            assert all_reduce_calls == 0
             expected = (
                 dense.transpose(0, 1).log_softmax(-1).gather(-1, labels[..., None])
             )
