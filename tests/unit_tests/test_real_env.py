@@ -775,7 +775,7 @@ def test_so101_camera_failure_uses_camera_retry_policy():
     from rlinf.envs.real.so101.base import SO101Env
 
     env = SO101Env.__new__(SO101Env)
-    env.config = SimpleNamespace(camera_max_age=0.5)
+    env.config = SimpleNamespace(camera_max_age=0.5, camera_reopen_attempts=3)
     env._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
     env.observation_space = gym.spaces.Dict(
         {

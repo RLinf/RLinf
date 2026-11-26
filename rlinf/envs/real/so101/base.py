@@ -57,7 +57,7 @@ _DOF = len(SO101Arm.MOTORS)
 # BaseCamera reopens the device between attempts and owns frame freshness. The
 # environment only supplies the per-attempt read budget.
 _CAMERA_FRAME_TIMEOUT_S = 0.5
-_CAMERA_REOPEN_ATTEMPTS = 3
+_DEFAULT_CAMERA_REOPEN_ATTEMPTS = 3
 
 
 def _zero_observation(space: gym.Space) -> Any:
@@ -87,6 +87,9 @@ class SO101EnvConfig:
 
     camera_max_age: float = 0.5
     """Maximum age for a reused frame; zero disables frame reuse."""
+
+    camera_reopen_attempts: int = _DEFAULT_CAMERA_REOPEN_ATTEMPTS
+    """Number of camera read and reopen attempts allowed per environment step."""
 
     reset_joint_qpos: list[float] = field(default_factory=lambda: [0.0] * _DOF)
     """Rest configuration, in radians."""
@@ -168,6 +171,8 @@ class SO101Env(gym.Env):
             raise ValueError("step_frequency must be finite and positive.")
         if not np.isfinite(config.camera_max_age) or config.camera_max_age < 0:
             raise ValueError("camera_max_age must be finite and nonnegative.")
+        if config.camera_reopen_attempts < 1:
+            raise ValueError("camera_reopen_attempts must be a positive integer.")
         for name in ("reset_duration", "reset_joint_speed"):
             value = getattr(config, name)
             if not np.isfinite(value) or value <= 0:
@@ -540,13 +545,13 @@ class SO101Env(gym.Env):
                 size = declared[name].shape[:2][::-1]
                 raw_frame = camera.get_frame(
                     timeout=_CAMERA_FRAME_TIMEOUT_S,
-                    attempts=_CAMERA_REOPEN_ATTEMPTS,
+                    attempts=config.camera_reopen_attempts,
                     max_age=self.config.camera_max_age,
                 )
             except queue.Empty as exc:
                 raise RuntimeError(
                     f"Camera {name} did not produce a fresh frame after "
-                    f"{_CAMERA_REOPEN_ATTEMPTS} attempts or exceeded "
+                    f"{self.config.camera_reopen_attempts} attempts or exceeded "
                     f"camera_max_age={self.config.camera_max_age:.3f}s."
                 ) from exc
             frames[name] = self._crop_frame(raw_frame, size)

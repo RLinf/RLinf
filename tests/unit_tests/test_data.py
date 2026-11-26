@@ -22,6 +22,7 @@ import json
 import pickle
 import random
 import shutil
+import sys
 import threading
 import time
 from pathlib import Path
@@ -3041,6 +3042,69 @@ def test_streaming_keeps_aborted_and_unfinished_takes_but_not_discards(tmp_path)
             success = np.asarray(table["is_success"][0].as_py()).reshape(-1)[0]
             takes.append((table.num_rows, bool(success)))
     assert takes == [(2, False), (2, True), (2, False)]
+
+
+def test_lerobot_v3_archive_metadata_can_resume(tmp_path, monkeypatch):
+    """Resume scans the LeRobot v3 episode metadata layout."""
+    import types
+
+    from rlinf.data.datasets.dagger.dataset import RollingLeRobotDataset
+    from rlinf.data.datasets.dagger.lerobot_io import (
+        _episode_parquet_path,
+        _read_lerobot_episodes,
+        _read_lerobot_tasks,
+    )
+
+    shard = tmp_path / "rank_0" / "id_4"
+    episode_meta = shard / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+    episode_meta.parent.mkdir(parents=True)
+    episode_meta.touch()
+    (shard / "meta" / "tasks.parquet").touch()
+    data_path = shard / "data" / "chunk-000" / "file-000.parquet"
+    data_path.parent.mkdir(parents=True)
+    data_path.touch()
+    (shard / "meta" / "info.json").write_text(
+        json.dumps(
+            {
+                "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+                "features": {},
+            }
+        )
+    )
+
+    class _Table:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def to_pylist(self):
+            return self._rows
+
+    parquet = types.ModuleType("pyarrow.parquet")
+    parquet.read_table = lambda path: _Table(
+        [{"episode_index": 4, "length": 7}]
+        if Path(path).name == "file-000.parquet" and "episodes" in str(path)
+        else [{"task_index": 0, "task": "pick"}]
+    )
+    parquet.read_metadata = lambda _path: types.SimpleNamespace(num_rows=7)
+    pyarrow = types.ModuleType("pyarrow")
+    pyarrow.parquet = parquet
+    monkeypatch.setitem(sys.modules, "pyarrow", pyarrow)
+    monkeypatch.setitem(sys.modules, "pyarrow.parquet", parquet)
+
+    records = _read_lerobot_episodes(shard)
+    assert records == [
+        {
+            "episode_index": 4,
+            "length": 7,
+            "_data_path": "data/chunk-000/file-000.parquet",
+        }
+    ]
+    assert _episode_parquet_path(shard, {}, records[0]) == data_path
+    assert _read_lerobot_tasks(shard / "meta" / "tasks.jsonl") == {0: "pick"}
+    assert RollingLeRobotDataset.archived_shard_info(shard) == {
+        "num_episodes": 1,
+        "num_frames": 7,
+    }
 
 
 def test_policy_input_compression_preserves_attached_env_parts(monkeypatch):

@@ -53,7 +53,16 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _read_lerobot_tasks(path: Path) -> dict[int, str]:
     if not path.is_file():
-        return {}
+        parquet_path = path.with_suffix(".parquet")
+        if not parquet_path.is_file():
+            return {}
+        import pyarrow.parquet as pq
+
+        return {
+            int(row["task_index"]): str(row["task"])
+            for row in pq.read_table(parquet_path).to_pylist()
+            if "task_index" in row and "task" in row
+        }
     return {
         int(row["task_index"]): str(row["task"])
         for row in _read_jsonl(path)
@@ -74,6 +83,9 @@ def _episode_parquet_path(
     info: dict[str, Any],
     episode: dict[str, Any],
 ) -> Path:
+    data_path = episode.get("_data_path")
+    if data_path is not None:
+        return shard_path / str(data_path)
     episode_index = int(episode["episode_index"])
     chunks_size = int(info.get("chunks_size", 1000))
     episode_chunk = episode_index // chunks_size
@@ -85,6 +97,29 @@ def _episode_parquet_path(
         episode_chunk=episode_chunk,
         episode_index=episode_index,
     )
+
+
+def _read_lerobot_episodes(path: Path) -> list[dict[str, Any]]:
+    """Read episode metadata from LeRobot v2 or v3 metadata layouts."""
+    legacy_path = path / "meta" / "episodes.jsonl"
+    if legacy_path.is_file():
+        return _read_jsonl(legacy_path)
+
+    episodes_root = path / "meta" / "episodes"
+    metadata_paths = sorted(episodes_root.glob("**/*.parquet"))
+    if not metadata_paths:
+        return []
+
+    import pyarrow.parquet as pq
+
+    records: list[dict[str, Any]] = []
+    for metadata_path in metadata_paths:
+        relative = metadata_path.relative_to(episodes_root)
+        data_path = Path("data") / relative
+        for record in pq.read_table(metadata_path).to_pylist():
+            record["_data_path"] = data_path.as_posix()
+            records.append(record)
+    return records
 
 
 def _load_lerobot_episode_frames(

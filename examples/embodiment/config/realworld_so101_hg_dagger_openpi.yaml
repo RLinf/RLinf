@@ -115,6 +115,7 @@ env:
       max_num_steps: 1000
       task_description: "<task description used for SFT>"
       step_frequency: 15.0
+      camera_reopen_attempts: 3
       reset_on_init: false
       reset_duration: 3.0
       reset_joint_speed: 1.3089969390

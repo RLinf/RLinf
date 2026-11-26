@@ -62,6 +62,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self._lerobot_resume_done = True
         self._lerobot_resume_thread: threading.Thread | None = None
         self._lerobot_resume_error: Exception | None = None
+        self._lerobot_archive_error: Exception | None = None
 
     def _online_lerobot_cfg(self) -> DictConfig:
         return OmegaConf.select(
@@ -105,6 +106,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             return []
 
         valid_shards = []
+        invalid_shards = []
         for child in rank_dir.iterdir():
             if not child.is_dir() or not child.name.startswith("id_"):
                 continue
@@ -114,7 +116,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 continue
             shard_info = self.dataset.archived_shard_info(child)
             if shard_info is None:
-                self.log_info(f"Skipping invalid LeRobot resume shard: {child}")
+                invalid_shards.append(child)
                 continue
             valid_shards.append(
                 {
@@ -123,6 +125,13 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     "num_episodes": int(shard_info["num_episodes"]),
                     "num_frames": int(shard_info["num_frames"]),
                 }
+            )
+
+        if invalid_shards:
+            raise ValueError(
+                "Found invalid LeRobot archive shard(s) under "
+                f"{rank_dir}: {invalid_shards[0]}. Remove incomplete shards or "
+                "use a new data_path before starting online DAgger."
             )
 
         if not valid_shards:
@@ -387,6 +396,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         """
         if not ep_frames:
             return
+        if self._lerobot_archive_error is not None:
+            raise RuntimeError(
+                "Online LeRobot archiving failed earlier; refusing to accept "
+                "more episodes."
+            ) from self._lerobot_archive_error
         with self._pending_archive_lock:
             archive_path = self._current_archive_path()
         self.dataset.append_episode_to_memory(archive_path, ep_frames)
@@ -410,9 +424,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             if not self._pending_archive_episodes or self._pending_archive_path is None:
                 return
             archive_path = self._pending_archive_path
-            pending_episodes = self._pending_archive_episodes
-            self._pending_archive_path = None
-            self._pending_archive_episodes = []
+            pending_episodes = list(self._pending_archive_episodes)
 
         from rlinf.data.storage.lerobot import LeRobotDatasetWriter
 
@@ -422,28 +434,44 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         extra_view_image_keys = self._collect_lerobot_image_keys(
             first, "extra_view_image"
         )
-        writer.create(
-            repo_id=archive_path,
-            robot_type=OmegaConf.select(
-                self.cfg, "algorithm.dagger.online_lerobot.robot_type", default="panda"
-            ),
-            fps=int(
-                OmegaConf.select(
-                    self.cfg, "algorithm.dagger.online_lerobot.fps", default=10
-                )
-            ),
-            image_shape=first["image"].shape if "image" in first else None,
-            state_dim=int(first["state"].shape[-1]),
-            action_dim=int(first["actions"].shape[-1]),
-            has_image="image" in first,
-            wrist_image_keys=wrist_image_keys,
-            extra_view_image_keys=extra_view_image_keys,
-            has_intervene_flag="intervene_flag" in first,
-            has_segment_id="segment_id" in first,
-        )
-        for ep_frames in pending_episodes:
-            writer.add_episode(ep_frames)
-        writer.finalize()
+        try:
+            writer.create(
+                repo_id=archive_path,
+                robot_type=OmegaConf.select(
+                    self.cfg,
+                    "algorithm.dagger.online_lerobot.robot_type",
+                    default="panda",
+                ),
+                fps=int(
+                    OmegaConf.select(
+                        self.cfg, "algorithm.dagger.online_lerobot.fps", default=10
+                    )
+                ),
+                image_shape=first["image"].shape if "image" in first else None,
+                state_dim=int(first["state"].shape[-1]),
+                action_dim=int(first["actions"].shape[-1]),
+                has_image="image" in first,
+                wrist_image_keys=wrist_image_keys,
+                extra_view_image_keys=extra_view_image_keys,
+                has_intervene_flag="intervene_flag" in first,
+                has_segment_id="segment_id" in first,
+            )
+            for ep_frames in pending_episodes:
+                writer.add_episode(ep_frames)
+            writer.finalize()
+        except Exception as exc:
+            self._lerobot_archive_error = exc
+            self._logger.exception(
+                "Online LeRobot archive failed for %s. "
+                "Training will stop until the archive issue is fixed.",
+                archive_path,
+            )
+            raise
+
+        with self._pending_archive_lock:
+            if self._pending_archive_path == archive_path:
+                self._pending_archive_path = None
+                self._pending_archive_episodes = []
 
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
@@ -627,6 +655,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         return ready_tensor.item() == 1
 
     def _skip_lerobot_training(self) -> bool:
+        if self._lerobot_archive_error is not None:
+            raise RuntimeError(
+                "Online LeRobot archiving failed. See the actor log for the "
+                "archive path and underlying error."
+            ) from self._lerobot_archive_error
         if self._lerobot_all_ranks_ready():
             return False
         self.log_on_first_rank(

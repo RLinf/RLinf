@@ -32,7 +32,7 @@ from rlinf.data.datasets.dagger.lerobot_io import (
     _episode_parquet_path,
     _hf_column_to_numpy_bool_1d,
     _load_lerobot_episode_frames,
-    _read_jsonl,
+    _read_lerobot_episodes,
     _read_lerobot_tasks,
 )
 from rlinf.utils.logging import get_logger
@@ -407,20 +407,15 @@ class RollingLeRobotDataset(Dataset):
         """Return basic metadata for a finalized LeRobot shard, or ``None``."""
         path = Path(path)
         info_path = path / "meta" / "info.json"
-        episodes_path = path / "meta" / "episodes.jsonl"
         data_dir = path / "data"
-        if (
-            not info_path.is_file()
-            or not episodes_path.is_file()
-            or not data_dir.is_dir()
-        ):
+        if not info_path.is_file() or not data_dir.is_dir():
             return None
 
         try:
             with info_path.open() as f:
                 info = json.load(f)
-            episodes = _read_jsonl(episodes_path)
-        except (OSError, json.JSONDecodeError):
+            episodes = _read_lerobot_episodes(path)
+        except (OSError, json.JSONDecodeError, ImportError):
             return None
 
         if not episodes:
@@ -579,12 +574,11 @@ class RollingLeRobotDataset(Dataset):
         """Decode archived shard episodes without mutating dataset indexes."""
         path = Path(path)
         info_path = path / "meta" / "info.json"
-        episodes_path = path / "meta" / "episodes.jsonl"
         tasks = _read_lerobot_tasks(path / "meta" / "tasks.jsonl")
 
         with info_path.open() as f:
             info = json.load(f)
-        episodes = _read_jsonl(episodes_path)
+        episodes = _read_lerobot_episodes(path)
         feature_specs = info.get("features", {})
 
         shard_episodes = []
