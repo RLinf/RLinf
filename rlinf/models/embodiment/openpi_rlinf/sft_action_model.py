@@ -65,7 +65,12 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
             )
         return self.sft_forward(**kwargs)
 
-    def sft_forward(self, data: Any) -> torch.Tensor:
+    def sft_forward(
+        self,
+        data: Any,
+        *,
+        rng: torch.Generator | None = None,
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Compute the flow-matching SFT loss for one batch.
 
         ``data`` is either a ``(observation, actions)`` tuple or a dict with
@@ -80,12 +85,12 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
         actions = self._actions_to_device(actions)
         if not self.rlt_cfg.use_rlt:
             per_timestep_loss = self.model.compute_loss(
-                observation, actions, train=True
+                observation, actions, train=True, rng=rng
             )
             return per_timestep_loss.mean()
 
         per_timestep_loss, prefix_output, prefix_mask = (
-            self._sft_forward_with_rlt_prefix(observation, actions)
+            self._sft_forward_with_rlt_prefix(observation, actions, rng=rng)
         )
         vla_loss = per_timestep_loss.mean()
         rlt_loss, _ = self._rlt_forward(prefix_output, prefix_mask)
@@ -95,9 +100,14 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
             "rlt_loss": rlt_loss,
         }
 
-    def compute_loss(self, data: Any) -> torch.Tensor:
+    def compute_loss(
+        self,
+        data: Any,
+        *,
+        rng: torch.Generator | None = None,
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Alias kept for interface parity with the old action model."""
-        return self.sft_forward(data)
+        return self.sft_forward(data, rng=rng)
 
     @staticmethod
     def _unpack_sft_batch(data: Any) -> tuple[Any, Any]:
@@ -161,18 +171,27 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
         self,
         observation: Observation,
         actions: torch.Tensor,
+        *,
+        rng: torch.Generator | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute VLA loss while retaining the prefix hidden states for RLT."""
         batch_size = actions.shape[0]
         device = actions.device
 
-        observation = pi0_model_module.preprocess_observation(observation, train=True)
+        observation = pi0_model_module.preprocess_observation(
+            observation, train=True, rng=rng
+        )
         embed_dtype = self.model.embed_dtype
         observation = pi0_model_module._observation_to_dtype(observation, embed_dtype)
         actions = actions.to(dtype=embed_dtype)
         dtype = actions.dtype
 
-        noise = torch.randn(actions.shape, device=device, dtype=dtype)
+        noise_rng = (
+            rng if rng is not None and rng.device.type == device.type else None
+        )
+        noise = torch.randn(
+            actions.shape, device=device, dtype=dtype, generator=noise_rng
+        )
         time = (
             torch.distributions.Beta(torch.tensor(1.5), torch.tensor(1.0))
             .sample((batch_size,))

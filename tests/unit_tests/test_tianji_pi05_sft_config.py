@@ -632,3 +632,106 @@ def test_tianji_joint_sft_yaml_config(tianji_dataconfig_modules, monkeypatch):
     assert composed.actor.model.openpi.action_chunk == 60
     assert composed.actor.model.openpi.action_env_dim == 16
     assert composed.actor.model.openpi.use_rlt is False
+
+
+def test_openpi_rlinf_preprocess_observation_train_rng(monkeypatch):
+    """Verify openpi_rlinf preprocess_observation draws random augmentations when rng=None."""
+    torch = pytest.importorskip("torch")
+    TF = pytest.importorskip("torchvision.transforms.functional")
+
+    for pkg_name, rel_dir in (
+        ("rlinf.models", "rlinf/models"),
+        ("rlinf.models.embodiment", "rlinf/models/embodiment"),
+        ("rlinf.models.embodiment.openpi_rlinf", "rlinf/models/embodiment/openpi_rlinf"),
+        (
+            "rlinf.models.embodiment.openpi_rlinf.pi0_model",
+            "rlinf/models/embodiment/openpi_rlinf/pi0_model",
+        ),
+    ):
+        if pkg_name not in sys.modules:
+            pkg = types.ModuleType(pkg_name)
+            pkg.__path__ = [str(REPO_ROOT / rel_dir)]
+            monkeypatch.setitem(sys.modules, pkg_name, pkg)
+
+    model_mod = importlib.import_module(
+        "rlinf.models.embodiment.openpi_rlinf.pi0_model.model"
+    )
+    Observation = model_mod.Observation
+    preprocess_observation = model_mod.preprocess_observation
+
+    gen_init = torch.Generator().manual_seed(0)
+    h, w = 224, 224
+    obs = Observation(
+        images={
+            k: torch.rand(2, h, w, 3, generator=gen_init) * 2.0 - 1.0
+            for k in model_mod.IMAGE_KEYS
+        },
+        image_masks={},
+        state=torch.zeros(2, 32),
+    )
+
+    # 1) train=False: deterministic identity for 224x224 inputs, zero crop/rotate/jitter.
+    eval_a = preprocess_observation(obs, train=False)
+    eval_b = preprocess_observation(
+        obs, train=False, rng=torch.Generator().manual_seed(99)
+    )
+    for k in model_mod.IMAGE_KEYS:
+        torch.testing.assert_close(eval_a.images[k], obs.images[k], rtol=0, atol=0)
+        torch.testing.assert_close(eval_b.images[k], obs.images[k], rtol=0, atol=0)
+        assert eval_a.image_masks[k].shape == (2,)
+        assert eval_a.image_masks[k].dtype == torch.bool
+
+    # 2) train=True, rng=Generator: deterministic for a fixed seed.
+    seeded_a = preprocess_observation(
+        obs, train=True, rng=torch.Generator().manual_seed(42)
+    )
+    seeded_b = preprocess_observation(
+        obs, train=True, rng=torch.Generator().manual_seed(42)
+    )
+    seeded_c = preprocess_observation(
+        obs, train=True, rng=torch.Generator().manual_seed(43)
+    )
+    for k in model_mod.IMAGE_KEYS:
+        torch.testing.assert_close(
+            seeded_a.images[k], seeded_b.images[k], rtol=0, atol=0
+        )
+    assert not torch.allclose(
+        seeded_a.images["base_0_rgb"], seeded_c.images["base_0_rgb"]
+    )
+
+    # 3) train=True, rng=None: samples non-constant (top, left) crops & rotations on
+    #    base_0_rgb while never cropping or rotating wrist views.
+    crop_calls: list[tuple[int, int, int, int]] = []
+    rotate_calls: list[float] = []
+    orig_crop = TF.crop
+    orig_rotate = TF.rotate
+
+    def _spy_crop(img, top, left, height, width):
+        crop_calls.append((top, left, height, width))
+        return orig_crop(img, top, left, height, width)
+
+    def _spy_rotate(img, angle, *args, **kwargs):
+        rotate_calls.append(float(angle))
+        return orig_rotate(img, angle, *args, **kwargs)
+
+    monkeypatch.setattr(TF, "crop", _spy_crop)
+    monkeypatch.setattr(TF, "rotate", _spy_rotate)
+
+    torch.manual_seed(2026)
+    outs = [preprocess_observation(obs, train=True, rng=None) for _ in range(8)]
+
+    # 8 calls * batch_size 2 * 1 non-wrist camera ("base_0_rgb") == 16 crop/rotate calls
+    # (confirming left_wrist_0_rgb and right_wrist_0_rgb are never cropped or rotated).
+    assert len(crop_calls) == 16
+    assert len(rotate_calls) == 16
+    unique_tops = {c[0] for c in crop_calls}
+    unique_lefts = {c[1] for c in crop_calls}
+    assert len(unique_tops) > 1 and unique_tops != {0}
+    assert len(unique_lefts) > 1 and unique_lefts != {0}
+    assert len({round(a, 4) for a in rotate_calls}) > 1
+
+    # Verify stochastic variation across calls on both base and wrist (color jitter).
+    assert not torch.allclose(outs[0].images["base_0_rgb"], outs[1].images["base_0_rgb"])
+    assert not torch.allclose(
+        outs[0].images["left_wrist_0_rgb"], outs[1].images["left_wrist_0_rgb"]
+    )
