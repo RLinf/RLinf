@@ -5912,6 +5912,52 @@ def test_ragged_reasoning_batch_matches_dense_merge(advantage_mode):
     assert folded["response_lengths"].tolist() == [11, 3]
 
 
+def test_pack_traj_batch_merges_turn_ref_logprobs():
+    """Keep earlier turns' ref_logprobs when folding multi-turn rows."""
+    from rlinf.algorithms.utils import kl_penalty, masked_mean
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    full_logprobs = torch.tensor(
+        [0.0, -7.2, -8.5, -6.4, -5.1, -4.9, -9.1, -7.8], dtype=torch.float32
+    )
+    turn0_mask = torch.tensor([False, False, True, True])
+    turn1_mask = torch.tensor([False, False, False, False, False, False, True, True])
+    turn0_lp = full_logprobs[:4].masked_fill(~turn0_mask, 0.0)
+    turn1_lp = full_logprobs.masked_fill(~turn1_mask, 0.0)
+
+    result = DynamicRolloutResult(
+        num_sequence=2,
+        group_size=1,
+        idx_to_traj=[0, 0],
+        input_ids=[[1, 2, 3, 4], [1, 2, 3, 4, 5, 6, 7, 8]],
+        prompt_lengths=[2, 6],
+        response_lengths=[2, 2],
+        is_end=[False, True],
+        rewards=[1.0, 1.0],
+        recomputed_logprobs=[turn0_lp.clone(), turn1_lp.clone()],
+        ref_logprobs=[turn0_lp.clone(), turn1_lp.clone()],
+    )
+    batch = result.to_actor_batch()
+    batch["loss_scales"] = [mask.float() for mask in batch["response_mask"]]
+    packed = DynamicRolloutResult.pack_traj_batch({"folding_scale": []}, batch)
+
+    expected_mask = torch.tensor([False, False, True, True, False, False, True, True])
+    expected_lp = full_logprobs.masked_fill(~expected_mask, 0.0)
+    assert len(packed["ref_logprobs"]) == 1
+    torch.testing.assert_close(packed["response_mask"][0], expected_mask)
+    torch.testing.assert_close(packed["recomputed_logprobs"][0], expected_lp)
+    torch.testing.assert_close(packed["ref_logprobs"][0], expected_lp)
+    kld = kl_penalty(
+        packed["recomputed_logprobs"][0].unsqueeze(0),
+        packed["ref_logprobs"][0].unsqueeze(0),
+        "low_var_kl",
+    )
+    kl_loss = masked_mean(
+        kld * packed["loss_scales"][0].unsqueeze(0), expected_mask.unsqueeze(0)
+    )
+    torch.testing.assert_close(kl_loss, torch.tensor(0.0))
+
+
 @pytest.mark.parametrize(
     ("adv_type", "advantage_mode"),
     [
@@ -6513,3 +6559,298 @@ def test_dataset_factory_import_does_not_require_gym():
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_static_image_rows_survive_grouping(monkeypatch):
+    from rlinf.data.schema.reasoning_results import RolloutResult
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    rows = RolloutResult(
+        num_sequence=2,
+        group_size=1,
+        prompt_ids=[[1], [2]],
+        prompt_lengths=[1, 1],
+        response_ids=[[3], [4]],
+        response_lengths=[1, 1],
+        is_end=[True, True],
+        multi_modal_inputs=[None, {"image": "second"}],
+    )
+    groups = RolloutResult.split_result_list_by_group([rows])
+    assert [g.multi_modal_inputs for g in groups] == [[None], [{"image": "second"}]]
+    assert (
+        RolloutResult.merge_result_list(groups).multi_modal_inputs
+        == rows.multi_modal_inputs
+    )
+    actor_batch = rows.to_actor_batch(
+        data_seq_length=2, training_seq_length=4, pad_token=0
+    )
+    assert actor_batch["multi_modal_inputs"] == [None, {"image": "second"}]
+
+    for empty_payloads in ([None, None], [{}, {}]):
+        all_empty = RolloutResult(
+            num_sequence=2,
+            group_size=1,
+            prompt_ids=[[1], [2]],
+            prompt_lengths=[1, 1],
+            response_ids=[[3], [4]],
+            response_lengths=[1, 1],
+            is_end=[True, True],
+            multi_modal_inputs=empty_payloads,
+        )
+        assert "multi_modal_inputs" not in all_empty.to_actor_batch(
+            data_seq_length=2, training_seq_length=4, pad_token=0
+        )
+
+    rows.multi_modal_inputs = [{"image": "unknown row"}]
+    for operation in (
+        RolloutResult.split_result_list_by_group,
+        RolloutResult.merge_result_list,
+    ):
+        with pytest.raises(ValueError, match="one entry per sequence"):
+            operation([rows])
+    with pytest.raises(ValueError, match="one entry per sequence"):
+        rows.to_actor_batch(data_seq_length=2, training_seq_length=4, pad_token=0)
+
+
+def test_batch_merge_pads_rows_for_a_text_only_batch():
+    """A batch without images must still contribute one slot per row."""
+    from rlinf.data.schema.reasoning_results import RolloutResult
+
+    def batch(payloads):
+        data = {
+            "input_ids": [torch.arange(n) for n in (3, 5, 6)],
+            "idx_to_traj": [0, 1, 2],
+            "prompt_lengths": torch.ones(3, dtype=torch.int32),
+            "response_lengths": torch.ones(3, dtype=torch.int32),
+            "is_end": torch.zeros(3, dtype=torch.bool),
+        }
+        if payloads is not None:
+            data["multi_modal_inputs"] = payloads
+        return data
+
+    with_images = batch([None, {"tag": torch.tensor([1.0])}, None])
+    for order in ([batch(None), with_images], [with_images, batch(None)]):
+        merged = DynamicRolloutResult.merge_batches(
+            [dict(item) for item in order], group_size=3, adjust_traj_indices=True
+        )
+        payloads = merged["multi_modal_inputs"]
+        assert len(payloads) == len(merged["input_ids"]) == 6
+        image_row = 4 if "multi_modal_inputs" not in order[0] else 1
+        assert [i for i, entry in enumerate(payloads) if entry is not None] == [
+            image_row
+        ]
+        assert DynamicRolloutResult.pack_traj_batch({}, merged) is merged
+
+    for merge in (RolloutResult.merge_batches, DynamicRolloutResult.merge_batches):
+        with pytest.raises(ValueError, match="one entry per sequence"):
+            merge([batch([{}])])
+
+    for empty_payloads in ([None, None, None], [{}, {}, {}]):
+        only_empty = DynamicRolloutResult.merge_batches(
+            [batch(empty_payloads), batch(None)],
+            group_size=3,
+            adjust_traj_indices=True,
+        )
+        assert "multi_modal_inputs" not in only_empty
+
+
+def test_dynamic_result_filters_all_none_and_validates_image_rows():
+    from rlinf.utils.image_replay import REPLAY_FORMAT
+
+    def make_result(payloads):
+        return DynamicRolloutResult(
+            num_sequence=2,
+            group_size=2,
+            idx_to_traj=[0, 1],
+            input_ids=[[1, 2], [1, 2, 3]],
+            prompt_lengths=[1, 1],
+            response_lengths=[1, 2],
+            is_end=[True, True],
+            rewards=[1.0, 1.0],
+            multi_modal_inputs=payloads,
+        )
+
+    for empty_payloads in ([None, None], [{}, {}]):
+        assert "multi_modal_inputs" not in make_result(empty_payloads).to_actor_batch()
+
+    mixed = make_result([None, {"format": REPLAY_FORMAT}])
+    merged = DynamicRolloutResult.merge_result_list([make_result(None), mixed])
+    assert merged.multi_modal_inputs == [
+        None,
+        None,
+        None,
+        {"format": REPLAY_FORMAT},
+    ]
+    text_part, image_part = DynamicRolloutResult.split_results(merged, [2, 2])
+    assert text_part.multi_modal_inputs is None
+    assert "multi_modal_inputs" not in text_part.to_actor_batch()
+    assert image_part.multi_modal_inputs == [None, {"format": REPLAY_FORMAT}]
+
+    bad = make_result([{"format": REPLAY_FORMAT}])
+    with pytest.raises(ValueError, match="one entry per sequence"):
+        bad.to_actor_batch()
+    with pytest.raises(ValueError, match="one entry per sequence"):
+        DynamicRolloutResult.merge_result_list([bad])
+    with pytest.raises(ValueError, match="one entry per sequence"):
+        DynamicRolloutResult.split_results(bad, [1, 1])
+
+
+def test_dynamic_rollout_result_response_mask_and_turn_fields():
+    result = DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[1, 2, 8, 3]],
+        prompt_lengths=[1],
+        response_lengths=[3],
+        response_mask=[[True, False, True]],
+        is_end=[True],
+        rewards=[1.0],
+        extra_fields_turn={
+            "rollout_weight_versions": [[2, 3]],
+            "generate_calls": [2],
+        },
+    )
+    meta = result.group_metadata()
+    assert meta.num_gen_tokens == 2
+    assert meta.num_generate_calls == 2
+    batch = result.to_actor_batch()
+    assert batch["response_mask"][0].tolist() == [False, True, False, True]
+
+    merged = DynamicRolloutResult.merge_result_list([result, result])
+    restored = DynamicRolloutResult.split_results(merged, [1, 1])[1]
+    assert restored.response_mask == result.response_mask
+    assert restored.extra_fields_turn == result.extra_fields_turn
+
+    # Heterogeneous merge of a folded multi-turn result and a plain 1-call result.
+    plain = DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[4, 5, 6]],
+        prompt_lengths=[1],
+        response_lengths=[2],
+        is_end=[True],
+        rewards=[0.0],
+        extra_fields_turn={"rollout_weight_versions": [[4, 4]]},
+    )
+    heterogeneous = DynamicRolloutResult.merge_result_list([result, plain])
+    assert heterogeneous.response_mask == [[True, False, True], [True, True]]
+    assert heterogeneous.extra_fields_turn["generate_calls"] == [2, 1]
+    assert heterogeneous.extra_fields_turn["rollout_weight_versions"] == [
+        [2, 3],
+        [4, 4],
+    ]
+
+    without_versions = DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[4, 5, 6]],
+        prompt_lengths=[1],
+        response_lengths=[2],
+        is_end=[True],
+        rewards=[0.0],
+    )
+    with pytest.raises(ValueError, match="rollout_weight_versions"):
+        DynamicRolloutResult.merge_result_list([result, without_versions])
+
+    bad_mask = DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[1, 2, 3]],
+        prompt_lengths=[1],
+        response_lengths=[2],
+        response_mask=[[True]],
+        is_end=[True],
+        rewards=[1.0],
+    )
+    with pytest.raises(ValueError, match="Response mask length"):
+        bad_mask.to_actor_batch()
+
+
+def test_rpent_prepare_tasks_seeds_assets_and_manifest(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location(
+        "rpent_prepare_tasks",
+        Path(__file__).resolve().parents[2] / "examples/agent/rpent/prepare_tasks.py",
+    )
+    prepare_tasks = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(prepare_tasks)
+
+    assert prepare_tasks.parse_seeds("2-4,0,2") == [0, 2, 3, 4]
+    with pytest.raises(ValueError, match="Seed range"):
+        prepare_tasks.parse_seeds("4-2")
+    with pytest.raises(ValueError, match="nonnegative"):
+        prepare_tasks.parse_seeds("abc")
+
+    tasks = [
+        {"suite": "libero_goal", "task": 0, "language": "pick up", "initial_states": 2}
+    ]
+    rows = prepare_tasks.build_rows(tasks, [0, 1], "train")
+    assert len(rows) == 2
+    assert json.loads(rows[1]["answer"]) == {
+        "environment": "libero",
+        "init_state_id": 1,
+        "seed": 1,
+        "suite": "libero_goal",
+        "task": 0,
+    }
+    with pytest.raises(ValueError, match="would alias seed"):
+        prepare_tasks.build_rows(tasks, [2], "train")
+
+    pkg_dir = tmp_path / "liberopro_pkg"
+    pkg_dir.mkdir()
+    fake_init = pkg_dir / "__init__.py"
+    fake_init.write_text("", encoding="utf-8")
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("assets: /old\nbenchmark_root: /wrong\n", encoding="utf-8")
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    repointed = []
+
+    fake_bench = SimpleNamespace(
+        n_tasks=1,
+        get_task=lambda idx: SimpleNamespace(language="move bowl"),
+        get_task_init_states=lambda idx: [0, 1, 2],
+    )
+    fake_core = SimpleNamespace(
+        __file__=str(fake_init),
+        config_file=str(cfg_file),
+        get_libero_path=lambda key: "/wrong",
+        set_libero_default_path=lambda path: repointed.append(path),
+        benchmark=SimpleNamespace(get_benchmark=lambda suite: lambda: fake_bench),
+    )
+    monkeypatch.setitem(sys.modules, "liberopro", SimpleNamespace(liberopro=fake_core))
+    monkeypatch.setitem(sys.modules, "liberopro.liberopro", fake_core)
+
+    loaded = prepare_tasks.load_tasks("pro", ["libero_goal"], assets_dir=assets_dir)
+    assert repointed == [str(pkg_dir.resolve())]
+    assert f"assets: {assets_dir.resolve()}" in cfg_file.read_text(encoding="utf-8")
+    assert loaded[0]["initial_states"] == 3
+
+    out_dir = tmp_path / "out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare_tasks.py",
+            "--libero-type",
+            "pro",
+            "--suites",
+            "libero_goal",
+            "--seeds",
+            "0-1",
+            "--assets-dir",
+            str(assets_dir),
+            "--split",
+            "eval",
+            "--output-dir",
+            str(out_dir),
+        ],
+    )
+    prepare_tasks.main()
+    written = (out_dir / "eval.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(written) == 2
+    assert json.loads(written[0])["query_id"] == "eval-libero_goal-0-0"

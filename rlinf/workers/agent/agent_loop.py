@@ -17,6 +17,7 @@ import contextvars
 import copy
 import json
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import uuid4
@@ -83,6 +84,116 @@ class AgentLoopOutput:
     """
     version_start: Optional[int] = None
     version_end: Optional[int] = None
+    """Captured multimodal inputs aligned with this turn's prompt."""
+    multi_modal_inputs: Optional[dict[str, Any]] = None
+
+
+class MultiModalTurnState:
+    """Track multi-turn prompt tokens, explicit image spans, and capture history.
+
+    Encapsulates vision marker insertion, defensive span copying, and expanded
+    prompt updates so custom visual agent loops do not track four parallel state
+    variables by hand.
+    """
+
+    def __init__(
+        self,
+        tokenizer: Any,
+        prompt_ids: Sequence[int],
+        *,
+        image_store_dir: Optional[str] = None,
+        vision_markers: tuple[str, str, str] = (
+            "<|vision_start|>",
+            "<|image_pad|>",
+            "<|vision_end|>",
+        ),
+    ):
+        self.tokenizer = tokenizer
+        self.prompt_ids: list[int] = list(prompt_ids)
+        self.image_data: list[bytes] = []
+        self.image_spans: list[list[int]] = []
+        self.image_history: Optional[dict[str, Any]] = None
+        self.image_store_dir = image_store_dir
+        marker_ids = tokenizer.convert_tokens_to_ids(list(vision_markers))
+        unk_id = tokenizer.unk_token_id
+        if (
+            not isinstance(marker_ids, (list, tuple))
+            or len(marker_ids) != 3
+            or any(
+                not isinstance(token_id, int)
+                or isinstance(token_id, bool)
+                or (unk_id is not None and token_id == unk_id)
+                for token_id in marker_ids
+            )
+            or len(set(marker_ids)) != 3
+        ):
+            raise ValueError(
+                f"Tokenizer is missing distinct vision markers {vision_markers}: "
+                f"got {marker_ids!r}."
+            )
+        self._vision_start, self._image_pad, self._vision_end = marker_ids
+
+    def append_text(self, text: str) -> None:
+        """Tokenize and append text without adding special tokens."""
+        if text:
+            self.prompt_ids.extend(
+                self.tokenizer.encode(text, add_special_tokens=False)
+            )
+
+    def append_tokens(self, token_ids: Sequence[int]) -> None:
+        """Append pre-tokenized token IDs directly to the prompt."""
+        self.prompt_ids.extend(token_ids)
+
+    def append_image(self, image_bytes: bytes) -> None:
+        """Insert Qwen-VL vision markers and record the new image span."""
+        self.image_data.append(image_bytes)
+        self.prompt_ids.extend([self._vision_start, self._image_pad, self._vision_end])
+        self.image_spans.append([len(self.prompt_ids) - 2, len(self.prompt_ids) - 1])
+
+    def generate_kwargs(self) -> dict[str, Any]:
+        """Return keyword arguments for ``AgentLoopWorker.generate``."""
+        if not self.image_data:
+            return {}
+        return {
+            "image_data": list(self.image_data),
+            "image_spans": [list(span) for span in self.image_spans],
+            "image_history": self.image_history,
+            "image_store_dir": self.image_store_dir,
+        }
+
+    def record_turn(
+        self,
+        result: dict[str, Any],
+        *,
+        reward_score: Optional[float] = 0.0,
+        is_end: bool = False,
+    ) -> AgentLoopOutput:
+        """Update multi-turn state from a generate() result and build the turn row."""
+        captured = result.get("multi_modal_inputs")
+        if bool(self.image_data) != (captured is not None):
+            raise ValueError(
+                "Turn capture mismatch: expected multi_modal_inputs iff image_data is "
+                f"non-empty, got {len(self.image_data)} images and "
+                f"captured={captured is not None}."
+            )
+        if captured is not None:
+            turn_prompt_ids = list(result["prompt_token_ids"])
+            self.image_spans = [list(span) for span in captured["image_spans"]]
+            self.image_history = result["image_history"]
+        else:
+            turn_prompt_ids = list(self.prompt_ids)
+        response_ids = list(result["output_ids"])
+        self.prompt_ids = turn_prompt_ids + response_ids
+        return AgentLoopOutput(
+            prompt_ids=turn_prompt_ids,
+            response_ids=response_ids,
+            response_logprobs=result.get("logprobs"),
+            version_start=result.get("version_start"),
+            version_end=result.get("version_end"),
+            multi_modal_inputs=captured,
+            reward_score=reward_score,
+            is_end=is_end,
+        )
 
 
 @dataclass
@@ -218,14 +329,34 @@ class AgentLoopWorker(Worker):
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
         rollout_name: Optional[str] = None,
+        image_data: Optional[list[bytes]] = None,
+        image_spans: Optional[Sequence[Sequence[int]]] = None,
+        image_history: Optional[dict] = None,
+        image_store_dir: Optional[str] = None,
     ):
+        """Sample one turn; optional image inputs and replay spans ride with the request."""
+        multimodal: dict[str, Any] = {}
+        if any(
+            value is not None for value in (image_spans, image_history, image_store_dir)
+        ):
+            multimodal["capture_images"] = {
+                "image_spans": image_spans,
+                "history": image_history,
+                "store_dir": image_store_dir,
+            }
+        if image_data:
+            multimodal["image_data"] = image_data
         if rollout_name is not None:
             # Solid targets are frozen models outside the training loop;
             # they never enter a session and produce no payload.
             return await self._generate_on_solid_channel(
-                prompt_ids, sampling_params, rollout_name
+                prompt_ids, sampling_params, rollout_name, **multimodal
             )
         if self.session_server_client is not None:
+            if multimodal:
+                raise ValueError(
+                    "Image inputs and capture are not supported with the session server transport."
+                )
             binding = self._session_binding.get()
             assert binding is not None, (
                 "the session server transport is active but no session is "
@@ -233,10 +364,15 @@ class AgentLoopWorker(Worker):
                 "trajectory"
             )
             return await self._generate_on_session(binding, prompt_ids, sampling_params)
-        return await self._generate_on_channel(prompt_ids, sampling_params)
+        return await self._generate_on_channel(
+            prompt_ids, sampling_params, **multimodal
+        )
 
     async def _generate_on_channel(
-        self, prompt_ids: list[int], sampling_params: Optional[dict]
+        self,
+        prompt_ids: list[int],
+        sampling_params: Optional[dict],
+        **multimodal: Any,
     ):
         channel_key = uuid4().hex
         await self.generate_input_channel.put(
@@ -244,6 +380,7 @@ class AgentLoopWorker(Worker):
                 "channel_key": channel_key,
                 "prompt_ids": prompt_ids,
                 "sampling_params": sampling_params,
+                **multimodal,
             },
             async_op=True,
         ).async_wait()
@@ -261,6 +398,7 @@ class AgentLoopWorker(Worker):
         prompt_ids: list[int],
         sampling_params: Optional[dict],
         rollout_name: str,
+        **multimodal: Any,
     ):
         channel_key = uuid4().hex
         input_channel = self.solid_generate_input_channels[rollout_name]
@@ -269,6 +407,7 @@ class AgentLoopWorker(Worker):
                 "channel_key": channel_key,
                 "prompt_ids": prompt_ids,
                 "sampling_params": sampling_params,
+                **multimodal,
             },
             async_op=True,
         ).async_wait()
@@ -600,6 +739,7 @@ class AgentLoopWorker(Worker):
             ]
         is_end = [True for _ in task_results]
         answers = [answer] * len(task_results)
+        images = [r.multi_modal_inputs for r in task_results]
         return RolloutResult(
             num_sequence=len(task_results),
             group_size=len(task_results),
@@ -611,6 +751,7 @@ class AgentLoopWorker(Worker):
             response_texts=response_texts,
             is_end=is_end,
             answers=answers,
+            multi_modal_inputs=images if any(images) else None,
             response_mask=response_mask,
             rollout_logprobs=response_logprobs,
         )
@@ -835,6 +976,12 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             await asyncio.gather(*rollout_tasks, return_exceptions=True)
             await self.session_server_client.abort(group_id, exc.reason)
             return {}
+        except BaseException:
+            for task in rollout_tasks:
+                task.cancel()
+            await asyncio.gather(*rollout_tasks, return_exceptions=True)
+            # The caller handles group cancellation; never admit a partial group.
+            raise
         outputs = [output for _, output, _, _ in trajectories]
         agent_side = [output is not None for output in outputs]
         assert all(agent_side) or not any(agent_side), (
@@ -1190,6 +1337,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         rollout_logprobs = None
         if self.return_logprobs:
             rollout_logprobs = []
+        images = []
         is_end = []
         rewards = []
         version_start = []
@@ -1212,6 +1360,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                         single_turn_output.response_ids
                     ), "response_logprobs should have the same length as response_ids"
                     rollout_logprobs.append(single_turn_output.response_logprobs)
+                images.append(single_turn_output.multi_modal_inputs)
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
                 version_start.append(single_turn_output.version_start)
@@ -1238,6 +1387,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             response_lengths=response_lengths,
             input_ids=input_ids,
             rollout_logprobs=rollout_logprobs,
+            multi_modal_inputs=images if any(images) else None,
             is_end=is_end,
             rewards=rewards,
             version_start=version_start,

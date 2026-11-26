@@ -1,0 +1,140 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Megatron Actor output projection during packed-token scoring."""
+
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+import torch
+from megatron.core import tensor_parallel
+from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+
+from .lm_head import chunked_vocab_parallel_log_probs
+
+
+def _resolve_output_layer(module: torch.nn.Module) -> torch.nn.Module:
+    """Return the layer that produces logits for ``module``."""
+    layer = getattr(module, "output_layer", None)
+    if layer is None:
+        layer = getattr(getattr(module, "language_model", None), "output_layer", None)
+    if layer is None:
+        raise AttributeError(
+            f"{type(module).__name__} has no output layer to restrict."
+        )
+    return layer
+
+
+# GPT still transposes the returned tensor. Keep differentiable log_probs on
+# its normal forward path with one channel per token and pass structured scores
+# (including detached entropy) out through the active scoring context.
+_scoring = ContextVar("megatron_actor_output_scoring", default=None)
+
+
+@contextmanager
+def chunked_scoring(model, **score_args):
+    layer = _resolve_output_layer(model)
+    captured = {}
+    token = _scoring.set((layer, score_args, captured))
+    try:
+        yield captured
+    finally:
+        _scoring.reset(token)
+
+
+class _ChunkedProjection:
+    def forward(self, input_, *args, **kwargs):
+        scoring = _scoring.get()
+        if scoring is None or scoring[0] is not self:
+            return super().forward(input_, *args, **kwargs)
+
+        runtime_gather_output = kwargs.get(
+            "runtime_gather_output", args[1] if len(args) > 1 else None
+        )
+        if runtime_gather_output:
+            raise ValueError(
+                "Chunked LM head does not support runtime_gather_output=True"
+            )
+        weight = kwargs.get("weight", args[0] if args else None)
+        if weight is None:
+            weight = self.weight
+        hidden = input_.to(weight.dtype)
+        group = self.tp_group
+        if group.size() > 1:
+            if self.sequence_parallel:
+                hidden = tensor_parallel.gather_from_sequence_parallel_region(
+                    hidden, tensor_parallel_output_grad=True, group=group
+                )
+            elif not self.disable_grad_reduce:
+                hidden = tensor_parallel.copy_to_tensor_model_parallel_region(
+                    hidden, group=group
+                )
+        scores = chunked_vocab_parallel_log_probs(
+            hidden.transpose(0, 1),
+            weight,
+            bias=self.bias,
+            tp_group=group if group.size() > 1 else None,
+            gradient_accumulation_fusion=self.gradient_accumulation_fusion,
+            **scoring[1],
+        )
+        scoring[2].update(scores)
+        return scores["log_probs"].unsqueeze(-1).transpose(0, 1), None
+
+
+class ChunkedColumnParallelLinear(_ChunkedProjection, ColumnParallelLinear):
+    """Column-parallel linear with optional packed-token scoring."""
+
+
+def install_chunked_projection(model, *, bridge=False):
+    if not model.post_process:
+        return
+    layer = _resolve_output_layer(model)
+    cls = type(layer)
+    if (
+        not isinstance(layer, ColumnParallelLinear)
+        or cls.forward is not ColumnParallelLinear.forward
+        or "forward" in vars(layer)
+    ):
+        raise ValueError(
+            f"Chunked LM head requires the standard ColumnParallelLinear forward, got {cls.__name__}"
+        )
+    if layer.is_expert:
+        raise ValueError("Chunked LM head requires a vocabulary-parallel output layer")
+    if layer.gather_output:
+        raise ValueError(
+            "Chunked LM head requires parallel_output=True (gather_output=False)"
+        )
+    if layer.skip_bias_add and layer.bias is not None:
+        raise ValueError("Chunked LM head does not support returning a separate bias")
+    config = layer.config
+    for name in (
+        "mtp_num_layers",
+        "use_mup",
+        "defer_embedding_wgrad_compute",
+        "fp8",
+        "enable_autocast",
+        "final_logit_softcapping",
+        "logit_softcapping",
+    ):
+        if getattr(config, name, False):
+            raise ValueError(f"Chunked LM head does not support {name}")
+    if cls is ColumnParallelLinear:
+        projection = ChunkedColumnParallelLinear
+    else:
+        projection = type(f"Chunked{cls.__name__}", (_ChunkedProjection, cls), {})
+    if bridge:
+        from megatron.bridge.models.conversion.param_mapping import AutoMapping
+
+        AutoMapping.register_module_type(projection.__name__, "column")
+    layer.__class__ = projection

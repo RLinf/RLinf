@@ -37,7 +37,9 @@ from rlinf.utils.profiler import PyTorchProfiler, PyTorchProfilerFunc
 from rlinf.utils.utils import clear_memory
 
 from .utils import (
+    model_packs_inputs,
     postprocess_packed_seqs,
+    prepare_full_model_inputs,
     preprocess_packed_seqs,
     recover_left_padding,
     remove_left_padding,
@@ -193,6 +195,80 @@ def patch_load_checkpoint_to_be_non_strict(enable: bool):
         return nullcontext()
 
 
+@torch.no_grad()
+def _broadcast_shared_embeddings(bridge, model):
+    """Populate all local copies of tied embeddings across virtual stages."""
+    from megatron.bridge.models.conversion.model_bridge import _get_embedding_group
+    from megatron.bridge.models.conversion.utils import unwrap_model as unwrap_bridge
+
+    chunks = unwrap_bridge(model)
+    language = [getattr(chunk, "language_model", chunk) for chunk in chunks]
+    config = chunks[0].config
+    if not bridge._share_embeddings_and_output_weights(config):
+        return
+    if config.pipeline_model_parallel_size == 1:
+        return
+    group = _get_embedding_group(model)
+    if group is None:
+        return
+    ranks = torch.distributed.get_process_group_ranks(group)
+    if torch.distributed.get_rank() not in ranks:
+        return
+
+    weights = []
+    for chunk in language:
+        embedding = getattr(chunk, "embedding", None)
+        if embedding is not None and hasattr(embedding, "word_embeddings"):
+            weights.append(embedding.word_embeddings.weight)
+        output = getattr(chunk, "output_layer", None)
+        if output is not None and output.weight is not None:
+            weights.append(output.weight)
+    # The embedding group consists of the input, output and MTP weight owners.
+    assert weights, "Expected an embedding or output weight on an embedding-group rank."
+    torch.distributed.broadcast(weights[0].data, src=ranks[0], group=group)
+    for weight in weights[1:]:
+        weight.copy_(weights[0])
+
+
+@contextmanager
+def _bridge_shared_embeddings():
+    """Use VP-aware tied-weight loading while Bridge constructs the model."""
+    from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+
+    original = MegatronModelBridge._broadcast_shared_embeddings
+    MegatronModelBridge._broadcast_shared_embeddings = _broadcast_shared_embeddings
+    try:
+        yield
+    finally:
+        MegatronModelBridge._broadcast_shared_embeddings = original
+
+
+def _mtp_logits_output_processor(
+    hidden_states, output_layer, output_weight, runtime_gather_output, scale_logits, **_
+):
+    """Return logits with Megatron's MTP auxiliary loss attached."""
+    logits, _ = output_layer(
+        hidden_states, weight=output_weight, runtime_gather_output=runtime_gather_output
+    )
+    return scale_logits(logits).transpose(0, 1).contiguous()
+
+
+def _install_mtp_logits_processor(model):
+    """Keep language model outputs as logits when MTP training supplies labels."""
+    from megatron.core.models.gpt.gpt_model import GPTModel
+
+    for chunk in model:
+        language_model = unwrap_model(chunk)
+        if model_packs_inputs(chunk):
+            language_model = language_model.language_model
+        if isinstance(language_model, GPTModel) and language_model.mtp_process:
+            # Bridge forward does not forward output_processor to _postprocess.
+            language_model._postprocess = partial(
+                language_model._postprocess,
+                output_processor=_mtp_logits_output_processor,
+            )
+
+
 class MegatronModelManager:
     """
     Megatron Model Manager for RL training
@@ -212,6 +288,7 @@ class MegatronModelManager:
 
         self._cfg = cfg
         self.mbridge = cfg.megatron.get("mbridge", False)
+        self.trains_mtp = False
 
         self.mcore_gpt = cfg.mcore_gpt
         self.spec_name = cfg.spec_name
@@ -286,16 +363,8 @@ class MegatronModelManager:
                     )
                 )
 
-    def setup_mbridge_model_and_optimizer(self):
-        # Init megatron bridge
-        from megatron.bridge import AutoBridge
-        from megatron.bridge.training.config import DistributedDataParallelConfig
-
-        self.bridge = AutoBridge.from_hf_pretrained(
-            self._cfg.megatron.load,
-            trust_remote_code=True,
-        )
-        provider = self.bridge.to_megatron_provider(load_weights=True)
+    def _configure_mbridge_provider(self, provider) -> None:
+        """Apply RLinf runtime overrides and model hooks to a bridge provider."""
         from dataclasses import fields
 
         provider_field_names = {f.name for f in fields(type(provider))}
@@ -306,7 +375,10 @@ class MegatronModelManager:
         # Only override user-controllable runtime fields
         # e.g. multi_latent_attention=True -> False
         _model_type = getattr(self._cfg.model, "model_type", None)
-        if _model_type in ("deepseek_v3", "glm4_moe_lite"):
+        self.trains_mtp = _model_type == "qwen3_5" and bool(
+            self._cfg.model.get("load_mtp", False)
+        )
+        if _model_type in ("deepseek_v3", "glm4_moe_lite", "qwen3_5"):
             _mbridge_user_override_fields = {
                 "fp16",
                 "bf16",
@@ -317,8 +389,10 @@ class MegatronModelManager:
                 "sequence_parallel",
                 "tensor_model_parallel_size",
                 "pipeline_model_parallel_size",
+                "virtual_pipeline_model_parallel_size",
                 "expert_model_parallel_size",
                 "context_parallel_size",
+                "attention_backend",
                 "gradient_accumulation_fusion",
                 "moe_aux_loss_coeff",
                 "moe_router_bias_update_rate",
@@ -339,6 +413,28 @@ class MegatronModelManager:
         provider.position_embedding_type = position_embedding_type
         if hasattr(provider, "vision_config"):
             provider.vision_config._attn_implementation = resolve_attn_implementation()
+        if self.is_dedicated_critic_model and self._cfg.model.get("load_mtp", False):
+            raise ValueError(
+                "Dedicated critic models do not support model.load_mtp=True."
+            )
+        if _model_type == "qwen3_5":
+            text_config = provider.hf_text_config
+            if self.trains_mtp:
+                mtp_layers = text_config.mtp_num_hidden_layers
+                assert (
+                    mtp_layers == 1 and not text_config.mtp_use_dedicated_embeddings
+                ), "Qwen3.5 weight sync requires one MTP layer with shared embeddings."
+                provider.mtp_num_layers = mtp_layers
+                provider.mtp_loss_scaling_factor = self._cfg.model.get(
+                    "mtp_loss_scaling_factor", 0.1
+                )
+            else:
+                provider.mtp_num_layers = 0
+                # Bridge exports the HF config alongside the loaded parameters.
+                text_config.mtp_num_hidden_layers = 0
+
+        if self.is_dedicated_critic_model:
+            provider.register_pre_wrap_hook(self._attach_value_head)
 
         # the Mbridge run the qwen3-vl-moe model will freeze the language model and vision model by default.
         provider.freeze_language_model = getattr(
@@ -370,6 +466,18 @@ class MegatronModelManager:
             self._logger.info(f"Mbridge Set Provider: {provider}")
 
         provider.finalize()
+
+    def setup_mbridge_model_and_optimizer(self):
+        # Init megatron bridge
+        from megatron.bridge import AutoBridge
+        from megatron.bridge.training.config import DistributedDataParallelConfig
+
+        self.bridge = AutoBridge.from_hf_pretrained(
+            self._cfg.megatron.load,
+            trust_remote_code=True,
+        )
+        provider = self.bridge.to_megatron_provider(load_weights=True)
+        self._configure_mbridge_provider(provider)
         self.provider = provider
         ddp_config = DistributedDataParallelConfig(
             use_distributed_optimizer=self._cfg.optim.use_distributed_optimizer,
@@ -381,7 +489,11 @@ class MegatronModelManager:
         ddp_config.finalize()
 
         # Get Megatron Model
-        model = self.provider.provide_distributed_model(ddp_config=ddp_config)
+        # Get Megatron Model
+        with _bridge_shared_embeddings():
+            model = self._provide_bridge_model(ddp_config)
+        if self.trains_mtp:
+            _install_mtp_logits_processor(model)
 
         args = get_args()
         from megatron.training.training import get_megatron_optimizer_config
@@ -399,6 +511,9 @@ class MegatronModelManager:
         lr_scheduler = get_optimizer_param_scheduler(optimizer)
 
         return model, optimizer, lr_scheduler
+
+    def _provide_bridge_model(self, ddp_config):
+        return self.provider.provide_distributed_model(ddp_config=ddp_config)
 
     def model_provider_func(self, pre_process, post_process, config=None, **kwargs):
         """Model depends on pipeline paralellism.
@@ -458,16 +573,39 @@ class MegatronModelManager:
             )
 
         if self.is_dedicated_critic_model and post_process:
-            # replace lm head with value head if this is a critic model
-            model.output_layer = LinearForLastLayer(
-                input_size=self._cfg.model.hidden_size,
-                output_size=1,
-                sequence_parallel=self._cfg.model.sequence_parallel,
-                weight_init=self._cfg.get("value_head_init", "normal"),
-                init_std=self._cfg.model.get("init_method_std", 0.02),
+            model.output_layer = self._value_head(
+                self._cfg.model.hidden_size, self._cfg.model.sequence_parallel
             )
 
         return model
+
+    def _value_head(self, hidden_size: int, sequence_parallel: bool) -> torch.nn.Module:
+        """Return the scalar projection that replaces a critic's language-model head."""
+        return LinearForLastLayer(
+            input_size=hidden_size,
+            output_size=1,
+            sequence_parallel=sequence_parallel,
+            weight_init=self._cfg.get("value_head_init", "normal"),
+            init_std=self._cfg.model.get("init_method_std", 0.02),
+        )
+
+    def _attach_value_head(self, model_chunks: list) -> list:
+        """Replace the language-model head of bridge-built critic chunks."""
+        for chunk in model_chunks:
+            # A value head never shares input embedding weights; untie every
+            # pipeline stage so backward finalize_model_grads stays aligned.
+            target = chunk.language_model if hasattr(chunk, "language_model") else chunk
+            chunk.share_embeddings_and_output_weights = False
+            chunk.config.share_embeddings_and_output_weights = False
+            target.share_embeddings_and_output_weights = False
+            target.config.share_embeddings_and_output_weights = False
+            if not chunk.post_process:
+                continue
+            head = self._value_head(
+                target.config.hidden_size, target.config.sequence_parallel
+            ).to(next(chunk.parameters()).device)
+            target.output_layer = head
+        return model_chunks
 
     def optimizer_step(self, increment):
         success, grad_norm, num_zeros_in_grad = self.optimizer.step()
@@ -595,7 +733,7 @@ class MegatronModelManager:
             return
 
         with self.ensure_onloaded_and_then_offload():
-            if self.mbridge:
+            if self.mbridge and not self.is_dedicated_critic_model:
                 # save mbridge checkpoint to hf checkpoint
                 hf_save_path = os.path.join(save_path, "hf_checkpoint")
                 self.bridge.save_hf_pretrained(
@@ -679,6 +817,8 @@ class MegatronModelManager:
         padding_seqlen: Optional[int] = None,
         keep_left_padding: bool = False,
         packed_seq_params: Optional[PackedSeqParams] = None,
+        mtp_labels: Optional[torch.Tensor] = None,
+        mtp_loss_mask: Optional[torch.Tensor] = None,
         **model_forward_kwargs,
     ):
         """Default forward pass for GPT models with optional sequence packing."""
@@ -686,9 +826,13 @@ class MegatronModelManager:
         # Earlier pipeline stages return hidden states for the next stage.
         post_process = unwrap_model(model).post_process
         if packed_seq_params is not None:
+            if post_process and mtp_labels is not None:
+                model_forward_kwargs["labels"] = mtp_labels
+                if mtp_loss_mask is not None:
+                    model_forward_kwargs["loss_mask"] = mtp_loss_mask.float()
             output = model(
                 input_ids=input_ids.contiguous(),
-                attention_mask=None,
+                attention_mask=attention_mask,
                 position_ids=position_ids,
                 packed_seq_params=packed_seq_params,
                 **model_forward_kwargs,
@@ -700,16 +844,39 @@ class MegatronModelManager:
             return output
         if pack_seqs:
             batch_size, seq_len = attention_mask.shape[:2]
-            input_ids_rmpad, packed_seq_params = preprocess_packed_seqs(
-                input_ids,
-                attention_mask,
-                pre_process=pre_process,
-                padding_seqlen=padding_seqlen,
-            )
+            if post_process and mtp_labels is not None:
+                model_forward_kwargs["labels"] = preprocess_packed_seqs(
+                    mtp_labels,
+                    attention_mask,
+                    pre_process=True,
+                    padding_seqlen=padding_seqlen,
+                )[0]
+                if mtp_loss_mask is not None:
+                    model_forward_kwargs["loss_mask"] = preprocess_packed_seqs(
+                        mtp_loss_mask,
+                        attention_mask,
+                        pre_process=True,
+                        padding_seqlen=padding_seqlen,
+                    )[0].float()
+            if model_packs_inputs(model):
+                input_ids_rmpad, model_attention_mask, packed_seq_params = (
+                    prepare_full_model_inputs(
+                        input_ids, attention_mask, padding_seqlen=padding_seqlen
+                    )
+                )
+                position_ids = None
+            else:
+                input_ids_rmpad, packed_seq_params = preprocess_packed_seqs(
+                    input_ids,
+                    attention_mask,
+                    pre_process=pre_process,
+                    padding_seqlen=padding_seqlen,
+                )
+                model_attention_mask = None
             input_ids_rmpad = input_ids_rmpad.contiguous()
             output_orig = model(
                 input_ids=input_ids_rmpad,
-                attention_mask=None,
+                attention_mask=model_attention_mask,
                 position_ids=position_ids,
                 packed_seq_params=packed_seq_params,
                 **model_forward_kwargs,
@@ -757,6 +924,14 @@ class MegatronModelManager:
                 sequence_parallel,
                 pre_process=pre_process or keep_left_padding,
             )
+            if post_process and mtp_labels is not None:
+                model_forward_kwargs["labels"] = tensor_rm_left_padding(
+                    mtp_labels, attention_mask, sequence_parallel
+                )
+                if mtp_loss_mask is not None:
+                    model_forward_kwargs["loss_mask"] = tensor_rm_left_padding(
+                        mtp_loss_mask, attention_mask, sequence_parallel
+                    ).float()
             output_orig = model(
                 input_ids=new_input_ids,
                 attention_mask=new_attention_mask,

@@ -23,17 +23,21 @@ skip when those are absent.
 """
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest import mock
+from unittest.mock import AsyncMock
 
 import pytest
 from omegaconf import OmegaConf
 
 from rlinf.data.schema import DiscardedGroup
 from rlinf.workers.agent.agent_loop import (
+    AgentLoopOutput,
     AgentLoopWorker,
     GroupDiscarded,
     MultiAgentLoopWorker,
+    MultiModalTurnState,
 )
 
 
@@ -71,6 +75,134 @@ def _make_worker() -> AgentLoopWorker:
     worker._inflight_groups = set()
     worker.log_error = mock.MagicMock()
     return worker
+
+
+def test_agent_loop_sends_multimodal_request_metadata():
+    worker = _make_worker()
+    worker.generate_input_channel = _QueueChannel()
+    worker.generate_output_channel = _QueueChannel()
+    ids, images, spans = [1, 2], [b"image"], [(1, 2)]
+
+    worker.generate_output_channel.put({"output_ids": [3]})
+    asyncio.run(worker.generate(ids, {}, image_data=images, image_spans=spans))
+    request = worker.generate_input_channel.get_nowait()
+    assert request["image_data"] == images
+    assert request["capture_images"]["image_spans"] == spans
+
+    # Passing image_history or image_store_dir without image_spans must still
+    # route through capture_images and trigger the session-server guard.
+    worker.generate_output_channel.put({"output_ids": [4]})
+    asyncio.run(worker.generate(ids, {}, image_history={"length": 2}))
+    request = worker.generate_input_channel.get_nowait()
+    assert request["capture_images"]["image_spans"] is None
+    assert request["capture_images"]["history"] == {"length": 2}
+
+    worker.session_server_client = object()
+    with pytest.raises(ValueError, match="session server transport"):
+        asyncio.run(worker.generate(ids, {}, image_store_dir="/tmp/store"))
+
+
+def test_multimodal_turn_state_tracks_spans_copies_and_text_turns():
+    from rlinf.utils.image_replay import REPLAY_FORMAT
+
+    tokenizer = SimpleNamespace(
+        unk_token_id=None,
+        convert_tokens_to_ids=lambda tokens: [101, 102, 103],
+        encode=lambda text, add_special_tokens=False: [ord(ch) for ch in text],
+    )
+    state = MultiModalTurnState(tokenizer, [1, 2], image_store_dir="/shared/images")
+
+    # Turn 1: pure text before any image arrives.
+    state.append_text("A")
+    assert state.prompt_ids == [1, 2, 65]
+    assert state.generate_kwargs() == {}
+    row1 = state.record_turn(
+        {"output_ids": [20], "logprobs": [-0.1], "version_start": 3, "version_end": 4}
+    )
+    assert row1.prompt_ids == [1, 2, 65]
+    assert row1.response_ids == [20]
+    assert row1.is_end is False
+    assert row1.version_start == 3
+    assert row1.version_end == 4
+    assert row1.multi_modal_inputs is None
+    assert state.prompt_ids == [1, 2, 65, 20]
+
+    # Unexpected capture on a text-only turn must fail instead of silently rewriting state.
+    with pytest.raises(ValueError, match="Turn capture mismatch"):
+        state.record_turn(
+            {
+                "prompt_token_ids": [1, 2, 65, 20],
+                "output_ids": [21],
+                "multi_modal_inputs": {"format": REPLAY_FORMAT, "image_spans": []},
+                "image_history": {"length": 5},
+            }
+        )
+
+    # Turn 2: add an image followed by trailing text/template tokens.
+    state.append_image(b"img-1")
+    state.append_text("B")
+    kwargs2 = state.generate_kwargs()
+    assert kwargs2["image_data"] == [b"img-1"]
+    assert kwargs2["image_spans"] == [[5, 6]]
+    assert kwargs2["image_history"] is None
+    assert kwargs2["image_store_dir"] == "/shared/images"
+
+    # Missing capture after an image arrives must fail fast instead of leaving stale spans.
+    with pytest.raises(ValueError, match="Turn capture mismatch"):
+        state.record_turn({"output_ids": [21], "logprobs": [-0.2]})
+
+    captured2 = {"format": REPLAY_FORMAT, "image_spans": [[5, 9]]}
+    row2 = state.record_turn(
+        {
+            "prompt_token_ids": [1, 2, 65, 20, 101, 102, 102, 102, 102, 103, 66],
+            "output_ids": [21],
+            "logprobs": [-0.2],
+            "version_start": 4,
+            "version_end": 5,
+            "multi_modal_inputs": captured2,
+            "image_history": {"length": 12},
+        },
+        is_end=True,
+    )
+    assert row2.multi_modal_inputs is captured2
+    assert row2.is_end is True
+    assert row2.version_start == 4
+    assert row2.version_end == 5
+    assert state.prompt_ids[-1] == 21
+
+    # Turn 3: adding another image must not mutate Turn 2's captured spans.
+    state.append_image(b"img-2")
+    kwargs3 = state.generate_kwargs()
+    assert kwargs3["image_spans"] == [[5, 9], [13, 14]]
+    assert kwargs3["image_history"] == {"length": 12}
+    assert row2.multi_modal_inputs["image_spans"] == [[5, 9]]
+
+    # Custom vision markers work without hardcoding Qwen-VL tokens.
+    custom_seen = []
+    custom_tokenizer = SimpleNamespace(
+        unk_token_id=None,
+        convert_tokens_to_ids=lambda tokens: custom_seen.extend(tokens) or [7, 8, 9],
+    )
+    custom_state = MultiModalTurnState(
+        custom_tokenizer, [1], vision_markers=("<img_s>", "<img_p>", "<img_e>")
+    )
+    custom_state.append_image(b"img")
+    assert custom_seen == ["<img_s>", "<img_p>", "<img_e>"]
+    assert custom_state.prompt_ids == [1, 7, 8, 9]
+
+
+def test_multimodal_turn_state_rejects_missing_or_duplicate_vision_markers():
+    for marker_ids, unk_id in (
+        ([101, None, 103], None),
+        ([101, 101, 103], None),
+        ([101, 0, 103], 0),
+    ):
+        tokenizer = SimpleNamespace(
+            unk_token_id=unk_id,
+            convert_tokens_to_ids=lambda _tokens, ids=marker_ids: ids,
+        )
+        with pytest.raises(ValueError, match="vision markers"):
+            MultiModalTurnState(tokenizer, [1, 2])
 
 
 def _request(n_groups=1, group_size=2, group_ids=None, task_names=None):
@@ -111,7 +243,7 @@ def _make_group_worker(worker_cls=AgentLoopWorker):
 
 async def _single_query_output(input_ids):
     """One finished single-turn trajectory for the base group method."""
-    return SimpleNamespace(
+    return AgentLoopOutput(
         prompt_ids=[1, 2],
         prompt_text="p",
         response_ids=[3],
@@ -604,8 +736,8 @@ def _single_turn_output(
     version_start: int | None,
     version_end: int | None,
     not_training: bool = False,
-) -> SimpleNamespace:
-    return SimpleNamespace(
+) -> AgentLoopOutput:
+    return AgentLoopOutput(
         prompt_ids=[1, 2],
         response_ids=[3],
         response_logprobs=[0.5],
@@ -638,6 +770,18 @@ class TestGetRolloutResultVersions:
         return worker.get_rollout_result(
             task_results, None, None, None, extra_fields_train={}
         )
+
+    def test_image_payloads_follow_retained_turns(self):
+        from rlinf.utils.image_replay import REPLAY_FORMAT
+
+        text, skipped, image = (_single_turn_output(1, 1) for _ in range(3))
+        skipped.extra_fields["not_training"] = True
+        image.multi_modal_inputs = {
+            "format": REPLAY_FORMAT,
+            "image_spans": [[1, 2]],
+        }
+        result = self._get_rollout_result([[text, skipped], [image]])
+        assert result.multi_modal_inputs == [None, image.multi_modal_inputs]
 
     def test_versions_written_and_aligned(self):
         result = self._get_rollout_result(
@@ -909,3 +1053,416 @@ class TestTaskNamePassthrough:
             assert seen == [(None, None), (None, None)]
 
         asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("training_backend", "mbridge", "resume_dir", "should_convert"),
+    [
+        ("megatron", True, None, False),
+        ("megatron", False, None, True),
+        ("megatron", False, "/ckpt", False),
+        ("fsdp", False, None, False),
+    ],
+)
+def test_agent_ppo_runner_skips_legacy_critic_convert_for_mbridge(
+    monkeypatch, training_backend, mbridge, resume_dir, should_convert
+):
+    import sys
+
+    from omegaconf import OmegaConf
+
+    from rlinf.runners.agent_ppo_runner import AgentPPORunner
+    from rlinf.runners.agent_runner import AgentRunner
+
+    converted = []
+    monkeypatch.setattr(AgentRunner, "init_rollout_workers", lambda self: None)
+    monkeypatch.setitem(
+        sys.modules,
+        "rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg",
+        SimpleNamespace(
+            convert_hf_to_mg=lambda path, cfg: converted.append((path, cfg))
+        ),
+    )
+    runner = AgentPPORunner.__new__(AgentPPORunner)
+    runner.cfg = OmegaConf.create(
+        {
+            "runner": {"resume_dir": resume_dir},
+            "critic": {
+                "training_backend": training_backend,
+                "megatron": {
+                    "use_hf_ckpt": True,
+                    "mbridge": mbridge,
+                    "ckpt_convertor": {"hf_model_path": "/hf/critic"},
+                },
+            },
+        }
+    )
+    runner.init_rollout_workers()
+    if should_convert:
+        assert len(converted) == 1
+        assert converted[0][0] == "/hf/critic"
+    else:
+        assert converted == []
+
+
+@pytest.mark.parametrize(
+    "terminal,success,reward", [(True, False, 0), (True, True, 1), (False, False, None)]
+)
+def test_rpent_episode_reward_and_slot_release(terminal, success, reward):
+    from rlinf.agents.rpent.launcher import RPentEpisodeError
+    from rlinf.agents.rpent.rpent_agent_loop import RPentAgentLoopWorker
+
+    agent = object.__new__(RPentAgentLoopWorker)
+    agent._env_slots = asyncio.Queue()
+    agent._env_slots.put_nowait(3)
+    agent._episode_launcher = SimpleNamespace(
+        run=AsyncMock(return_value={"terminal": terminal, "success": success})
+    )
+    agent._planner_options = lambda url: {"base_url": url}
+    agent.session_server_client = SimpleNamespace(
+        session_base_url=lambda group_id, session_id: (
+            f"http://session/{group_id}/{session_id}/v1"
+        )
+    )
+    task = {"suite": "libero_goal", "task": 0, "seed": 4}
+    query = agent.run_session_trajectory(
+        SimpleNamespace(group_id=1, session_id="s"), [], [json.dumps(task)]
+    )
+    if reward is None:
+        with pytest.raises(RPentEpisodeError):
+            asyncio.run(query)
+    else:
+        assert asyncio.run(query) == (None, {}, reward)
+    assert agent._env_slots.get_nowait() == 3
+    assert agent._episode_launcher.run.await_args.args[1:] == (
+        task,
+        {"base_url": "http://session/1/s/v1"},
+        3,
+    )
+
+
+def test_rpent_eval_runner_aggregates_suites_and_propagates_errors(tmp_path):
+    from unittest.mock import Mock
+
+    from omegaconf import OmegaConf
+
+    from rlinf.agents.rpent.eval_runner import RPentEvalRunner
+
+    runner = object.__new__(RPentEvalRunner)
+    runner.cfg = OmegaConf.create(
+        {
+            "runner": {
+                "output_dir": str(tmp_path),
+                "experiment_name": "eval",
+                "max_epochs": 1,
+            }
+        }
+    )
+    runner.max_steps = 1
+    runner.global_steps = 0
+    runner.val_dataloader = ["b0", "b1"]
+    runner._put_batch = Mock()
+    runner._stop_rollouts = Mock()
+    runner.metric_logger = Mock()
+    runner.dataloader_channel = Mock()
+    runner.rollout = SimpleNamespace(
+        get_server_url=lambda: SimpleNamespace(wait=lambda: ["http://127.0.0.1:9000"])
+    )
+    runner.agent_loop = SimpleNamespace(
+        _workers=[0],
+        evaluate_batch=lambda *_: SimpleNamespace(
+            wait=lambda: [
+                [
+                    {"task": {"suite": "libero_goal"}, "success": True},
+                    {"task": {"suite": "libero_object"}, "success": False},
+                ]
+            ]
+        ),
+    )
+    runner.run()
+    runner._stop_rollouts.assert_called_once()
+    assert runner.global_steps == 1
+    runner._put_batch.assert_called_once()
+    runner.metric_logger.log.assert_called_once_with(
+        {
+            "eval/episodes": 2,
+            "eval/success_rate": 0.5,
+            "eval/libero_goal/success_rate": 1.0,
+            "eval/libero_object/success_rate": 0.0,
+        },
+        1,
+    )
+    runner.metric_logger.finish.assert_called_once()
+    saved = json.loads((tmp_path / "eval" / "eval_results.json").read_text())
+    assert saved["summary"]["success_rate"] == 0.5
+    assert saved["summary"]["suites"]["libero_goal"]["success_rate"] == 1.0
+
+    runner._stop_rollouts.reset_mock()
+    runner.metric_logger.finish.reset_mock()
+    runner.global_steps = 0
+    runner.agent_loop = SimpleNamespace(
+        _workers=[0],
+        evaluate_batch=lambda *_: SimpleNamespace(
+            wait=Mock(side_effect=RuntimeError("sim crashed"))
+        ),
+    )
+    with pytest.raises(RuntimeError, match="sim crashed"):
+        runner.run()
+    runner._stop_rollouts.assert_not_called()
+    runner.metric_logger.finish.assert_called_once()
+
+
+def test_rpent_evaluate_batch_unwraps_list_answers():
+    from rlinf.agents.rpent.rpent_agent_loop import RPentAgentLoopWorker
+
+    agent = object.__new__(RPentAgentLoopWorker)
+    agent._rank = 0
+    task = {"suite": "libero_goal", "task": 6, "seed": 15}
+    agent.run_episode = AsyncMock(
+        return_value=({"episode_id": "ep0", "task": task}, {"success": True})
+    )
+    req = SimpleNamespace(answers=[[json.dumps(task)]], n=1)
+    ch = _QueueChannel()
+    ch.put(req)
+    results = asyncio.run(agent.evaluate_batch(ch, ["http://127.0.0.1:9000"]))
+    assert results == [{"episode_id": "ep0", "task": task, "success": True}]
+    agent.run_episode.assert_awaited_once_with(
+        json.dumps(task), "http://127.0.0.1:9000/v1"
+    )
+
+
+def test_rpent_episode_launcher_subprocess_lifecycle_and_egl(tmp_path, monkeypatch):
+    import sys
+
+    from rlinf.agents.rpent.launcher import RPentEpisodeError, RPentEpisodeLauncher
+    from rlinf.scheduler.hardware.accelerators.nvidia_gpu import NvidiaGPUManager
+
+    cfg = OmegaConf.create(
+        {
+            "rollout": {"model": {"model_path": "/models/qwen35"}},
+            "agentloop": {"prompt": "simple"},
+            "tools": {
+                "rpent": {
+                    "python": sys.executable,
+                    "sam3_endpoint": "http://127.0.0.1:8101",
+                    "libero_type": "pro",
+                    "max_episode_steps": 100,
+                    "output_dir": str(tmp_path / "episodes"),
+                    "keep_episodes": "failures",
+                    "process_timeout_s": 5.0,
+                    "libero_config_path": "/tmp/libero_cfg",
+                    "max_env_initializations_per_worker": 1,
+                }
+            },
+        }
+    )
+    launcher = RPentEpisodeLauncher(cfg)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+    monkeypatch.setattr(NvidiaGPUManager, "get_egl_device_id", lambda gpu: None)
+    with pytest.raises(ValueError, match="No EGL device"):
+        launcher.environment(3)
+
+    monkeypatch.setattr(
+        NvidiaGPUManager, "get_egl_device_id", lambda gpu: 7 if gpu == 3 else 0
+    )
+    env = launcher.environment(3)
+    assert "CUDA_VISIBLE_DEVICES" not in env
+    assert env["MUJOCO_EGL_DEVICE_ID"] == "7"
+    assert env["EGL_DEVICE_ID"] == "7"
+    assert env["LIBERO_CONFIG_PATH"] == "/tmp/libero_cfg"
+
+    cmd = launcher.command(tmp_path / "ep", 3)
+    assert cmd[cmd.index("--cuda-device") + 1] == "3"
+
+    def _run_script(ep_id, code, timeout_s=5.0):
+        launcher.cfg.tools.rpent.process_timeout_s = timeout_s
+        monkeypatch.setattr(
+            launcher,
+            "command",
+            lambda output, gpu: [sys.executable, "-c", code, str(output)],
+        )
+        return asyncio.run(launcher.run(ep_id, {"suite": "s"}, {}, 3))
+
+    # Exit 0 + success=True -> directory pruned under keep_episodes='failures' + permit released.
+    ok = _run_script(
+        "ep-ok",
+        "import json, pathlib, sys; d=pathlib.Path(sys.argv[1]); "
+        "(d/'states.json').write_text('{}'); "
+        "(d/'outcome.json').write_text(json.dumps({'terminal': True, 'success': True}))",
+    )
+    assert ok == {"terminal": True, "success": True}
+    assert not (tmp_path / "episodes" / "ep-ok").exists()
+    assert launcher._env_initializations._value == 1
+
+    # Exit 75 -> env_setup error + permit released.
+    with pytest.raises(RPentEpisodeError, match=r"\[env_setup\]") as exc_setup:
+        _run_script("ep-75", "import sys; sys.exit(75)")
+    assert exc_setup.value.kind == "env_setup"
+    assert launcher._env_initializations._value == 1
+
+    # Timeout -> process error + child terminated + permit released.
+    with pytest.raises(RPentEpisodeError, match=r"\[process\]") as exc_to:
+        _run_script("ep-to", "import time; time.sleep(10)", timeout_s=0.1)
+    assert exc_to.value.kind == "process"
+    assert launcher._env_initializations._value == 1
+
+
+def test_rpent_worker_options_cancel_and_runner_channels():
+    import subprocess
+    import sys
+
+    from rlinf.agents.rpent.rpent_agent_loop import RPentAgentLoopWorker
+    from rlinf.agents.rpent.train_runner import RPentRunner
+
+    # RPentRunner / AsyncAgentRunner must import cleanly without Megatron, SGLang, or vLLM.
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys\n"
+                "for m in ('megatron', 'megatron.core', 'sglang', 'vllm'):\n"
+                "    sys.modules[m] = None\n"
+                "from rlinf.agents.rpent.train_runner import RPentRunner\n"
+                "assert RPentRunner.__name__ == 'RPentRunner'\n"
+            ),
+        ],
+        check=True,
+        timeout=60,
+    )
+
+    agent = object.__new__(RPentAgentLoopWorker)
+    agent.is_eval = False
+    agent.cfg = OmegaConf.create(
+        {
+            "rollout": {
+                "model": {
+                    "model_path": "/runs/step_150/actor/hf_checkpoint",
+                    "model_type": "qwen3_5",
+                }
+            },
+            "algorithm": {
+                "sampling_params": {
+                    "max_new_tokens": 512,
+                    "temperature": 1.0,
+                    "top_k": -1,
+                }
+            },
+            "agentloop": {
+                "max_turns": 25,
+                "model_request_timeout_s": 180,
+                "episode_timeout_s": 900,
+                "history_compaction": {"max_messages": 32},
+                "prompt": "simple",
+                "chat_template_kwargs": {"enable_thinking": True},
+            },
+        }
+    )
+    opts = agent._planner_options("http://session/1/s/v1")
+    assert opts["model_name"] == "policy"
+    assert opts["sampling_params"] == {"temperature": 1.0, "top_k": -1}
+
+    agent.is_eval = True
+    assert agent._planner_options("http://rollout/v1")["model_name"] == "qwen3_5"
+
+    aborted = []
+    agent.session_server_client = SimpleNamespace(
+        abort=AsyncMock(side_effect=lambda gid, reason: aborted.append((gid, reason)))
+    )
+
+    async def cancel_scenario():
+        async def sleeper():
+            await asyncio.sleep(60)
+
+        t = asyncio.create_task(sleeper())
+        agent._running_groups = {2: t}
+        await agent.cancel_groups([2, 3])
+        assert t.cancelled()
+        assert aborted == [(2, "cohort_full"), (3, "cohort_full")]
+
+    asyncio.run(cancel_scenario())
+
+    # Verify MultiAgentLoopWorker sibling cancellation on trajectory error.
+    multi = object.__new__(MultiAgentLoopWorker)
+    multi.session_server_client = agent.session_server_client
+    multi.cfg = OmegaConf.create({"session_server": {"verify_assembly": False}})
+    aborted.clear()
+    cancelled = []
+
+    async def query_fn(input_ids, answer, gid, traj_idx, task_name, group_size):
+        if traj_idx == 0:
+            raise RuntimeError("boom")
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.append(traj_idx)
+            raise
+
+    multi._run_session_query = query_fn
+    with pytest.raises(RuntimeError, match="boom"):
+        asyncio.run(multi._run_session_server_group([1], "a", 2, 7, "rpent"))
+    assert cancelled == [1]
+
+    # Verify RPentRunner routes run_inference -> run_training over self.inference_channel.
+    runner = object.__new__(RPentRunner)
+    runner.recompute_logprobs = True
+    runner.compute_ref_logprobs = False
+    runner.rollout_channel = "ROLLOUT_CH"
+    runner.inference_channel = "LOCAL_INFER_CH"
+    runner.global_steps = 4
+    calls = []
+    runner.actor = SimpleNamespace(
+        run_inference=lambda **kw: (
+            calls.append(("inf", kw)) or SimpleNamespace(consume_duration=lambda: 0.1)
+        ),
+        run_training=lambda **kw: (
+            calls.append(("train", kw)) or SimpleNamespace(consume_duration=lambda: 0.2)
+        ),
+    )
+    runner._wait_actor = lambda h, wh: [({"loss": 0.1}, [{"actor/loss": 0.1}])]
+    runner._run_actor_step([], [])
+    assert calls[0] == (
+        "inf",
+        {
+            "input_channel": "ROLLOUT_CH",
+            "output_channel": "LOCAL_INFER_CH",
+            "compute_ref_logprobs": False,
+        },
+    )
+    assert calls[1] == (
+        "train",
+        {"input_channel": "LOCAL_INFER_CH", "version": 4},
+    )
+
+
+def test_rpent_runner_prepare_update_cancels_remaining_and_writes_sampling(tmp_path):
+    from unittest.mock import Mock
+
+    from rlinf.agents.rpent.train_runner import RPentRunner
+
+    runner = object.__new__(RPentRunner)
+    runner.cfg = OmegaConf.create(
+        {
+            "runner": {
+                "synchronous": True,
+                "output_dir": str(tmp_path),
+                "experiment_name": "sync-exp",
+            }
+        }
+    )
+    runner.global_steps = 0
+    cohort = {"version": 0, "selected": [0, 1], "remaining": [2]}
+    runner._wait_actor = Mock(side_effect=[[cohort], [[]]])
+    runner.agent_loop = SimpleNamespace(
+        cancel_groups=Mock(return_value=SimpleNamespace(wait=Mock()))
+    )
+    runner.rollout_buffer = SimpleNamespace(
+        admit_cohort=Mock(return_value="admit-handle")
+    )
+    runner._prepare_update("release-handle", [])
+    runner.agent_loop.cancel_groups.assert_called_once_with([2])
+    runner.rollout_buffer.admit_cohort.assert_called_once_with(cohort)
+    written = json.loads(
+        (tmp_path / "sync-exp" / "sampling" / "step-0.json").read_text()
+    )
+    assert written["late_completions"] == []

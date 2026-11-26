@@ -21,9 +21,9 @@ Agent 与 LLM
      - GRPO、PPO（文本与视觉推理）
      - :doc:`Moonlight-16B <math_reasoning/moonlight>`、:doc:`Qwen2.5 GRPO <math_reasoning/reasoning>`、:doc:`Qwen2.5 PPO <math_reasoning/reasoning_ppo>`、:doc:`Qwen3-VL Geo3K <qwen3_vl_geo3k>`
    * - :doc:`Agent 训练 <agents/index>`
-     - Agent Lightning、GLM-4.7-Flash、Qwen2.5、Qwen3-4B
+     - Agent Lightning、GLM-4.7-Flash、Qwen2.5、Qwen3-4B、Qwen3.5-4B
      - 多轮工具调用、MARL、在线 RL
-     - :doc:`AgentLightning <agentlightning_calc_x>`、:doc:`Coding Online RL <coding_online_rl>`、:doc:`rStar2 <rstar2>`、:doc:`Search-R1 <searchr1/index>`、:doc:`WideSeek-R1 <wideseek_r1/index>`
+     - :doc:`AgentLightning <agentlightning_calc_x>`、:doc:`Coding Online RL <coding_online_rl>`、:doc:`RPent <rpent>`、:doc:`rStar2 <rstar2>`、:doc:`Search-R1 <searchr1/index>`、:doc:`WideSeek-R1 <wideseek_r1/index>`
    * - :doc:`图像与视频生成 <../video_models>`
      - SD3.5 Medium、Wan2.2 TI2V 5B（Diffusers）
      - DiffusionART、Diffusion-NFT、ReFL
@@ -76,6 +76,12 @@ Agent 训练
       :link-type: doc
 
       结合 RLinf 与 Continue IDE 插件的端到端代码补全在线强化学习流程。
+
+   .. grid-item-card:: RPent
+      :link: rpent
+      :link-type: doc
+
+      在 LIBERO 与 LIBERO-Pro 中用同步或异步 GRPO 训练 Qwen3.5-4B 视觉语言规划器。
 
    .. grid-item-card:: rStar2
       :link: rstar2

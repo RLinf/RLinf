@@ -45,6 +45,7 @@ class DynamicActorBatch(TypedDict, total=False):
     rewards: torch.Tensor
     is_end: torch.Tensor
     idx_to_traj: list[int]
+    multi_modal_inputs: list[dict | None]
 
 
 def pad_actor_batch_rows(
@@ -71,6 +72,8 @@ def pad_actor_batch_rows(
     for key, value in batch.items():
         if key == "idx_to_traj":
             value.extend([0] * missing)
+        elif key == "multi_modal_inputs":
+            value.extend([None] * missing)
         elif isinstance(value, list):
             for _ in range(missing):
                 row = value[0].new_zeros((1, *value[0].shape[1:]))

@@ -35,7 +35,7 @@ from rlinf.agents.tokenization.agentic_tokenizer import AgenticTokenizer
 class ChatCheckpoint(NamedTuple):
     """The state a turn started from, for a retried request to render from.
 
-    Restoring a rollback means restoring all four at once, and the rollback
+    A rollback restores these fields together, and the rollback
     that uses it consumes it: a conversation's checkpoint is None once one
     rollback has run.
     """
@@ -44,6 +44,7 @@ class ChatCheckpoint(NamedTuple):
     last_input: Optional[list[int]]
     last_output: Optional[list[int]]
     tools: Optional[list]
+    image_history: Optional[dict] = None
 
 
 @dataclass
@@ -236,10 +237,7 @@ class ChatCompletions:
             and _match_prefix(messages, stored) is not None
         ):
             suffix = messages[len(stored) :]
-            clear_thinking = self._tokenizer.chat_template_kwargs.get(
-                "clear_thinking", False
-            )
-            if not (clear_thinking and _has_user_message(suffix)):
+            if not self._tokenizer.clears_thinking_for(suffix):
                 return RenderedInput(
                     self._tokenizer.build_native_tool_response(
                         list(last_tokens), suffix
@@ -479,10 +477,6 @@ class ChatCompletions:
             "usage": response["usage"],
         }
         return b"data: " + json.dumps(chunk).encode() + b"\n\ndata: [DONE]\n\n"
-
-
-def _has_user_message(messages: list[dict]) -> bool:
-    return any(message.get("role") == "user" for message in messages)
 
 
 def _template_messages(messages: list[dict]) -> list[dict]:

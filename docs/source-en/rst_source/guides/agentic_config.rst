@@ -109,6 +109,7 @@ rollout
       decode_log_interval: 500000
       use_torch_compile: False
       torch_compile_max_bs: 128
+      capture_multi_modal_inputs: False
 
     vllm:
       attention_backend: FLASH_ATTN  # [FLASH_ATTN, XFORMERS]
@@ -172,6 +173,8 @@ rollout
      - Enable ``torch.compile`` inside SGLang.
    * - ``rollout.sglang.torch_compile_max_bs``
      - Max batch size eligible for ``torch.compile``.
+   * - ``rollout.sglang.capture_multi_modal_inputs``
+     - Capture SGLang image inputs and M-RoPE positions for Megatron-Bridge training.
 
 **vLLM backend (``rollout.vllm``):**
 
@@ -272,6 +275,9 @@ actor
     enable_dp_load_balance: False
     calculate_flops: False
     seed: 1234
+    multi_modal:
+      prefetch_batches: 0
+      prefetch_bytes: 0
 
     model:
       precision: fp16
@@ -303,6 +309,7 @@ actor
       gradient_accumulation_fusion: False
       moe_token_dispatcher_type: alltoall
       use_cpu_initialization: False
+      lm_head_chunk_size: 0
 
     optim:
       optimizer: adam
@@ -411,6 +418,10 @@ actor
      - Compute and log FLOPs for profiling.
    * - ``actor.seed``
      - Global seed for reproducibility.
+   * - ``actor.multi_modal.prefetch_batches``
+     - Number of multi-modal micro-batches to prefetch per rank (``0`` disables; also under ``critic``).
+   * - ``actor.multi_modal.prefetch_bytes``
+     - Per-rank CPU byte limit for active and prefetched multi-modal micro-batches (positive when prefetching; also under ``critic``).
 
 **Model sub-section**
 
@@ -466,6 +477,8 @@ actor
      - MoE token dispatcher (e.g., ``alltoall``).
    * - ``actor.model.use_cpu_initialization``
      - Initialize weights on CPU to reduce GPU spikes.
+   * - ``actor.model.lm_head_chunk_size``
+     - Compute LM-head logits in chunks of this many tokens to reduce peak GPU memory (e.g., ``256``; ``0`` disables; Megatron multi-turn agent tasks only).
 
 **Optimizer**
 

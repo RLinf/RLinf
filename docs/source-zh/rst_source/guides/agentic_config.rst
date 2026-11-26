@@ -103,6 +103,7 @@ rollout
       decode_log_interval: 500000
       use_torch_compile: False
       torch_compile_max_bs: 128
+      capture_multi_modal_inputs: False
 
     vllm:
       attention_backend: FLASH_ATTN  # [FLASH_ATTN, XFORMERS]
@@ -164,6 +165,8 @@ rollout
      - 在 SGLang 内启用 ``torch.compile``。
    * - ``rollout.sglang.torch_compile_max_bs``
      - 可使用 ``torch.compile`` 的最大批大小。
+   * - ``rollout.sglang.capture_multi_modal_inputs``
+     - 捕获 SGLang 图像输入与 M-RoPE 位置，供 Megatron-Bridge 训练对齐。
 
 **vLLM 后端（``rollout.vllm``）：**
 
@@ -263,6 +266,9 @@ actor
     enable_dp_load_balance: False
     calculate_flops: False
     seed: 1234
+    multi_modal:
+      prefetch_batches: 0
+      prefetch_bytes: 0
 
     model:
       precision: fp16
@@ -294,6 +300,7 @@ actor
       gradient_accumulation_fusion: False
       moe_token_dispatcher_type: alltoall
       use_cpu_initialization: False
+      lm_head_chunk_size: 0
 
     optim:
       optimizer: adam
@@ -402,6 +409,10 @@ actor
      - 计算并记录 FLOPs 以供性能分析。
    * - ``actor.seed``
      - 用于可复现性的全局随机种子。
+   * - ``actor.multi_modal.prefetch_batches``
+     - 每个 rank 预取的多模态微批数量（``0`` 表示关闭；``critic`` 同理）。
+   * - ``actor.multi_modal.prefetch_bytes``
+     - 每个 rank 上当前和预取多模态微批的 CPU 内存上限（单位：字节，开启预取时须大于 0；``critic`` 同理）。
 
 **模型子节**
 
@@ -457,6 +468,8 @@ actor
      - MoE token 分发器（例如 ``alltoall``）。
    * - ``actor.model.use_cpu_initialization``
      - 在 CPU 上初始化权重以降低显存峰值。
+   * - ``actor.model.lm_head_chunk_size``
+     - 按指定 token 数分块计算 LM head logits 以降低显存峰值（例如 ``256``，``0`` 表示关闭；仅限 Megatron 多轮 Agent 任务）。
 
 **优化器**
 

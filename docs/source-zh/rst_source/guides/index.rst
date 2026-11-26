@@ -23,7 +23,7 @@
      - 先做 Profiling 查瓶颈，再按需开 Pipeline、Env 解耦、观测压缩、异步 Agent RL、RTC、FUSCO
      - :doc:`性能诊断与提速 <performance/index>`
    * - 切换或部署独立推理引擎
-     - SGLang / vLLM 版本、SGLang 服务与路由、HTTP 推理客户端、Session Server、PhyAI、ApxInf
+     - SGLang / vLLM 版本、SGLang 服务与路由、HTTP 推理客户端、Session Server、Qwen3.5 多轮图像对齐、PhyAI、ApxInf
      - :doc:`Rollout 后端与服务 <rollout-engines/index>`
 
 .. grid:: 1 2 2 2

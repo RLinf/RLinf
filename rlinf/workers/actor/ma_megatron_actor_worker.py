@@ -30,7 +30,7 @@ from rlinf.algorithms.registry import (
     get_loss_scales,
     policy_loss,
 )
-from rlinf.algorithms.utils import kl_penalty
+from rlinf.algorithms.utils import apply_importance_sampling_correction, kl_penalty
 from rlinf.data.schema.actor_batch import (
     DynamicActorBatch,
 )
@@ -68,6 +68,7 @@ from rlinf.utils.utils import (
     configure_batch_sizes,
     cpu_dict,
     cpu_weight_swap,
+    masked_mean,
 )
 from rlinf.workers.actor.megatron_actor_worker import (
     MegatronActor,
@@ -83,10 +84,16 @@ from rlinf.workers.rollout.session_server.payload import payload_channel_for
 class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
     """The class for running the actor training using Megatron."""
 
+    lm_head_chunk_size: int | None = None
+    trains_mtp: bool = False
+
     def __init__(
         self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role="actor"
     ):
         super().__init__(cfg, placement)
+        self.lm_head_chunk_size = (
+            cfg.actor.model.get("lm_head_chunk_size", 0) if role == "actor" else 0
+        )
         self._init_auto_scheduler(role)
         # Set by run_training for the duration of a training call and read
         # by _assemble_delivery.
@@ -172,6 +179,109 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             self.torch_platform.current_device(),
         )
 
+    def model_provider_func(self, pre_process, post_process, config=None, **kwargs):
+        model = super().model_provider_func(pre_process, post_process, config, **kwargs)
+        if self.lm_head_chunk_size and post_process:
+            from rlinf.hybrid_engines.megatron.output_projection import (
+                install_chunked_projection,
+            )
+
+            install_chunked_projection(model)
+        return model
+
+    def _provide_bridge_model(self, ddp_config):
+        if self.lm_head_chunk_size:
+            from rlinf.hybrid_engines.megatron.output_projection import (
+                install_chunked_projection,
+            )
+
+            def prepare(models):
+                for model in models:
+                    install_chunked_projection(model, bridge=True)
+                return models
+
+            self.provider.register_pre_wrap_hook(prepare)
+        return super()._provide_bridge_model(ddp_config)
+
+    def _score_packed_tokens(
+        self,
+        model,
+        input_ids,
+        position_ids,
+        packed_params,
+        label,
+        label_mask,
+        attention_mask=None,
+        mtp_labels=None,
+        mtp_loss_mask=None,
+        **model_forward_kwargs,
+    ):
+        temperature = self.cfg.algorithm.sampling_params.temperature
+        if self.lm_head_chunk_size and mtp_labels is None:
+            module = unwrap_model(model)
+            if module.post_process:
+                from rlinf.hybrid_engines.megatron.output_projection import (
+                    chunked_scoring,
+                )
+
+                ddp_config = getattr(model, "ddp_config", None)
+                need_dummy_grad = (
+                    bool(ddp_config.overlap_grad_reduce)
+                    if ddp_config is not None
+                    else True
+                )
+                with chunked_scoring(
+                    module,
+                    labels=label,
+                    label_mask=label_mask,
+                    temperature=temperature,
+                    chunk_size=self.lm_head_chunk_size,
+                    calculate_entropy=self.calculate_entropy,
+                    need_dummy_grad=need_dummy_grad,
+                ) as captured:
+                    scores = model(
+                        input_ids=input_ids.contiguous(),
+                        attention_mask=attention_mask,
+                        position_ids=position_ids,
+                        packed_seq_params=packed_params,
+                        **model_forward_kwargs,
+                    )
+                output = {"log_probs": scores.squeeze(-1).contiguous()}
+                if self.calculate_entropy:
+                    output["entropy"] = captured["entropy"].detach().contiguous()
+                return output
+
+        def process_logits(logits, label, label_mask):
+            assert logits.shape[:2] == label.shape == label_mask.shape
+            if self.calculate_entropy:
+                entropy, log_probs = vocab_parallel_entropy_and_log_probs(
+                    logits, label, calculate_entropy_loss=self.calculate_entropy_loss
+                )
+                return {
+                    "log_probs": log_probs.masked_fill(~label_mask, 0.0),
+                    "entropy": entropy,
+                }
+            log_probs = vocab_parallel_log_probs_from_logits(logits, label)
+            return {"log_probs": log_probs.masked_fill(~label_mask, 0.0)}
+
+        return self.custom_forward(
+            model,
+            input_ids,
+            attention_mask,
+            position_ids,
+            sequence_parallel=self.transformer_config.sequence_parallel,
+            logits_processor=process_logits,
+            logits_processor_args={
+                "label": label,
+                "label_mask": label_mask,
+            },
+            temperature=temperature,
+            packed_seq_params=packed_params,
+            mtp_labels=mtp_labels,
+            mtp_loss_mask=mtp_loss_mask,
+            **model_forward_kwargs,
+        )
+
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
 
@@ -183,50 +293,51 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 for row in batch["input_ids"]
             ]
             lengths = [len(row) for row in rows]
-            input_ids, packed_params = preprocess_ragged_seqs(rows)
-            position_ids, _ = preprocess_ragged_seqs(
-                [torch.arange(n, device=input_ids.device) for n in lengths]
-            )
             labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
             label, _ = preprocess_ragged_seqs(labels)
             label_mask, _ = preprocess_ragged_seqs(
-                [torch.arange(n, device=input_ids.device) < n - 1 for n in lengths]
+                [torch.arange(n, device=rows[0].device) < n - 1 for n in lengths]
             )
-
-            def logits_processor(logits, label, label_mask):
-                assert logits.shape[:2] == label.shape[:2]
-                assert label.shape == label_mask.shape
-
-                if self.calculate_entropy:
-                    entropy, log_probs = vocab_parallel_entropy_and_log_probs(
-                        logits,
-                        label,
-                        calculate_entropy_loss=self.calculate_entropy_loss,
+            train_mtp = self.return_loss and self.trains_mtp
+            mtp_mask = None
+            if train_mtp:
+                response_rows = [
+                    mask.to(device=rows[0].device, dtype=torch.float32)
+                    for mask in batch["response_mask"]
+                ]
+                mtp_mask, _ = preprocess_ragged_seqs(
+                    [torch.cat((mask[1:], mask.new_zeros(1))) for mask in response_rows]
+                )
+            module = unwrap_model(model)
+            with self.ragged_model_inputs(batch, module, rows) as model_inputs:
+                packed_params = model_inputs["packed_seq_params"]
+                extra_inputs = {
+                    key: value
+                    for key, value in model_inputs.items()
+                    if key
+                    not in (
+                        "input_ids",
+                        "attention_mask",
+                        "position_ids",
+                        "packed_seq_params",
                     )
-                    log_probs = log_probs.masked_fill(~label_mask, 0.0)
-                    ret = {"log_probs": log_probs, "entropy": entropy}
-                else:
-                    log_probs = vocab_parallel_log_probs_from_logits(logits, label)
-                    log_probs = log_probs.masked_fill(~label_mask, 0.0)
-                    ret = {"log_probs": log_probs}
+                }
+                if model_inputs["attention_mask"] is not None:
+                    extra_inputs["attention_mask"] = model_inputs["attention_mask"]
+                if train_mtp:
+                    extra_inputs["mtp_labels"] = label
+                    extra_inputs["mtp_loss_mask"] = mtp_mask
+                output = self._score_packed_tokens(
+                    model,
+                    model_inputs["input_ids"],
+                    model_inputs["position_ids"],
+                    packed_params,
+                    label,
+                    label_mask,
+                    **extra_inputs,
+                )
 
-                return ret
-
-            logits_processor_args = {"label": label, "label_mask": label_mask}
-
-            output = self.custom_forward(
-                model,
-                input_ids,
-                None,
-                position_ids,
-                sequence_parallel=self.transformer_config.sequence_parallel,
-                logits_processor=logits_processor,
-                logits_processor_args=logits_processor_args,
-                temperature=self.cfg.algorithm.sampling_params.temperature,
-                packed_seq_params=packed_params,
-            )
-
-            if unwrap_model(model).post_process:
+            if module.post_process:
                 output_rows = {
                     key: postprocess_ragged_seqs(value, packed_params, lengths)
                     for key, value in output.items()
@@ -243,7 +354,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     )
                 width = self.cfg.actor.model.encoder_seq_length
                 output = DynamicRolloutResult.materialize_actor_batch(
-                    output_rows, width, 0, input_ids.device
+                    output_rows, width, 0, rows[0].device
                 )
                 batch = DynamicRolloutResult.materialize_actor_batch(
                     {
@@ -260,7 +371,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     },
                     width,
                     self.tokenizer.eos_token_id,
-                    input_ids.device,
+                    rows[0].device,
                 )
 
             if not self.return_loss:
@@ -283,18 +394,34 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 if "ref_logprobs" in batch:
                     ref_logprobs = batch["ref_logprobs"]
 
-                if self.cfg.algorithm.get("importance_sampling_fix", False):
-                    assert False, (
-                        "importance_sampling_fix is not supported for dynamic rollout batch"
-                    )
-                    rollout_logprobs = batch["rollout_logprobs"]
-                    recomputed_logprobs = batch.get("recomputed_logprobs")
-                    advantages = advantages * torch.clamp(
-                        (recomputed_logprobs - rollout_logprobs).exp(),
-                        max=self.cfg.algorithm.importance_sampling_clip,
-                    )
-
                 mask = batch["response_mask"]
+                correction_metrics = {}
+                if self.cfg.algorithm.get("importance_sampling_fix", False):
+                    if (
+                        "recomputed_logprobs" not in batch
+                        or "rollout_logprobs" not in batch
+                    ):
+                        raise ValueError(
+                            "importance_sampling_fix requires both recomputed_logprobs and rollout_logprobs"
+                        )
+                    clip = self.cfg.algorithm.importance_sampling_clip
+                    advantages, weights, log_ratio = (
+                        apply_importance_sampling_correction(
+                            advantages,
+                            old_logprobs.masked_fill(~mask, 0),
+                            batch["rollout_logprobs"].masked_fill(~mask, 0),
+                            clip,
+                        )
+                    )
+                    correction_metrics = {
+                        "actor/recomputed_logprob_abs_diff": masked_mean(
+                            log_ratio.abs(), mask
+                        ),
+                        "actor/importance_sampling_weight": masked_mean(weights, mask),
+                        "actor/importance_sampling_clip_fraction": masked_mean(
+                            (weights > clip).float(), mask
+                        ),
+                    }
 
                 loss, metrics_data = policy_loss(
                     task_type=self.cfg.runner.task_type,
@@ -360,6 +487,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 # add to log
                 metrics_data.update(
                     {
+                        **correction_metrics,
                         "actor/final_loss": loss.detach(),
                         "actor/entropy_loss": entropy_loss.detach(),
                         "actor/kl_loss": kl_loss.detach(),
@@ -590,8 +718,22 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             turn_rewards = [0.0] * num_trajectories
             turn_counts = [0] * num_trajectories
             token_weighted_version_start_sums = [0] * num_trajectories
+            versions = (rollout_result.extra_fields_turn or {}).get(
+                "rollout_weight_versions"
+            )
+            calls = (rollout_result.extra_fields_turn or {}).get("generate_calls")
+            sampled_sums = [0] * num_trajectories if versions is not None else None
             for turn_index, traj_index in enumerate(rollout_result.idx_to_traj):
                 turn_tokens = rollout_result.response_lengths[turn_index]
+                if rollout_result.response_mask is not None:
+                    turn_tokens = sum(rollout_result.response_mask[turn_index])
+                if sampled_sums is not None:
+                    sampled = versions[turn_index]
+                    if len(sampled) != turn_tokens:
+                        raise ValueError(
+                            "One sampled policy version is required per response token"
+                        )
+                    sampled_sums[traj_index] += sum(sampled)
                 version_start = rollout_result.version_start[turn_index]
                 version_end = rollout_result.version_end[turn_index]
                 earliest_versions[traj_index] = (
@@ -605,7 +747,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     else max(completion_versions[traj_index], version_end)
                 )
                 generated_tokens[traj_index] += turn_tokens
-                call_counts[traj_index] += 1
+                call_counts[traj_index] += calls[turn_index] if calls is not None else 1
                 cross_version_calls[traj_index] += int(version_start != version_end)
                 turn_rewards[traj_index] += rollout_result.rewards[turn_index]
                 turn_counts[traj_index] += 1
@@ -623,6 +765,9 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                         cross_version_calls=cross_version_calls[traj_index],
                         reward=turn_rewards[traj_index]
                         / max(turn_counts[traj_index], 1),
+                        sampled_token_version_sum=sampled_sums[traj_index]
+                        if sampled_sums is not None
+                        else None,
                         token_weighted_version_start_sum=(
                             token_weighted_version_start_sums[traj_index]
                         ),

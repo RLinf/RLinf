@@ -231,7 +231,7 @@ def test_get_agentic_tokenizer_unknown_type():
         get_agentic_tokenizer(_StubTokenizer(VOCAB), tokenizer_type="nope")
     msg = str(excinfo.value)
     assert "nope" in msg
-    for valid in ("default", "qwen", "glm47"):
+    for valid in ("default", "qwen", "qwen3_5", "glm47"):
         assert valid in msg
 
 
@@ -413,3 +413,165 @@ def test_truncated_turn_continues_to_the_whole_render(
         if incremental[: len(whole)] != whole
         else f"{tokenizer_type}: incremental build is longer than the whole render"
     )
+
+
+def test_qwen35_anchor_incremental_and_join():
+    """Qwen35AgenticTokenizer renders increments after an anchor exchange,
+    distinguishes framed user tool returns from unframed user queries via
+    template probing, and avoids duplicating the first end-of-turn token."""
+    from rlinf.agents.tokenization import get_agentic_tokenizer
+    from rlinf.workers.rollout.session_server.chat_completions import (
+        ChatCompletions,
+        ChatConversation,
+    )
+
+    class _ToyQwen35Tokenizer:
+        vocab = {
+            "<|im_end|>": 10,
+            "\n": 11,
+            "<|im_start|>tool": 12,
+            "obs": 13,
+            "<|im_start|>assistant\n": 14,
+        }
+
+        def convert_tokens_to_ids(self, token):
+            return self.vocab.get(token)
+
+        @staticmethod
+        def _flat_text(content):
+            if isinstance(content, str):
+                return content.strip()
+            parts = []
+            for item in content or ():
+                if isinstance(item, dict) and "text" in item:
+                    parts.append(item["text"])
+                elif isinstance(item, dict) and "image_url" in item:
+                    parts.append("<|vision_start|><|image_pad|><|vision_end|>")
+            return "".join(parts).strip()
+
+        def _keeps_prior_thinking(self, messages, kwargs):
+            return False
+
+        def apply_chat_template(
+            self, messages, tokenize=False, add_generation_prompt=False, **kwargs
+        ):
+            last_query_idx = len(messages) - 1
+            for idx in range(len(messages) - 1, -1, -1):
+                if messages[idx]["role"] != "user":
+                    continue
+                text = self._flat_text(messages[idx].get("content"))
+                if not (
+                    text.startswith("<tool_response>")
+                    and text.endswith("</tool_response>")
+                ):
+                    last_query_idx = idx
+                    break
+            keeps_prior = self._keeps_prior_thinking(messages, kwargs)
+            parts = []
+            for idx, msg in enumerate(messages):
+                role = msg["role"]
+                text = self._flat_text(msg.get("content"))
+                if role == "assistant":
+                    if keeps_prior or idx > last_query_idx:
+                        reasoning = msg.get("reasoning_content") or ""
+                        parts.append(
+                            f"<|im_start|>assistant\n<think>\n{reasoning}\n</think>\n\n{text}<|im_end|>\n"
+                        )
+                    else:
+                        parts.append(f"<|im_start|>assistant\n{text}<|im_end|>\n")
+                else:
+                    parts.append(f"<|im_start|>{role}\n{text}<|im_end|>\n")
+            if add_generation_prompt:
+                parts.append("<|im_start|>assistant\n<think>\n")
+            if tokenize:
+                return self("".join(parts))["input_ids"]
+            return "".join(parts)
+
+        def __call__(self, text, add_special_tokens=False):
+            tokens = []
+            rest = text
+            while rest:
+                matched = next((k for k in self.vocab if rest.startswith(k)), None)
+                if matched is not None:
+                    tokens.append(self.vocab[matched])
+                    rest = rest[len(matched) :]
+                else:
+                    tokens.append(100 + ord(rest[0]))
+                    rest = rest[1:]
+            return {"input_ids": tokens}
+
+    class _PreserveFlagTokenizer(_ToyQwen35Tokenizer):
+        def _keeps_prior_thinking(self, messages, kwargs):
+            return bool(kwargs.get("preserve_thinking", True))
+
+    tok = get_agentic_tokenizer(_ToyQwen35Tokenizer(), "qwen3_5")
+    assert tok.clears_thinking_on_user_turn is True
+    tool_msg = [{"role": "tool", "content": "obs"}]
+    assert tok.clears_thinking_for(tool_msg) is False
+
+    image_tool_user = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "<tool_response>\n"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                },
+                {"type": "text", "text": "\n</tool_response>"},
+            ],
+        }
+    ]
+    assert tok.clears_thinking_for(image_tool_user) is False
+    assert tok.render_incremental_text(image_tool_user).startswith(
+        "<|im_start|>user\n<tool_response>"
+    )
+    assert tok.clears_thinking_for([{"role": "user", "content": "follow-up"}]) is True
+
+    chat = ChatCompletions(tok, "qwen3_5")
+    stored = [
+        {"role": "user", "content": "start"},
+        {"role": "assistant", "reasoning_content": "plan", "content": "step1"},
+    ]
+    rendered = chat.render(
+        ChatConversation(messages=stored, tools=None, checkpoint=None),
+        [1, 2, 10],
+        [*stored, {"role": "user", "content": "follow-up"}],
+        tools=None,
+    )
+    assert rendered.messages[-1] == {"role": "user", "content": "follow-up"}
+    assert len(rendered.input_ids) > 0
+
+    assert (
+        get_agentic_tokenizer(
+            _PreserveFlagTokenizer(), "qwen3_5"
+        ).clears_thinking_on_user_turn
+        is False
+    )
+    assert (
+        get_agentic_tokenizer(
+            _PreserveFlagTokenizer(), "qwen3_5", {"preserve_thinking": False}
+        ).clears_thinking_on_user_turn
+        is True
+    )
+    inc = tok.render_incremental(tool_msg)
+    assert tok.build_native_tool_response([1, 2, 10], tool_msg) == [1, 2, 10, 11, *inc]
+    assert tok.build_native_tool_response([1, 2], tool_msg) == [1, 2, 10, 11, *inc]
+
+    class _RewritingTokenizer(_ToyQwen35Tokenizer):
+        def apply_chat_template(
+            self, messages, tokenize=False, add_generation_prompt=False, **kwargs
+        ):
+            rendered = super().apply_chat_template(
+                messages,
+                tokenize=tokenize,
+                add_generation_prompt=add_generation_prompt,
+                **kwargs,
+            )
+            if len(messages) > 2:
+                return "REWRITTEN\n" + rendered
+            return rendered
+
+    rewriting = get_agentic_tokenizer(_RewritingTokenizer(), "qwen3_5")
+    with pytest.raises(ValueError, match="rewrote the anchor"):
+        rewriting.render_incremental_text(tool_msg)

@@ -115,6 +115,17 @@ class AgenticTokenizer:
             )
         return think_start_id, think_end_id
 
+    @property
+    def clears_thinking_on_user_turn(self) -> bool:
+        """Whether appending a user turn drops reasoning from earlier assistant turns."""
+        return False
+
+    def clears_thinking_for(self, messages: list[dict]) -> bool:
+        """Whether appending ``messages`` drops reasoning from earlier assistant turns."""
+        return self.clears_thinking_on_user_turn and any(
+            message.get("role") == "user" for message in messages
+        )
+
     def apply_chat_template(self, messages: list[dict], **kwargs: Any):
         merged = {**self.chat_template_kwargs, **kwargs}
         return self.tokenizer.apply_chat_template(messages, **merged)
@@ -286,6 +297,10 @@ class GLMAgenticTokenizer(AgenticTokenizer):
         self.user_token_id = self.require_token_id("<|user|>")
         self.ambiguous_token_ids = {self.observation_token_id, self.user_token_id}
 
+    @property
+    def clears_thinking_on_user_turn(self) -> bool:
+        return bool(self.chat_template_kwargs.get("clear_thinking", False))
+
     def build_native_tool_response(
         self, prefix_ids: list[int], tool_messages: list[dict]
     ) -> list[int]:
@@ -297,17 +312,118 @@ class GLMAgenticTokenizer(AgenticTokenizer):
         return prefix + incremental
 
 
+class Qwen35AgenticTokenizer(AgenticTokenizer):
+    """Qwen3.5 subclass.
+
+    Its chat template rejects a conversation without a user message and drops
+    the reasoning of assistant turns before the latest user message, so the
+    base dummy context does not render. Increments are rendered after an anchor
+    user/assistant exchange and cut at the anchor's end of turn instead.
+    """
+
+    reasoning_parser = "qwen3"
+    tool_call_parser = "qwen3_coder"
+    _ANCHOR = "\x00rlinf-anchor\x00"
+    _ANCHOR_TURNS = (
+        {"role": "user", "content": "."},
+        {"role": "assistant", "reasoning_content": ".", "content": _ANCHOR},
+    )
+
+    def __init__(
+        self,
+        tokenizer,
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ):
+        merged = {"preserve_thinking": True, **(chat_template_kwargs or {})}
+        super().__init__(tokenizer, merged)
+        rendered = self.apply_chat_template(
+            list(self._ANCHOR_TURNS), tokenize=False, add_generation_prompt=False
+        )
+        # Text the template writes up through and after the anchor assistant content.
+        anchor_end = rendered.rindex(self._ANCHOR) + len(self._ANCHOR)
+        self._anchor_prefix = rendered[:anchor_end]
+        self._end_of_turn = rendered[anchor_end:]
+        self._end_of_turn_ids = self.tokenizer(
+            self._end_of_turn, add_special_tokens=False
+        )["input_ids"]
+        # Probe actual template behavior instead of trusting preserve_thinking,
+        # which Qwen3.5's official chat_template.jinja ignores.
+        probe = self.apply_chat_template(
+            [*self._ANCHOR_TURNS, {"role": "user", "content": "."}],
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+        self._clears_thinking_on_user_turn = not probe.startswith(
+            self._anchor_prefix + self._end_of_turn
+        )
+
+    @property
+    def clears_thinking_on_user_turn(self) -> bool:
+        return self._clears_thinking_on_user_turn
+
+    def clears_thinking_for(self, messages: list[dict]) -> bool:
+        if not super().clears_thinking_for(messages):
+            return False
+        rendered = self.apply_chat_template(
+            [*self._ANCHOR_TURNS, *messages],
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+        return not rendered.startswith(self._anchor_prefix + self._end_of_turn)
+
+    def render_incremental_text(self, tool_messages: list[dict]) -> str:
+        """Chat-template text the appended messages add after the anchor turn.
+
+        An image turn feeds this text, which still holds one vision marker per
+        image, to the model's processor to expand the markers into pad tokens,
+        so the token path stays incremental for images too.
+        """
+        text = self.apply_chat_template(
+            [*self._ANCHOR_TURNS, *tool_messages],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        prefix = self._anchor_prefix + self._end_of_turn
+        if not text.startswith(prefix):
+            raise ValueError("the chat template rewrote the anchor assistant turn")
+        return text[len(prefix) :]
+
+    def render_incremental(self, tool_messages: list[dict]) -> list[int]:
+        return self.tokenizer(
+            self.render_incremental_text(tool_messages), add_special_tokens=False
+        )["input_ids"]
+
+    def join_increment(
+        self, prefix_ids: list[int], increment_ids: list[int]
+    ) -> list[int]:
+        """Append an already-rendered increment to prefix_ids over the turn boundary.
+
+        A text increment comes from ``render_incremental``; an image increment
+        comes from the processor. Both fold the same end-of-turn tail, which a
+        response that stopped on EOS already holds its first token of.
+        """
+        overlap = int(bool(prefix_ids) and prefix_ids[-1] == self._end_of_turn_ids[0])
+        return [*prefix_ids, *self._end_of_turn_ids[overlap:], *increment_ids]
+
+    def build_native_tool_response(
+        self, prefix_ids: list[int], tool_messages: list[dict]
+    ) -> list[int]:
+        return self.join_increment(prefix_ids, self.render_incremental(tool_messages))
+
+
 class AgenticTokenizerType(str, Enum):
     """Registry keys for get_agentic_tokenizer."""
 
     DEFAULT = "default"
     QWEN = "qwen"
+    QWEN3_5 = "qwen3_5"
     GLM47 = "glm47"
 
 
 AGENTIC_TOKENIZER_REGISTRY: dict[AgenticTokenizerType, type[AgenticTokenizer]] = {
     AgenticTokenizerType.DEFAULT: AgenticTokenizer,
     AgenticTokenizerType.QWEN: QwenAgenticTokenizer,
+    AgenticTokenizerType.QWEN3_5: Qwen35AgenticTokenizer,
     AgenticTokenizerType.GLM47: GLMAgenticTokenizer,
 }
 
@@ -342,6 +458,7 @@ def agentic_tokenizer_tool_call_parser(tokenizer_type: str = "default") -> str |
 __all__ = [
     "AgenticTokenizer",
     "QwenAgenticTokenizer",
+    "Qwen35AgenticTokenizer",
     "GLMAgenticTokenizer",
     "AgenticTokenizerType",
     "get_agentic_tokenizer",

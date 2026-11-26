@@ -114,14 +114,16 @@ class MegatronActor(MegatronWorker):
         _rollout_attn_tp = self.component_placement.rollout_attn_tp_size
         _rollout_ep = self.component_placement.rollout_ep_size
         _rollout_moe_dense_tp = _sglang.get("moe_dense_tp_size", None)
-        # sglang's ParallelLMHead uses the full engine TP group, or the attn_tp
-        # group when enable_dp_lm_head is on. Either way the actor gathers to
-        # full and slices to rollout_lm_head_tp_size, so one path covers both.
+        # An independent SGLang head uses engine TP or attention TP.
+        # The model gather hook supplies the layout for a tied head.
         _enable_dp_lm_head = _sglang.get("enable_dp_lm_head", False)
         _rollout_lm_head_tp = _rollout_attn_tp if _enable_dp_lm_head else _rollout_tp
+        model_config = self.reshard_model_config
         rollout_reshard_config = ReshardConfig(
             model_type=self.cfg.rollout.model.model_type,
-            model_config=self.transformer_config,
+            model_config=model_config,
+            vision_config=getattr(model_config, "vision_config", None),
+            mm_enable_dp_encoder=_sglang.get("mm_enable_dp_encoder", False),
             reshard_tp_size=_rollout_attn_tp,
             reshard_pp_size=self.cfg.rollout.pipeline_parallel_size,
             mg_ep_size=self.role_cfg.model.expert_model_parallel_size,
@@ -186,6 +188,11 @@ class MegatronActor(MegatronWorker):
 
             logits_processor_args = {"label": label, "label_mask": label_mask}
 
+            train_mtp = self.return_loss and self.trains_mtp
+            mtp_mask = None
+            if train_mtp:
+                mtp_mask = torch.zeros_like(attention_mask)
+                mtp_mask[:, :-1] = batch["response_mask"][:, 1:]
             output = self.custom_forward(
                 model,
                 input_ids,
@@ -194,6 +201,8 @@ class MegatronActor(MegatronWorker):
                 sequence_parallel=self.transformer_config.sequence_parallel,
                 logits_processor=logits_processor,
                 logits_processor_args=logits_processor_args,
+                mtp_labels=label if train_mtp else None,
+                mtp_loss_mask=mtp_mask,
                 temperature=self.cfg.algorithm.sampling_params.temperature,
                 padding_seqlen=padding_seqlen,
             )
@@ -400,9 +409,9 @@ class MegatronActor(MegatronWorker):
         )
 
         # When the only target wants exactly this rank's TP shard, the gather
-        # can clone local shards instead of all_gathering. The decision must be
-        # unanimous, or ranks would disagree about whether a collective runs,
-        # so a single no vote collapses the TP group back to the full gather.
+        # can clone matching local shards; model hooks handle independent grids.
+        # The decision must be unanimous, or ranks disagree about collectives.
+        # A single no vote sends the TP group through the full gather.
         # dst_tp_rank is a scalar when collocated, a list when disaggregated,
         # and an empty list for an actor rank that has no target.
         if isinstance(self.dst_tp_rank, list):

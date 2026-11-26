@@ -1734,11 +1734,16 @@ def megatron_cpu(monkeypatch, tmp_path):
         worker.tokenizer = SimpleNamespace(eos_token_id=0)
         worker.transformer_config = SimpleNamespace(sequence_parallel=False)
         worker.return_loss = True
+        worker.trains_mtp = False
+        worker.torch_platform = SimpleNamespace(
+            current_device=lambda: torch.device("cpu")
+        )
         worker.loss_agg_func = masked_mean
         worker.calculate_entropy = False
         worker.kl_beta = 0
         worker.clip_ratio_c = None
         worker.clip_ratio_low = worker.clip_ratio_high = 0.2
+        worker.lm_head_chunk_size = 0
         worker.value_clip = 0.5
         worker.num_microbatches = 1
         return worker
@@ -2154,3 +2159,944 @@ def test_dynamic_rollout_metrics_allow_empty_dp_rank(tmp_path, empty_rank):
         nprocs=2,
         join=True,
     )
+
+
+class TestMegatronModelConfig:
+    @pytest.fixture(autouse=True)
+    def model_config_dependencies(self):
+        pytest.importorskip("megatron.training")
+        pytest.importorskip("transformers.models.qwen3_5.configuration_qwen3_5")
+
+    @pytest.mark.parametrize(
+        "load_mtp,sglang_options,accepted",
+        [
+            (None, {}, True),
+            (True, {}, True),
+            (False, {}, True),
+            (True, {"speculative_algorithm": None}, True),
+            (
+                False,
+                {
+                    "speculative_algorithm": "NEXTN",
+                    "speculative_draft_model_path": "/old/checkpoint",
+                },
+                False,
+            ),
+            (
+                True,
+                {
+                    "speculative_algorithm": "STANDALONE",
+                    "speculative_draft_model_path": "/old/checkpoint",
+                },
+                False,
+            ),
+            (False, {"speculative_algorithm": "NEXTN"}, False),
+            (
+                False,
+                {
+                    "speculative_algorithm": "EAGLE",
+                    "speculative_draft_model_path": "/unused/checkpoint",
+                },
+                False,
+            ),
+            (
+                False,
+                {
+                    "speculative_algorithm": "STANDALONE",
+                    "speculative_draft_model_path": "/external/draft",
+                },
+                False,
+            ),
+            (
+                True,
+                {
+                    "speculative_algorithm": "eagle",
+                    "speculative_num_steps": 3,
+                    "speculative_num_draft_tokens": 8,
+                    "speculative_eagle_topk": 2,
+                },
+                True,
+            ),
+            (True, {"speculative_draft_model_path": "/compatible/draft"}, False),
+            (
+                True,
+                {
+                    "mamba_scheduler_strategy": "extra_buffer",
+                    "disable_radix_cache": False,
+                },
+                True,
+            ),
+            (True, {"mamba_scheduler_strategy": "extra_buffer"}, True),
+            (True, {"disable_radix_cache": False}, True),
+            (False, {"disable_radix_cache": False}, True),
+            ("false", {}, False),
+        ],
+    )
+    def test_qwen35_mtp_loading_needs_only_one_switch(
+        self, load_mtp, sglang_options, accepted
+    ):
+        from omegaconf import OmegaConf
+
+        from rlinf.config import validate_megatron_cfg, validate_rollout_cfg
+
+        actor = OmegaConf.create(
+            {
+                "training_backend": "megatron",
+                "megatron": {"mbridge": True, "use_hf_ckpt": True},
+                "optim": {},
+                "lr_sched": {},
+                "model": {
+                    "model_type": "qwen3_5",
+                    "tensor_model_parallel_size": 2,
+                    "precision": "bf16",
+                    "activation": "swiglu",
+                    "normalization": "rmsnorm",
+                },
+            }
+        )
+        if load_mtp is not None:
+            actor.model.load_mtp = load_mtp
+        rollout = OmegaConf.create(
+            {
+                "model": {"model_type": "qwen3_5", "model_path": "/unused/checkpoint"},
+                "sglang": sglang_options,
+                "vllm": {},
+                "enforce_eager": False,
+                "tensor_parallel_size": 4,
+                "return_logprobs": True,
+            }
+        )
+        if accepted:
+            validate_megatron_cfg(actor)
+            original_actor = OmegaConf.to_container(actor, resolve=True)
+            result = validate_rollout_cfg(rollout, OmegaConf.create({}), actor)
+            assert OmegaConf.to_container(actor, resolve=True) == original_actor
+            assert result.sync_mtp is (load_mtp is True)
+            for name, value in sglang_options.items():
+                if value is not None:
+                    assert result.sglang[name] == value
+            assert actor.model.load_mtp is (load_mtp is True)
+            assert actor.model.mtp_loss_scaling_factor == 0.1
+            if load_mtp is True:
+                assert result.sglang.speculative_algorithm.upper() in ("NEXTN", "EAGLE")
+                assert result.sglang.speculative_draft_model_path == sglang_options.get(
+                    "speculative_draft_model_path", rollout.model.model_path
+                )
+                assert result.sglang.disable_radix_cache is sglang_options.get(
+                    "disable_radix_cache",
+                    sglang_options.get("mamba_scheduler_strategy", "no_buffer")
+                    == "no_buffer",
+                )
+            elif not sglang_options:
+                assert "speculative_algorithm" not in result.sglang
+                assert "disable_radix_cache" not in result.sglang
+            normalized = OmegaConf.to_container(result, resolve=True)
+            validate_rollout_cfg(result, OmegaConf.create({}), actor)
+            assert OmegaConf.to_container(result, resolve=True) == normalized
+        else:
+            with pytest.raises(AssertionError, match="load_mtp|external draft"):
+                validate_megatron_cfg(actor)
+                validate_rollout_cfg(rollout, OmegaConf.create({}), actor)
+
+    @pytest.mark.parametrize(
+        "model_type,mbridge",
+        [
+            ("qwen3_5", None),
+            ("qwen3_5", False),
+            ("qwen3_5", True),
+            ("qwen2.5", False),
+            ("glm4_moe_lite", True),
+            ("deepseek_v3", True),
+        ],
+    )
+    def test_megatron_bridge_requirement_at_config_boundary(self, model_type, mbridge):
+        pytest.importorskip("megatron.training")
+        from omegaconf import OmegaConf
+
+        from rlinf.config import validate_megatron_cfg
+
+        cfg = OmegaConf.create(
+            {
+                "model": {
+                    "model_type": model_type,
+                    "precision": "bf16",
+                    "activation": "swiglu",
+                    "normalization": "rmsnorm",
+                },
+                "megatron": {"use_hf_ckpt": True},
+                "optim": {},
+                "lr_sched": {},
+            }
+        )
+        if mbridge is not None:
+            cfg.megatron.mbridge = mbridge
+        if model_type == "qwen3_5" and not mbridge:
+            with pytest.raises(AssertionError, match="mbridge=True"):
+                validate_megatron_cfg(cfg)
+        else:
+            result = validate_megatron_cfg(cfg)
+            assert result.model.model_type == model_type
+            assert result.megatron.get("mbridge", False) is bool(mbridge)
+
+    def test_qwen35_rejects_text_only_architecture(self, tmp_path):
+        import transformers
+        from omegaconf import OmegaConf
+
+        Qwen3_5TextConfig = getattr(transformers, "Qwen3_5TextConfig", None)
+        if Qwen3_5TextConfig is None:
+            pytest.skip("transformers does not define Qwen3_5TextConfig")
+
+        from rlinf.config import validate_model_cfg_by_hf_config
+
+        Qwen3_5TextConfig(architectures=["Qwen3_5ForCausalLM"]).save_pretrained(
+            tmp_path
+        )
+        cfg = OmegaConf.create({"model": {"model_type": "qwen3_5"}})
+        with pytest.raises(ValueError, match="architectures=.*Qwen3_5ForCausalLM"):
+            validate_model_cfg_by_hf_config(cfg, str(tmp_path))
+
+    @pytest.mark.parametrize("model_type", [None, "qwen3_5", "qwen2.5"])
+    @pytest.mark.parametrize("checkpoint_type", ["qwen3_5", "qwen2.5"])
+    @pytest.mark.parametrize("preloaded", [False, True])
+    def test_megatron_model_identity_from_checkpoint(
+        self, tmp_path, model_type, checkpoint_type, preloaded
+    ):
+        from omegaconf import OmegaConf
+        from transformers import Qwen2Config, Qwen3_5Config
+
+        from rlinf.config import (
+            validate_megatron_cfg,
+            validate_model_cfg_by_hf_config,
+            validate_rollout_cfg,
+        )
+
+        hf = (
+            Qwen3_5Config(architectures=["Qwen3_5ForConditionalGeneration"])
+            if checkpoint_type == "qwen3_5"
+            else Qwen2Config(architectures=["Qwen2ForCausalLM"])
+        )
+        hf.save_pretrained(tmp_path)
+        config_path = "/not-read-when-preloaded" if preloaded else str(tmp_path)
+        options = {"hf_config": hf} if preloaded else {}
+        actor = OmegaConf.create({"training_backend": "megatron", "model": {}})
+        if model_type is not None:
+            actor.model.model_type = model_type
+        if model_type is not None and model_type != checkpoint_type:
+            with pytest.raises((ValueError, AssertionError), match="model_type"):
+                validate_model_cfg_by_hf_config(actor, config_path, **options)
+            return
+        validate_model_cfg_by_hf_config(actor, config_path, **options)
+        expected_type = "qwen3_5" if checkpoint_type == "qwen3_5" else model_type
+        assert actor.model.get("model_type") == expected_type
+        text = hf.text_config if checkpoint_type == "qwen3_5" else hf
+        assert actor.model.padded_vocab_size == text.vocab_size
+        rollout = OmegaConf.create(
+            {
+                "model": {"model_type": checkpoint_type, "model_path": str(tmp_path)},
+                "sglang": {},
+                "return_logprobs": True,
+            }
+        )
+        actor.megatron = {"mbridge": True, "use_hf_ckpt": True}
+        actor.optim = {}
+        actor.lr_sched = {}
+        actor.model.precision = "bf16"
+        actor.model.activation = "swiglu"
+        actor.model.normalization = "rmsnorm"
+        validate_megatron_cfg(actor)
+        original_actor = OmegaConf.to_container(actor, resolve=True)
+        validate_rollout_cfg(rollout, OmegaConf.create({}), actor)
+        assert OmegaConf.to_container(actor, resolve=True) == original_actor
+        if checkpoint_type == "qwen3_5":
+            assert actor.model.load_mtp is False
+
+    @pytest.mark.parametrize(
+        "actor_type,rollout_type",
+        [(None, "qwen3_5"), ("qwen2.5", "qwen3_5"), ("qwen3_5", "qwen2.5")],
+    )
+    def test_rollout_rejects_unresolved_or_conflicting_megatron_type(
+        self, actor_type, rollout_type
+    ):
+        from omegaconf import OmegaConf
+
+        from rlinf.config import validate_rollout_cfg
+
+        actor = OmegaConf.create(
+            {"training_backend": "megatron", "model": {"model_type": actor_type}}
+        )
+        rollout = OmegaConf.create(
+            {
+                "model": {"model_type": rollout_type, "model_path": "/unused"},
+                "sglang": {},
+                "return_logprobs": True,
+            }
+        )
+        with pytest.raises(AssertionError, match="model_type must match"):
+            validate_rollout_cfg(rollout, OmegaConf.create({}), actor)
+
+    @pytest.mark.parametrize(
+        "load_mtp,scale,valid",
+        [
+            (False, 0.0, True),
+            (True, 0.1, True),
+            (True, 2.0, True),
+            ("false", 0.1, False),
+            (1, 0.1, False),
+            (True, "0.1", False),
+            (True, -0.1, True),
+            (True, float("nan"), False),
+            (True, float("inf"), False),
+            (True, True, False),
+        ],
+    )
+    def test_standalone_megatron_validates_mtp_options(self, load_mtp, scale, valid):
+        pytest.importorskip("megatron.training")
+        from omegaconf import OmegaConf
+
+        from rlinf.config import validate_megatron_cfg
+
+        cfg = OmegaConf.create(
+            {
+                "model": {
+                    "model_type": "qwen3_5",
+                    "precision": "bf16",
+                    "activation": "swiglu",
+                    "normalization": "rmsnorm",
+                    "load_mtp": load_mtp,
+                    "mtp_loss_scaling_factor": scale,
+                },
+                "megatron": {"mbridge": True, "use_hf_ckpt": True},
+                "optim": {},
+                "lr_sched": {},
+            }
+        )
+        if valid:
+            validate_megatron_cfg(cfg)
+            assert cfg.model.load_mtp is load_mtp
+            assert cfg.model.mtp_loss_scaling_factor == scale
+        else:
+            with pytest.raises(
+                AssertionError, match="load_mtp|mtp_loss_scaling_factor"
+            ):
+                validate_megatron_cfg(cfg)
+
+    def test_build_transformer_config_converts_string_attention_backend(
+        self, monkeypatch
+    ):
+        from megatron.core.model_parallel_config import ModelParallelConfig
+        from megatron.core.transformer.enums import AttnBackend
+        from omegaconf import OmegaConf
+
+        import rlinf.config as cfg_mod
+
+        monkeypatch.setattr(
+            cfg_mod, "_build_model_parallel_config", lambda cfg: ModelParallelConfig()
+        )
+
+        def make_cfg(backend):
+            return OmegaConf.create(
+                {
+                    "num_layers": 2,
+                    "hidden_size": 16,
+                    "num_attention_heads": 2,
+                    "ffn_hidden_size": 32,
+                    "activation": "swiglu",
+                    "attention_backend": backend,
+                }
+            )
+
+        tf_cfg = cfg_mod.build_transformer_config(make_cfg("flash"))
+        assert tf_cfg.attention_backend is AttnBackend.flash
+        with pytest.raises(ValueError, match="Unknown Megatron attention backend"):
+            cfg_mod.build_transformer_config(make_cfg("not_a_backend"))
+
+
+@pytest.mark.parametrize("prefetch_batches", [0, 1, 2, 8])
+@pytest.mark.parametrize("ragged", [False, True])
+def test_image_prefetch_preserves_order_and_gradients(
+    prefetch_batches, ragged, monkeypatch
+):
+    import threading
+
+    from rlinf.utils.multimodal import MultimodalBatchPreparer
+
+    consumed = []
+    source_ids = []
+    prepared_events = [threading.Event() for _ in range(5)]
+    # Simulate distinct host copies without depending on a GPU for this test.
+    monkeypatch.setattr(torch.Tensor, "cpu", lambda tensor: tensor.clone())
+
+    def batches():
+        for index in range(5):
+            consumed.append(index)
+            ids = (
+                [torch.tensor([index + 1, 9])]
+                if ragged
+                else torch.tensor([[index + 1, 9]])
+            )
+            mask = [torch.ones(2)] if ragged else torch.ones(1, 2)
+            source_ids.append(ids)
+            yield {
+                "input_ids": ids,
+                "attention_mask": mask,
+                "multi_modal_inputs": [
+                    {
+                        "pixel_values": torch.full((2, 3), float(index)),
+                        "image_grid_thw": torch.tensor([[1, 1, 2]]),
+                    }
+                ],
+            }
+
+    # Each result is 48 bytes; the byte limit admits at most two batches
+    # (the active microbatch plus one lookahead microbatch).
+    preparer = MultimodalBatchPreparer(
+        prefetch_batches=prefetch_batches, prefetch_bytes=96
+    )
+    orig_prepare = preparer._prepare
+
+    def tracked_prepare(batch, size):
+        result = orig_prepare(batch, size)
+        prepared_events[int(result["pixel_values"][0, 0].item())].set()
+        return result
+
+    monkeypatch.setattr(preparer, "_prepare", tracked_prepare)
+    weight = torch.tensor(0.5, requires_grad=True)
+    with preparer.iterator_context(batches()) as iterator:
+        for index, batch in enumerate(iterator):
+            assert batch["input_ids"] is source_ids[index]
+            if prefetch_batches and index < 4:
+                # Verify real background overlap before the active microbatch finishes.
+                assert prepared_events[index + 1].wait(timeout=2.0)
+            inputs = preparer.for_forward(batch, "cpu")
+            assert torch.equal(inputs["pixel_values"], torch.full((2, 3), float(index)))
+            if prefetch_batches:
+                assert (
+                    len(consumed) <= index + 3
+                )  # Two admitted, one compact lookahead.
+            (inputs["pixel_values"] * weight).sum().backward()
+            assert "_prepared_multimodal_inputs" not in batch
+    assert weight.grad.item() == 6 * sum(range(5))
+
+
+def test_image_prefetch_capture_replay_and_pixel_refs(tmp_path):
+    from rlinf.utils.image_replay import REPLAY_FORMAT, store_pixels
+    from rlinf.utils.multimodal import MultimodalBatchPreparer
+
+    inline_pixels = torch.arange(8, dtype=torch.float32).reshape(4, 2)
+    stored_pixels = torch.arange(8, 16, dtype=torch.float32).reshape(4, 2)
+
+    inline_entry = {
+        "format": REPLAY_FORMAT,
+        "prompt_token_ids": [10, 11, 12],
+        "image_spans": [[1, 2]],
+        "pixel_values": inline_pixels,
+        "image_grid_thw": torch.tensor([[1, 2, 2]]),
+        "mrope_positions": torch.tensor([[0, 1, 2]] * 3),
+        "mrope_position_delta": torch.tensor([0]),
+    }
+    stored_entry = {
+        "format": REPLAY_FORMAT,
+        "prompt_token_ids": [20, 21, 22],
+        "image_spans": [[1, 2]],
+        "pixel_values": stored_pixels,
+        "image_grid_thw": torch.tensor([[1, 2, 2]]),
+        "mrope_positions": torch.tensor([[0, 1, 2]] * 3),
+        "mrope_position_delta": torch.tensor([0]),
+    }
+    store_pixels(stored_entry, tmp_path)
+    assert "pixel_refs" in stored_entry and "pixel_values_bytes" in stored_entry
+
+    microbatches = [
+        # Mixed ragged microbatch: text-only row + inline REPLAY_FORMAT row (no attention_mask).
+        {
+            "input_ids": [torch.tensor([1, 2]), torch.tensor([10, 11, 12, 13])],
+            "multi_modal_inputs": [None, inline_entry],
+        },
+        # Mixed ragged microbatch: file-backed pixel_refs row + text-only row.
+        {
+            "input_ids": [torch.tensor([20, 21, 22, 23]), torch.tensor([5, 6])],
+            "attention_mask": [torch.ones(4), torch.ones(2)],
+            "multi_modal_inputs": [stored_entry, None],
+        },
+        # Text-only ragged microbatch under capture_replay=True (no image_input_mask).
+        {
+            "input_ids": [torch.tensor([7, 8, 9])],
+            "attention_mask": [torch.ones(3)],
+            "multi_modal_inputs": [None],
+        },
+    ]
+
+    preparer = MultimodalBatchPreparer(
+        capture_replay=True, prefetch_batches=1, prefetch_bytes=4096
+    )
+    results = []
+    with preparer.iterator_context(iter(microbatches)) as iterator:
+        for batch in iterator:
+            assert "_prepared_multimodal_inputs" in batch
+            results.append(preparer.for_forward(batch, "cpu"))
+            assert "_prepared_multimodal_inputs" not in batch
+
+    assert torch.equal(results[0]["pixel_values"], inline_pixels.bfloat16())
+    assert results[0]["image_input_mask"].tolist() == [
+        [False, False, False, False],
+        [False, True, False, False],
+    ]
+    assert results[0]["multimodal_position_ids"][:, 0, :2].tolist() == [[0, 1]] * 3
+    assert results[0]["multimodal_position_ids"][:, 1].tolist() == [[0, 1, 2, 3]] * 3
+
+    assert torch.equal(results[1]["pixel_values"], stored_pixels.bfloat16())
+    assert results[1]["image_input_mask"].tolist() == [
+        [False, True, False, False],
+        [False, False, False, False],
+    ]
+    assert "pixel_values" not in results[2]
+    assert "image_input_mask" not in results[2]
+    assert results[2]["multimodal_position_ids"][:, 0].tolist() == [[0, 1, 2]] * 3
+
+    missing_bytes = dict(stored_entry)
+    missing_bytes.pop("pixel_values_bytes")
+    bad_batch = {
+        "input_ids": [torch.tensor([20, 21, 22, 23])],
+        "attention_mask": [torch.ones(4)],
+        "multi_modal_inputs": [missing_bytes],
+    }
+    with pytest.raises(ValueError, match="pixel_values_bytes"):
+        with preparer.iterator_context(iter([bad_batch])) as iterator:
+            next(iterator)
+
+
+@pytest.mark.parametrize("failure", ["prepare", "consumer", "budget"])
+def test_image_prefetch_propagates_failure_and_joins_threads(failure):
+    import threading
+
+    from rlinf.utils.multimodal import MultimodalBatchPreparer
+
+    batch = {
+        "input_ids": torch.tensor([[1, 2]]),
+        "attention_mask": torch.ones(1, 2),
+        "multi_modal_inputs": [],
+    }
+    if failure == "prepare":
+        batch["multi_modal_inputs"] = [
+            {
+                "format": "legacy",
+                "pixel_values": torch.ones(1),
+                "image_grid_thw": torch.ones(1, 3, dtype=torch.long),
+            }
+        ]
+    preparer = MultimodalBatchPreparer(
+        capture_replay=True,
+        prefetch_batches=2,
+        prefetch_bytes=1 if failure == "budget" else 4096,
+    )
+    error = {
+        "prepare": "requires a captured image row",
+        "budget": "exceeding",
+        "consumer": "model forward",
+    }[failure]
+    with pytest.raises(ValueError, match=error):
+        with preparer.iterator_context(iter([batch, batch])) as iterator:
+            next(iterator)
+            raise ValueError("model forward failed")
+    assert not any(
+        thread.name.startswith("rlinf-images") for thread in threading.enumerate()
+    )
+
+
+def test_release_capture_replays_positions_and_verifies_shared_pixels(tmp_path):
+    from pathlib import Path
+
+    from rlinf.utils.image_replay import REPLAY_FORMAT, store_pixels
+    from rlinf.utils.multimodal import materialize_multimodal_inputs
+
+    pixels = torch.arange(8, dtype=torch.float32).reshape(4, 2)
+    data = {
+        "format": REPLAY_FORMAT,
+        "prompt_token_ids": [10, 11, 12],
+        "image_spans": [[1, 2]],
+        "pixel_values": pixels,
+        "image_grid_thw": torch.tensor([[1, 2, 2]]),
+        "mrope_positions": torch.tensor([[0, 1, 2]] * 3),
+        "mrope_position_delta": torch.tensor([0]),
+    }
+    store_pixels(data, tmp_path)
+    ids = torch.tensor([[10, 11, 12, 13, 0]])
+
+    def replay(entry=data):
+        return materialize_multimodal_inputs(
+            [entry],
+            "cpu",
+            input_ids=ids,
+            attention_mask=ids.ne(0),
+            capture_replay=True,
+        )
+
+    result = replay()
+    assert torch.equal(result["pixel_values"], pixels.bfloat16())
+    assert result["image_input_mask"].tolist() == [[False, True, False, False, False]]
+    assert result["multimodal_position_ids"][:, 0].tolist() == [[0, 1, 2, 3, 0]] * 3
+    for bad_span in ([0, 2], [1, 3], [2, 2]):
+        with pytest.raises(ValueError, match="strictly inside captured prompt length"):
+            replay({**data, "image_spans": [bad_span]})
+    ids[0, 0] = 2
+    with pytest.raises(ValueError, match="prompt"):
+        replay()
+    ids[0, 0] = 10
+    Path(data["pixel_refs"][0]["path"]).write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="checksum"):
+        replay()
+
+
+@pytest.mark.parametrize(
+    "settings,capture_enabled,error",
+    [
+        ({}, False, None),
+        ({"prefetch_batches": 2, "prefetch_bytes": 4096}, True, None),
+        ({"prefetch_batches": -1}, False, "prefetch_batches"),
+        ({"prefetch_batches": True}, True, "prefetch_batches"),
+        ({"prefetch_bytes": 1.5}, True, "prefetch_bytes"),
+        ({"prefetch_batches": 1}, True, "positive prefetch_bytes"),
+        (
+            {"prefetch_batches": 1, "prefetch_bytes": 4096},
+            False,
+            "capture_multi_modal_inputs",
+        ),
+    ],
+)
+def test_validate_multimodal_learner_cfg_budgets(settings, capture_enabled, error):
+    from rlinf.config import validate_multimodal_learner_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "actor": {
+                "training_backend": "megatron",
+                "megatron": {"mbridge": True},
+                "multi_modal": settings,
+            },
+            "rollout": {
+                "rollout_backend": "sglang",
+                "sglang": {"capture_multi_modal_inputs": capture_enabled},
+            },
+        }
+    )
+    if error:
+        with pytest.raises(ValueError, match=error):
+            validate_multimodal_learner_cfg(cfg)
+    else:
+        snapshot = OmegaConf.to_container(cfg)
+        validate_multimodal_learner_cfg(cfg)
+        assert OmegaConf.to_container(cfg) == snapshot
+
+
+@pytest.mark.parametrize(
+    "overrides,match",
+    [
+        ({"actor": {"training_backend": "fsdp"}}, "requires actor to use Megatron"),
+        (
+            {"actor": {"model": {"context_parallel_size": 2}}},
+            "requires actor to use Megatron",
+        ),
+        (
+            {"actor": {"model": {"pipeline_model_parallel_size": 2}}},
+            "requires actor to use Megatron",
+        ),
+        ({"actor": {"megatron": {"mbridge": False}}}, "megatron.mbridge=True"),
+        (
+            {"agentloop": {"is_dynamic_rollout_batch": False}},
+            "is_dynamic_rollout_batch=True",
+        ),
+        (
+            {"session_server": {"enable": True}},
+            "session_server.enable=True",
+        ),
+        (
+            {
+                "rollout": {"router": {"type": None}},
+                "session_server": {"enable": True, "verify_assembly": True},
+            },
+            "session_server.enable=True",
+        ),
+        (
+            {"rollout": {"sglang": {"capture_multi_modal_inputs": "false"}}},
+            "must be a boolean",
+        ),
+        (
+            {
+                "critic": {
+                    "use_critic_model": True,
+                    "training_backend": "fsdp",
+                },
+            },
+            "requires critic to use Megatron",
+        ),
+    ],
+)
+def test_image_replay_rejects_unsupported_learner(overrides, match):
+    from rlinf.config import validate_multimodal_learner_cfg
+
+    base = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "session_server": {"enable": False},
+            "rollout": {
+                "rollout_backend": "sglang",
+                "sglang": {"capture_multi_modal_inputs": True},
+            },
+            "actor": {
+                "training_backend": "megatron",
+                "model": {
+                    "pipeline_model_parallel_size": 1,
+                    "context_parallel_size": 1,
+                },
+                "megatron": {"mbridge": True},
+            },
+            "critic": {
+                "use_critic_model": False,
+                "training_backend": "fsdp",
+                "model": {"pipeline_model_parallel_size": 2},
+            },
+        }
+    )
+    cfg = OmegaConf.merge(base, overrides)
+    with pytest.raises(ValueError, match=match):
+        validate_multimodal_learner_cfg(cfg)
+
+
+def test_validate_multimodal_skips_disabled_critic_and_non_sglang():
+    from rlinf.config import (
+        rollout_captures_multi_modal_inputs,
+        validate_multimodal_learner_cfg,
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "rollout": {
+                "rollout_backend": "vllm",
+                "sglang": {"capture_multi_modal_inputs": True},
+            },
+            "actor": {"training_backend": "fsdp"},
+            "critic": {
+                "use_critic_model": False,
+                "training_backend": "fsdp",
+                "multi_modal": {"prefetch_batches": -1},
+            },
+        }
+    )
+    assert rollout_captures_multi_modal_inputs(cfg) is False
+    assert rollout_captures_multi_modal_inputs(OmegaConf.create({})) is False
+    validate_multimodal_learner_cfg(cfg)
+
+
+def test_http_client_generate_body_encodes_bytes_and_nested_lists():
+    import base64
+
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    raw_a, raw_b = b"\x89PNG-a", bytearray(b"\xff\xd8-b")
+    body = InferenceHTTPClient._generate_body(
+        prompt=None,
+        input_ids=[1, 2],
+        sampling_params={"temperature": 0},
+        return_logprob=True,
+        image_data=(raw_a, (raw_b, "already-encoded")),
+    )
+    assert body["image_data"] == [
+        base64.b64encode(raw_a).decode("ascii"),
+        [base64.b64encode(raw_b).decode("ascii"), "already-encoded"],
+    ]
+
+
+def test_validate_megatron_cfg_reports_critic_role_for_load_mtp():
+    from rlinf.config import validate_megatron_cfg
+
+    critic_cfg = OmegaConf.create(
+        {
+            "model": {"model_type": "qwen3_5", "load_mtp": "false"},
+            "megatron": {"mbridge": True, "use_hf_ckpt": True},
+        }
+    )
+    with pytest.raises(AssertionError, match="critic.model.load_mtp must be a boolean"):
+        validate_megatron_cfg(critic_cfg, role="critic")
+
+
+def test_validate_rollout_cfg_rejects_image_capture_with_serving_mode():
+    from rlinf.config import validate_rollout_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "rollout_backend": "sglang",
+            "return_logprobs": False,
+            "model": {"model_type": "qwen3_5", "model_path": "/tmp/model"},
+            "sglang": {
+                "serving_mode": "worker_http",
+                "capture_multi_modal_inputs": True,
+            },
+        }
+    )
+    algorithm_cfg = OmegaConf.create({"recompute_logprobs": False})
+    with pytest.raises(ValueError, match="default SGLang rollout worker"):
+        validate_rollout_cfg(cfg, algorithm_cfg)
+
+
+def test_multimodal_boundary_validation_and_left_aligned_positions():
+    from rlinf.config import validate_multimodal_learner_cfg
+    from rlinf.hybrid_engines.megatron.multimodal_inputs import (
+        _extend_expected_positions,
+    )
+    from rlinf.utils.multimodal import materialize_multimodal_inputs
+
+    with pytest.raises(ValueError, match="requires both input_ids and attention_mask"):
+        materialize_multimodal_inputs([], "cpu", capture_replay=True)
+
+    # Dedicated inference role with PP > 1 must be rejected when capture is enabled.
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "session_server": {"enable": False},
+            "rollout": {
+                "rollout_backend": "sglang",
+                "sglang": {"capture_multi_modal_inputs": True},
+            },
+            "actor": {
+                "training_backend": "megatron",
+                "model": {
+                    "pipeline_model_parallel_size": 1,
+                    "context_parallel_size": 1,
+                },
+                "megatron": {"mbridge": True},
+            },
+            "inference": {"model": {"pipeline_model_parallel_size": 2}},
+        }
+    )
+    with pytest.raises(ValueError, match="inference to use PP=1 and CP=1"):
+        validate_multimodal_learner_cfg(cfg)
+
+    # Trimmed, padded, and left-padded orig_mask positions stay aligned.
+    base_expected = torch.arange(5).repeat(3, 1, 1)
+    right_mask = torch.tensor([[True, True, True, False, False]])
+    trimmed = _extend_expected_positions(
+        base_expected, right_mask, torch.tensor([[True, True, True]])
+    )
+    assert trimmed.shape == (3, 1, 3)
+    assert torch.equal(trimmed, base_expected[:, :, :3])
+
+    padded = _extend_expected_positions(
+        base_expected, right_mask, torch.tensor([[True, True, True, True, True, True]])
+    )
+    assert padded.shape == (3, 1, 6)
+    assert padded[:, 0].tolist() == [[0, 1, 2, 3, 4, 5]] * 3
+
+    expected = torch.tensor([[[0, 0, 10, 11]]] * 3)
+    orig_mask = torch.tensor([[False, False, True, True]])
+    actual_mask = torch.tensor([[True, True, True, False]])
+    extended = _extend_expected_positions(expected, orig_mask, actual_mask)
+    assert extended[:, 0].tolist() == [[10, 11, 12, 0]] * 3
+
+
+def test_validate_multimodal_allows_routerless_unverified_session_server():
+    from rlinf.config import validate_multimodal_learner_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "session_server": {"enable": True, "verify_assembly": False},
+            "rollout": {
+                "rollout_backend": "sglang",
+                "router": {"type": None},
+                "sglang": {"capture_multi_modal_inputs": True},
+            },
+            "actor": {
+                "training_backend": "megatron",
+                "model": {
+                    "pipeline_model_parallel_size": 1,
+                    "context_parallel_size": 1,
+                },
+                "megatron": {"mbridge": True},
+            },
+        }
+    )
+    validate_multimodal_learner_cfg(cfg)
+
+
+def test_rpent_real_yaml_configs_pass_and_reject_invalid_settings(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    import rlinf.agents.rpent.config_validation as rpent_val
+    import rlinf.config as rlinf_cfg
+    from rlinf.utils.placement import PlacementMode
+
+    monkeypatch.setenv("RPENT_PYTHON", "/tmp/rpent/python")
+    monkeypatch.setenv("RPENT_MODEL", "/tmp/qwen35")
+    monkeypatch.setenv("LIBERO_CONFIG_PATH", "/tmp/libero_cfg")
+    monkeypatch.setenv("RPENT_TRAIN_DATA", "/tmp/train.jsonl")
+    monkeypatch.setenv("RPENT_EVAL_DATA", "/tmp/eval.jsonl")
+
+    fake_placement = SimpleNamespace(
+        is_disaggregated=True,
+        placement_mode=PlacementMode.DISAGGREGATED,
+        rollout_num_model_instances=1,
+        rollout_nnodes_per_model_instance=1,
+        actor_dp_size=2,
+    )
+    for mod in (rlinf_cfg, rpent_val):
+        monkeypatch.setattr(mod, "Cluster", lambda *args, **kwargs: object())
+        monkeypatch.setattr(
+            mod,
+            "ModelParallelComponentPlacement",
+            lambda *args, **kwargs: fake_placement,
+        )
+
+    config_dir = os.path.abspath("examples/agent/rpent/config")
+    with initialize_config_dir(version_base="1.1", config_dir=config_dir):
+        sync_cfg = compose(config_name="train_qwen3.5_4b_grpo")
+        async_cfg = compose(config_name="train_qwen3.5_4b_async")
+        eval_cfg = compose(config_name="eval_qwen3.5_4b")
+
+    rpent_val.validate_rpent_cfg(sync_cfg)
+    rlinf_cfg.validate_session_server_cfg(sync_cfg)
+    assert sync_cfg.rollout.router.type is None
+    assert sync_cfg.actor.multi_modal.prefetch_batches == 0
+    rpent_val.validate_rpent_cfg(async_cfg)
+    rlinf_cfg.validate_session_server_cfg(async_cfg)
+    assert eval_cfg.rollout.sglang.reasoning_parser == "qwen3"
+    rpent_val.validate_rpent_eval_cfg(eval_cfg)
+
+    bad_sync = OmegaConf.create(OmegaConf.to_container(sync_cfg, resolve=True))
+    bad_sync.data.sampling_batch_size = 2
+    with pytest.raises(
+        ValueError, match="sampling_batch_size >= data.rollout_batch_size"
+    ):
+        rpent_val.validate_rpent_cfg(bad_sync)
+
+    bad_model = OmegaConf.create(OmegaConf.to_container(sync_cfg, resolve=True))
+    bad_model.rollout.model.model_type = "qwen3"
+    with pytest.raises(ValueError, match="model_type='qwen3_5'"):
+        rpent_val.validate_rpent_cfg(bad_model)
+
+    bad_async = OmegaConf.create(OmegaConf.to_container(async_cfg, resolve=True))
+    bad_async.algorithm.recompute_logprobs = True
+    with pytest.raises(ValueError, match="recompute_logprobs=False"):
+        rpent_val.validate_rpent_cfg(bad_async)
+
+    bad_dp = OmegaConf.create(OmegaConf.to_container(sync_cfg, resolve=True))
+    bad_dp.data.rollout_batch_size = 3
+    with pytest.raises(ValueError, match="divisible by the actor data-parallel size"):
+        rpent_val.validate_rpent_cfg(bad_dp)
+
+    bad_tok = OmegaConf.create(OmegaConf.to_container(sync_cfg, resolve=True))
+    bad_tok.agentloop.agentic_tokenizer = "qwen"
+    with pytest.raises(ValueError, match="agentic_tokenizer='qwen3_5'"):
+        rpent_val.validate_rpent_cfg(bad_tok)
+
+    bad_eval = OmegaConf.create(OmegaConf.to_container(eval_cfg, resolve=True))
+    bad_eval.rollout.sglang.tool_call_parser = "qwen25"
+    with pytest.raises(ValueError, match="tool_call_parser='qwen3_coder'"):
+        rpent_val.validate_rpent_eval_cfg(bad_eval)
+
+    bad_eval_reasoning = OmegaConf.create(
+        OmegaConf.to_container(eval_cfg, resolve=True)
+    )
+    bad_eval_reasoning.rollout.sglang.reasoning_parser = None
+    with pytest.raises(ValueError, match="reasoning_parser='qwen3'"):
+        rpent_val.validate_rpent_eval_cfg(bad_eval_reasoning)

@@ -123,6 +123,20 @@ class TokenizerManager(_TokenizerManager):
         import json
         import time
 
+        # The HTTP result holds cumulative output IDs, while a scheduler packet
+        # carries only its new tokens. Preserve earlier versions across packets.
+        versions = (getattr(recv_obj, "customized_info", None) or {}).get(
+            "rollout_weight_versions"
+        )
+        if versions is not None:
+            for index, rid in enumerate(recv_obj.rids):
+                state = self.rid_to_state.get(rid)
+                if state is not None and versions[index] is not None:
+                    accumulated = getattr(state, "rlinf_token_versions", [])
+                    accumulated.extend(versions[index])
+                    state.rlinf_token_versions = accumulated
+                    versions[index] = list(accumulated)
+
         # for sglang 0.5.0 and later, we use the original _handle_batch_output
         if not self.patch_return_output_ids:
             return super()._handle_batch_output(recv_obj)

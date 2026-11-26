@@ -1,0 +1,15 @@
+defaults:
+  - train_qwen3.5_4b_grpo
+  - _self_
+
+runner:
+  synchronous: false
+  async_mode: true
+  experiment_name: rpent-async-grpo
+
+algorithm:
+  recompute_logprobs: false
+  importance_sampling_fix: false
+
+agentloop:
+  max_actor_accept_staleness: 2

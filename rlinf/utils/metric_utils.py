@@ -43,6 +43,7 @@ class VersionedTrajectoryRecord:
     cross_version_calls: int
     reward: float
     token_weighted_version_start_sum: int
+    sampled_token_version_sum: int | None = None
 
 
 def compute_staleness_metrics(
@@ -117,6 +118,11 @@ def compute_staleness_metrics(
             / total_generated_tokens
         )
         metrics["data_staleness/token_mean"] = version - token_weighted_version
+        if all(record.sampled_token_version_sum is not None for record in records):
+            sampled_sum = sum(record.sampled_token_version_sum for record in records)
+            metrics["data_staleness/sampled_token_mean"] = (
+                version - sampled_sum / total_generated_tokens
+            )
     metrics["version_span/mean"] = sum(version_spans) / num_groups
     metrics["version_span/max"] = max(version_spans)
     metrics["queue_steps/mean"] = sum(queue_steps) / num_groups
