@@ -23,45 +23,64 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Read the constraints before the shell exits; the installer's EXIT trap
-# removes its temporary constraint file.
-_ROCM10_UV_CONSTRAINTS = """
-source requirements/install.sh
-ROCM_VERSION=10.0
-configure_amd > /dev/null
-apply_torch_override > /dev/null
-cat $UV_CONSTRAINT
-"""
 
-
-def _rocm10_uv_constraints(checkout: Path, **env: str) -> list[str]:
-    """Run the ROCm 10 torch setup in a scratch checkout; return its uv constraints."""
-    (checkout / "requirements").mkdir(parents=True)
+def _run_amd_installer(checkout: Path, rocm: str, *target: str):
+    """Run the CLI and capture its resolver inputs when uv first sees them."""
+    (checkout / "requirements").mkdir()
     shutil.copy(_REPO_ROOT / "requirements" / "install.sh", checkout / "requirements")
-    shutil.copy(_REPO_ROOT / "pyproject.toml", checkout)
-    inherited = {
-        name: value for name, value in os.environ.items() if name != "UV_CONSTRAINT"
-    }
+    project = checkout / "pyproject.toml"
+    shutil.copy(_REPO_ROOT / "pyproject.toml", project)
+    caller_constraints = checkout / "caller-constraints.txt"
+    caller_constraints.write_text("numpy<2\n")
+
+    uv = checkout / "uv"
+    uv.write_text(
+        """#!/bin/sh
+set -eu
+cp pyproject.toml uv-project.toml
+for file in ${UV_CONSTRAINT:-}; do cat "$file"; done > uv-constraints.txt
+exit 42
+"""
+    )
+    uv.chmod(0o755)
     result = subprocess.run(
-        ["bash", "-c", _ROCM10_UV_CONSTRAINTS],
+        [
+            "bash",
+            "requirements/install.sh",
+            "--platform",
+            "amd",
+            "--rocm",
+            rocm,
+            "embodied",
+            *target,
+        ],
         cwd=checkout,
-        env={**inherited, **env},
+        env={
+            **os.environ,
+            "PATH": f"{checkout}{os.pathsep}{os.environ['PATH']}",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "UV_PYTHON_PREFERENCE": "only-system",
+            "UV_CONSTRAINT": str(caller_constraints),
+            "AMD_THEROCK_INDEX": "https://therock.example.test/simple",
+        },
         capture_output=True,
         text=True,
         timeout=60,
     )
-    assert result.returncode == 0, result.stderr
-    return result.stdout.split()
+    assert project.read_bytes() == (_REPO_ROOT / "pyproject.toml").read_bytes()
+    return result
 
 
 def test_rocm10_install_adds_torch_pins_to_the_callers_uv_constraints(tmp_path):
-    caller_constraints = tmp_path / "caller-constraints.txt"
-    caller_constraints.write_text("numpy<2\n")
-
-    constraints = _rocm10_uv_constraints(
-        tmp_path / "checkout", UV_CONSTRAINT=str(caller_constraints)
+    result = _run_amd_installer(
+        tmp_path, "10.0", "--model", "openpi", "--env", "libero"
     )
+    assert result.returncode == 42, result.stderr
 
+    project = (tmp_path / "uv-project.toml").read_text()
+    assert 'url = "https://therock.example.test/simple"' in project
+    assert 'rocm-sdk-core = { index = "pytorch-platform" }' in project
+    constraints = (tmp_path / "uv-constraints.txt").read_text().splitlines()
     assert "numpy<2" in constraints
     rocm10_pins = [pin for pin in constraints if pin.endswith("+rocm10.0.0")]
     assert sorted(pin.split("==")[0] for pin in rocm10_pins) == [
@@ -69,3 +88,22 @@ def test_rocm10_install_adds_torch_pins_to_the_callers_uv_constraints(tmp_path):
         "torchaudio",
         "torchvision",
     ]
+
+
+def test_supermimic_rocm72_uses_its_radeon_wheels(tmp_path):
+    result = _run_amd_installer(tmp_path, "7.2", "--env", "supermimic")
+    assert result.returncode == 42, result.stderr
+
+    project = (tmp_path / "uv-project.toml").read_text()
+    assert 'url = "https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/"' in project
+    assert 'format = "flat"' in project
+    assert '"torch==2.9.1"' in project
+    assert '"torchvision==0.24.0"' in project
+    assert (tmp_path / "uv-constraints.txt").read_text() == "numpy<2\n"
+
+
+def test_supermimic_rejects_therock_before_install(tmp_path):
+    result = _run_amd_installer(tmp_path, "10.0", "--env", "supermimic")
+    assert result.returncode == 1
+    assert "SuperMimic" in result.stderr and "--rocm 7.2" in result.stderr
+    assert not (tmp_path / "uv-project.toml").exists()

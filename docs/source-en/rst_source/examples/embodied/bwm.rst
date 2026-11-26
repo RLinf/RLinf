@@ -1,7 +1,11 @@
-RL with BWM World Model
-=======================
+BWM RL
+======
 
 This recipe trains a single-view pi0.5 policy with PPO on RoboTwin ``adjust_bottle`` inside the Boundless World Model (BWM), an action-conditioned video world model built on Wan2.2-TI2V-5B. Training never touches the simulator; checkpoints are scored in RoboTwin afterwards.
+
+.. note::
+
+   **Experimental status:** Training with the ported in-tree BWM backend has not yet reproduced the PPO gain measured on the earlier prototype. Track reproduction progress in `#1713 <https://github.com/RLinf/RLinf/issues/1713>`_.
 
 Overview
 --------
@@ -48,7 +52,7 @@ Tasks
    * - BWM
      - RoboTwin ``adjust_bottle``
      - ``bwm_robotwin_adjust_bottle_ppo_openpi_pi05``, ``lidavidsh/bwm-robotwin-adjust-bottle-failure-ft``
-     - BWM fine-tuned on success and failure rollouts, served in process by the ``bwm`` backend of ``WorldModelEnv``.
+     - BWM fine-tuned on success and failure rollouts, served in process by the ``bwm`` world-model backend.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -68,94 +72,117 @@ Observation and Action
    * - Prompt
      - The task instruction stored with each initial frame.
 
-Installation
-------------
+Setup and Run
+-------------
 
-1. Install the openpi model and the RoboTwin environment as in :doc:`RoboTwin <robotwin>`. The simulator is needed only for evaluation and for the URDF the action bridge reads.
+.. include:: _setup_common.rst
 
-2. BWM is not pip-installable from its repository; put the source on ``PYTHONPATH``:
+Install the openpi model and the RoboTwin environment as in :doc:`RoboTwin <robotwin>` first (the simulator is needed only for evaluation and for the URDF the action bridge reads).
 
-   .. code-block:: bash
+.. tab-set::
 
-      git clone https://github.com/boundless-large-model/boundless-world-model
-      git -C boundless-world-model checkout cc0bc74
-      export PYTHONPATH=$(pwd)/boundless-world-model:$PYTHONPATH
+   .. tab-item:: Training
 
-3. BWM needs ``diffsynth==2.0.11``, whose API differs from the DiffSynth fork the ``wan`` backend installs. Install it into a separate directory and put that directory first on ``PYTHONPATH`` only for BWM runs:
+      **1. Install**
 
-   .. code-block:: bash
+      BWM is not pip-installable from its repository; clone it onto ``PYTHONPATH`` and install ``diffsynth==2.0.11`` into a separate directory (its API differs from the DiffSynth fork used by the ``wan`` backend; ``torchaudio`` matching the installed ``torch`` build is also required):
 
-      pip install --no-deps --target /path/to/bwm_pydeps diffsynth==2.0.11 ftfy==6.3.1 wcwidth modelscope
-      export PYTHONPATH=/path/to/bwm_pydeps:$PYTHONPATH
+      .. code-block:: bash
 
-   ``torchaudio`` matching the installed ``torch`` build is also required.
+         git clone https://github.com/boundless-large-model/boundless-world-model
+         git -C boundless-world-model checkout cc0bc74
+         pip install --no-deps --target ./bwm_pydeps diffsynth==2.0.11 ftfy==6.3.1 wcwidth modelscope
+         export PYTHONPATH="$PWD/bwm_pydeps:$PWD/boundless-world-model:$PYTHONPATH"
 
-Assets
-------
+      **2. Download**
 
-.. list-table::
-   :header-rows: 1
+      Prepare the required assets (the rollouts BWM was fine-tuned on are in ``lidavidsh/robotwin-adjust-bottle-pi05-rollouts``):
 
-   * - Asset
-     - Source
-     - Config key
-   * - Wan2.2-TI2V-5B DiT and VAE
-     - ``Wan-AI/Wan2.2-TI2V-5B``
-     - ``env.train.model_path``, ``env.train.VAE_path``
-   * - Fine-tuned BWM weights
-     - ``lidavidsh/bwm-robotwin-adjust-bottle-failure-ft`` (``step-750.safetensors``)
-     - ``env.train.checkpoint_path``
-   * - BWM action statistics
-     - ``demo/stat.json`` in the BWM repository
-     - ``env.train.action_bridge.stat_path``
-   * - Aloha URDF / SRDF
-     - RoboTwin assets, ``embodiments/aloha-agilex``
-     - ``env.train.action_bridge.urdf_path``, ``srdf_path``
-   * - Reward classifier
-     - ``lidavidsh/robotwin-adjust-bottle-t5-success-classifier`` (``reward_model.pt``) and ``google-t5/t5-base``
-     - ``env.train.reward_model.from_pretrained``, ``t5_model_name``
-   * - pi0.5 SFT policy
-     - `WorldArena/WorldArena <https://huggingface.co/WorldArena/WorldArena>`__ (model repository, ``fulldata``, norm stats in ``assets/robotwin_clean``)
-     - ``actor.model.model_path``, ``actor.model.openpi_data.norm_stats_path``
-   * - Initial frames
-     - 48 RoboTwin reset observations, one ``episode_XXXXX.npy`` each: an object array of per-frame dicts (``np.save(..., allow_pickle=True)``) whose first frame holds ``image`` (480x640x3 ``uint8`` head-camera frame), ``instruction`` or ``task`` (the prompt), and ``delta_action`` (14 values; the loader requires the key, BWM ignores it). No export script is included yet.
-     - ``env.train.initial_image_path``
+      .. list-table::
+         :header-rows: 1
 
-The rollouts BWM was fine-tuned on are in ``lidavidsh/robotwin-adjust-bottle-pi05-rollouts``.
+         * - Asset
+           - Source
+           - Config key
+         * - Wan2.2-TI2V-5B DiT and VAE
+           - ``Wan-AI/Wan2.2-TI2V-5B``
+           - ``env.train.model_path``, ``env.train.VAE_path``
+         * - Fine-tuned BWM weights
+           - ``lidavidsh/bwm-robotwin-adjust-bottle-failure-ft`` (``step-750.safetensors``)
+           - ``env.train.checkpoint_path``
+         * - BWM action statistics
+           - ``demo/stat.json`` in the BWM repository
+           - ``env.train.action_bridge.stat_path``
+         * - Aloha URDF / SRDF
+           - RoboTwin assets, ``embodiments/aloha-agilex``
+           - ``env.train.action_bridge.urdf_path``, ``srdf_path``
+         * - Reward classifier
+           - ``lidavidsh/robotwin-adjust-bottle-t5-success-classifier`` (``reward_model.pt``) and ``google-t5/t5-base``
+           - ``env.train.reward_model.from_pretrained``, ``t5_model_name``
+         * - pi0.5 SFT policy
+           - `WorldArena/WorldArena <https://huggingface.co/WorldArena/WorldArena>`__ (model repository, ``fulldata``, norm stats in ``assets/robotwin_clean``)
+           - ``actor.model.model_path``, ``actor.model.openpi_data.norm_stats_path``
+         * - Initial frames
+           - 48 RoboTwin reset observations, one ``episode_XXXXX.npy`` each: an object array of per-frame dicts (``np.save(..., allow_pickle=True)``) whose first frame holds ``image`` (480x640x3 ``uint8`` head-camera frame), ``instruction`` or ``task`` (the prompt), and ``delta_action`` (14 values; the loader requires the key, BWM ignores it). No export script is included yet.
+           - ``env.train.initial_image_path``
 
-Run It
-------
+      **3. Launch**
 
-Set the paths above in ``examples/embodiment/config/env/bwm_robotwin_adjust_bottle.yaml`` and ``bwm_robotwin_adjust_bottle_ppo_openpi_pi05.yaml``, then:
+      Set the paths above in ``examples/embodiment/config/env/bwm_robotwin_adjust_bottle.yaml`` and ``examples/embodiment/config/bwm_robotwin_adjust_bottle_ppo_openpi_pi05.yaml``, then launch PPO:
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   export ROBOT_PLATFORM=ALOHA ROBOTWIN_PATH=/path/to/RoboTwin
-   bash examples/embodiment/run_embodiment.sh bwm_robotwin_adjust_bottle_ppo_openpi_pi05
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         bash examples/embodiment/run_embodiment.sh bwm_robotwin_adjust_bottle_ppo_openpi_pi05
 
-The recipe runs PPO with GAE (gamma 1.0), 48 envs x 2 rollout epochs per step, for 14 steps: 4 critic-only, then 10 joint updates. The critic reads the VLM features (``value_after_vlm``). It uses FSDP ``no_shard`` (required by openpi). On ROCm builds whose Triton lacks ``triton_key``, add ``actor.model.openpi.torch_compile=False``.
+      The recipe runs PPO with GAE (gamma 1.0), 48 envs x 2 rollout epochs per step, for 14 steps: 4 critic-only, then 10 joint updates. The critic reads the VLM features (``value_after_vlm``). It uses FSDP ``no_shard`` (required by openpi). On ROCm builds whose Triton lacks ``triton_key``, add ``actor.model.openpi.torch_compile=False``.
 
-Evaluate in RoboTwin
---------------------
+   .. tab-item:: RoboTwin Evaluation
 
-Score a checkpoint with the RoboTwin pi0.5 evaluation config, using this recipe's policy settings and single head view:
+      **1. Install**
 
-.. code-block:: bash
+      Uses the same openpi + RoboTwin environment from :doc:`RoboTwin <robotwin>`.
 
-   export ROBOT_PLATFORM=ALOHA ROBOTWIN_PATH=/path/to/RoboTwin
-   bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_pi05_eval \
-     rollout.model.model_path=/path/to/sft runner.ckpt_path=/path/to/full_weights.pt \
-     rollout.model.num_steps=4 rollout.model.openpi.task=rl rollout.model.openpi.noise_level=0.5 \
-     ++rollout.model.openpi.value_after_vlm=True \
-     ++rollout.model.openpi.value_head_hidden_sizes=[512,256,128] \
-     ++rollout.model.openpi_data.adapt_to_pi=false \
-     ++rollout.model.openpi_data.norm_stats_path=/path/to/sft/assets/robotwin_clean \
-     env.eval.assets_path=/path/to/RoboTwin \
-     env.eval.task_config.camera.head_camera_type=Large_D435 \
-     env.eval.task_config.camera.collect_wrist_camera=false
+      **2. Launch**
 
-Results
--------
+      Copy ``evaluations/robotwin/robotwin_adjust_bottle_openpi_pi05_eval.yaml`` with the BWM policy and single-view settings below, then run evaluation with the checkpoint and asset paths:
+
+      .. code-block:: bash
+
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_pi05_eval \
+           rollout.model.model_path=./WorldArena \
+           runner.ckpt_path=./logs/checkpoints/global_step_14/actor/model_state_dict/full_weights.pt \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
+
+      .. dropdown:: Policy & single-view evaluation settings (optional)
+
+         Add these overrides to your eval YAML (or pass them on the CLI) so evaluation matches the BWM training setup:
+
+         .. code-block:: yaml
+
+            rollout:
+              model:
+                num_steps: 4
+                openpi:
+                  task: rl
+                  noise_level: 0.5
+                  value_after_vlm: True
+                  value_head_hidden_sizes: [512, 256, 128]
+                openpi_data:
+                  adapt_to_pi: false
+                  norm_stats_path: ./WorldArena/assets/robotwin_clean
+            env:
+              eval:
+                task_config:
+                  camera:
+                    head_camera_type: Large_D435
+                    collect_wrist_camera: false
+
+Visualization and Results
+-------------------------
+
+Monitor training progress with ``tensorboard --logdir ./logs --port 6006``, enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
 With the original in-process integration this backend was ported from (older RLinf tree), on 8x MI300X, 14 PPO steps improved the SFT policy (0.773) in RoboTwin on 144 held-out initial states x 3 evaluation passes:
 

@@ -1,277 +1,303 @@
-使用 FSDP+HuggingFace 添加新模型
-========================================
+具身 RL 模型（FSDP）
+====================
 
-本文档重点介绍如何使用 HuggingFace Transformers 库与 PyTorch FSDP（Fully Sharded Data Parallel，全分片数据并行）  
-来训练和生成模型。它支持 HuggingFace 中实现的任意模型，只要兼容 PyTorch 即可。  
-作为示例，本节将提供一个逐步的操作流程，展示如何按照 OpenVLA 模式将一个新的 HuggingFace 模型集成到 RLinf 中。  
+将 PyTorch 或 Hugging Face Transformers 模型接入 RLinf 的 FSDP（Fully Sharded Data Parallel，全分片数据并行）后端，用于强化学习 rollout 与训练。完成后，你会得到一个 ``BasePolicy`` 子类、注册好的模型构建函数，以及 Hydra 与 FSDP 包装配置。
 
-前置条件
--------------
+接入过程分为三个检查点：先在本地实现 policy 接口并跑通 rollout 到训练的 CPU 闭环；接着注册构建函数，确认 ``get_model`` 能解析模型；最后补充 Hydra 模型与 FSDP 配置。
 
-* 熟悉 **HuggingFace Transformers 库**  
-* 理解 **RLinf** 框架架构  
-* 掌握 **PyTorch** 与分布式训练知识  
+接入速览
+--------
 
-逐步实现
----------------------------
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
 
-1. 模型注册
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   * - 项目
+     - 说明
+   * - 新增或修改的文件
+     - ``rlinf/models/embodiment/<name>/``\ （或外部包）与 ``examples/embodiment/config/<name>.yaml``
+   * - 扩展点
+     - ``register_model`` 与 ``RLINF_EXT_MODULE``\ （见 :ref:`out-of-tree-extensions`\ ）
+   * - 必选方法
+     - 继承 ``BasePolicy``，实现 ``default_forward`` 与 ``predict_action_batch``
+   * - 验证方式
+     - 在本地 CPU 上直接跑通前向闭环与 ``get_model`` 解析检查
 
-现在推荐通过注册模型 builder 的方式接入 RLinf。对于“其他仓库依赖 RLinf”这种场景，这也是最推荐的接入方式。
+1. 在本地实现 Policy 接口
+-------------------------
+
+在 ``rlinf/models/embodiment/<name>/``\ （或外部包）中新建模型类，继承 ``rlinf.models.embodiment.base_policy.BasePolicy`` 和 ``torch.nn.Module``\ （或对应的 Hugging Face 模型基类）。如果直接复用 ``BasePolicy.forward`` 分发逻辑，请把 ``BasePolicy`` 写在 ``nn.Module`` 前面，避免被 ``nn.Module`` 默认的 ``forward`` 占位实现覆盖。
+
+下面的最小高斯 policy 实现不依赖外部权重，可以直接在 CPU 上运行：
 
 .. code-block:: python
 
-  from rlinf.models import register_model
+   from typing import Any
 
-  def build_my_model(cfg, torch_dtype):
-      from your_package.your_model_action_model import (
-          YourModelForRLActionPrediction,
-      )
+   import torch
+   import torch.nn as nn
+   from torch.distributions import Normal
 
-      return YourModelForRLActionPrediction.from_pretrained(
-          cfg.model_path,
-          torch_dtype=torch_dtype,
-          hidden_size=cfg.hidden_size,
-          unnorm_key=cfg.unnorm_key,
-          action_dim=cfg.action_token_len,
-          attn_implementation=cfg.attn_implementation,
-          low_cpu_mem_usage=cfg.low_cpu_mem_usage,
-          trust_remote_code=cfg.trust_remote_code,
-      )
+   from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
-  register_model("your_model_type", build_my_model, category="embodied")
 
-这一次注册会同时完成两件事：
+   class TinyGaussianPolicy(BasePolicy, nn.Module):
+       def __init__(self, obs_dim: int, action_dim: int, hidden_dim: int = 64):
+           super().__init__()
+           self.backbone = nn.Sequential(
+               nn.Linear(obs_dim, hidden_dim),
+               nn.Tanh(),
+               nn.Linear(hidden_dim, hidden_dim),
+               nn.Tanh(),
+           )
+           self.actor_mean = nn.Linear(hidden_dim, action_dim)
+           self.actor_logstd = nn.Parameter(torch.zeros(1, action_dim))
+           self.value_head = nn.Linear(hidden_dim, 1)
 
-- 让 ``model_type`` 通过 RLinf 的配置校验
-- 让 ``rlinf.models.get_model(cfg)`` 能正确构建你的模型
+       def _distribution(self, states: torch.Tensor) -> tuple[Normal, torch.Tensor]:
+           feat = self.backbone(states)
+           mean = self.actor_mean(feat)
+           std = torch.exp(self.actor_logstd).expand_as(mean)
+           return Normal(mean, std), self.value_head(feat)
 
-作为依赖库使用时的分布式注册（``RLINF_EXT_MODULE``）
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+       def default_forward(
+           self,
+           forward_inputs: dict[str, Any],
+           compute_logprobs: bool = True,
+           compute_entropy: bool = True,
+           compute_values: bool = True,
+           **kwargs,
+       ) -> dict[str, torch.Tensor]:
+           dist, values = self._distribution(forward_inputs["states"])
+           outputs: dict[str, torch.Tensor] = {}
+           if compute_logprobs:
+               outputs["logprobs"] = dist.log_prob(forward_inputs["action"])
+           if compute_entropy:
+               outputs["entropy"] = dist.entropy()
+           if compute_values:
+               outputs["values"] = values
+           return outputs
 
-当 RLinf 以第三方依赖形式集成到你的工程里、并由 **Ray** 拉起分布式 Worker 时，
-仅在主进程（driver）里执行 ``register_model(...)`` 等注册代码，**不会** 自动同步到
-各个 Worker 进程：Worker 是独立的 Python 进程，不会重复执行你在入口脚本里的注册逻辑。
-因此，在 rollout、训练等实际跑在 Worker 上的路径里，模型可能仍未注册，导致构建或
-查找失败。
+       @torch.inference_mode()
+       def predict_action_batch(
+           self,
+           env_obs: dict[str, Any],
+           mode: str = "train",
+           calculate_values: bool = True,
+           **kwargs,
+       ) -> tuple[torch.Tensor, dict[str, Any]]:
+           states = env_obs["states"]
+           dist, values = self._distribution(states)
+           action = dist.sample() if mode == "train" else dist.mean
+           prev_logprobs = dist.log_prob(action)
+           prev_values = values if calculate_values else torch.zeros_like(values)
+           result = {
+               "prev_logprobs": prev_logprobs,
+               "prev_values": prev_values,
+               "forward_inputs": {"states": states, "action": action},
+           }
+           return action, result
 
-为此，请通过环境变量 ``RLINF_EXT_MODULE`` 指定一个 **扩展模块** 的 import 路径。
-RLinf 在 **每个 Worker 初始化时** 会自动 ``import`` 该模块，并在存在时调用其
-``register()``，从而在 Worker 侧完成与主进程一致的模型（或其它扩展）注册，无需改
-RLinf 源码。
+三个公开方法在 rollout 与训练闭环中的调用顺序如下：
 
-扩展模块需实现 ``register()``，在其中调用 ``register_model`` 等逻辑。环境变量写法与
-说明见 ``rlinf/scheduler/cluster/cluster.py`` 中 ``ClusterEnvVar.EXT_MODULE`` 的文档字符串，
-例如：
+- ``predict_action_batch(env_obs, mode="train"|"eval", calculate_values=True, **kwargs)``：rollout 与评估阶段调用。输入环境观测 ``env_obs``\ （对于视觉语言动作模型，如 ``rlinf/models/embodiment/openpi/tasks/rl.py``，通常还会包含 ``main_images``、``wrist_images``、``extra_view_images`` 和 ``task_descriptions``\ ），返回 ``(actions, result)``。``actions`` 直接送入环境执行，``result`` 包含旧对数概率 ``prev_logprobs``、旧价值估计 ``prev_values``，以及供训练复用的 ``forward_inputs``。
+- ``forward(forward_type=ForwardType.DEFAULT, **kwargs)``：训练 worker 调用的统一入口。``BasePolicy.forward`` 将 ``ForwardType.DEFAULT`` 分发到 ``default_forward``，将 ``ForwardType.REFL`` 分发到 ``refl_forward``。如果 policy 还需要支持 ``ForwardType.SFT`` 或 ``ForwardType.SAC``，可重写 ``forward``。
+- ``default_forward(forward_inputs, **kwargs)``：PPO 或 GRPO 更新时在梯度模式下调用。它读取 ``forward_inputs`` 中缓存的张量（扩散或迭代采样模型常见 ``chains``、``denoise_inds``、``tokenized_prompt`` 与 ``model_action`` 等键），返回所选损失函数所需的 ``logprobs``、``values`` 和 ``entropy``。
+
+自定义模型可以自行约定 ``forward_inputs`` 中的键名，只要 ``predict_action_batch`` 缓存的内容足以让 ``default_forward`` 重建训练输入即可。模型专属的动作后处理放在 ``predict_action_batch`` 内完成，让 ``actions`` 直接满足环境格式，无需在 ``rlinf/envs/action_utils.py`` 的 ``prepare_actions`` 中增加新分支。
+
+注册模型前，先在本地 CPU 上验证输出 shape、rollout 与训练重算对数概率的一致性以及反向传播梯度：
+
+.. code-block:: python
+
+   torch.manual_seed(0)
+   policy = TinyGaussianPolicy(obs_dim=8, action_dim=4)
+   actions, result = policy.predict_action_batch({"states": torch.randn(2, 8)})
+   out = policy(forward_type=ForwardType.DEFAULT, forward_inputs=result["forward_inputs"])
+
+   assert actions.shape == (2, 4)
+   assert out["logprobs"].shape == (2, 4)
+   assert out["values"].shape == (2, 1)
+   assert out["entropy"].shape == (2, 4)
+   assert torch.allclose(out["logprobs"], result["prev_logprobs"], atol=1e-6)
+
+   loss = -(out["logprobs"].mean() + 0.01 * out["entropy"].mean()) + out["values"].pow(2).mean()
+   loss.backward()
+   assert policy.actor_mean.weight.grad is not None
+   print("Local check passed:", {k: tuple(v.shape) for k, v in out.items()})
+
+预期输出：
+
+.. code-block:: text
+
+   Local check passed: {'logprobs': (2, 4), 'entropy': (2, 4), 'values': (2, 1)}
+
+.. _out-of-tree-extensions:
+
+2. 注册模型构建函数
+-------------------
+
+使用 ``register_model`` 注册模型构建函数。构建函数接收 ``(cfg, torch_dtype)`` 并返回模型实例；加载 Hugging Face 权重时，在构建函数内调用 ``from_pretrained(cfg.model_path, torch_dtype=torch_dtype, ...)`` 并挂载所需的 ``processor``。
+
+调用 ``register_model`` 会同步将模型名加入 ``SupportedModel``\ （使 Hydra 校验通过），并在 ``get_model`` 中绑定构建函数；传入 ``force=True`` 可覆盖主仓内置实现并沿用原有 ``model_type``。按代码存放位置选择扩展方式：
+
+.. tab-set::
+
+   .. tab-item:: 主仓库内注册（In-Tree）
+      :sync: ext-in-tree
+
+      在 ``rlinf/models/__init__.py`` 中注册构建函数（所有 worker 导入时自动生效），并在本地 CPU 上配合 ``load_to_device: False`` 验证解析：
+
+      .. code-block:: python
+
+         from omegaconf import OmegaConf
+
+         from rlinf.config import SupportedModel
+         from rlinf.models import get_model, register_model
+
+
+         def build_my_model(cfg, torch_dtype):
+             return TinyGaussianPolicy(
+                 obs_dim=cfg.obs_dim,
+                 action_dim=cfg.action_dim,
+                 hidden_dim=cfg.get("hidden_dim", 64),
+             ).to(dtype=torch_dtype)
+
+
+         register_model("tiny_gaussian", build_my_model, category="embodied")
+
+         assert SupportedModel("tiny_gaussian").value == "tiny_gaussian"
+         cfg = OmegaConf.create(
+             {
+                 "model_type": "tiny_gaussian",
+                 "obs_dim": 8,
+                 "action_dim": 4,
+                 "hidden_dim": 64,
+                 "precision": "fp32",
+                 "is_lora": False,
+                 "load_to_device": False,
+             }
+         )
+         model = get_model(cfg)
+         assert isinstance(model, TinyGaussianPolicy)
+
+   .. tab-item:: 外部仓库注册（Out-of-Tree）
+      :sync: ext-out-of-tree
+
+      无需 fork 或修改 RLinf 源码。由于 Ray 会在独立 Python 进程中拉起各个 rollout 和 actor worker，仅在主进程入口脚本里调用 ``register_model`` 不会同步到 worker 进程。把注册逻辑放进外部包的 ``register()`` 函数，并在启动前导出 ``RLINF_EXT_MODULE``\ （环境变量定义见 ``rlinf/scheduler/cluster/cluster.py`` 中的 ``ClusterEnvVar.EXT_MODULE``\ ）：
+
+      .. code-block:: python
+
+         # my_pkg/rlinf_ext.py
+         from rlinf.models import register_model
+
+
+         def build_my_model(cfg, torch_dtype):
+             from my_pkg.policy import TinyGaussianPolicy
+
+             return TinyGaussianPolicy(
+                 obs_dim=cfg.obs_dim,
+                 action_dim=cfg.action_dim,
+                 hidden_dim=cfg.get("hidden_dim", 64),
+             ).to(dtype=torch_dtype)
+
+
+         def register():
+             register_model("tiny_gaussian", build_my_model, category="embodied")
+
+      .. code-block:: bash
+
+         export RLINF_EXT_MODULE=my_pkg.rlinf_ext
+
+      RLinf 会在每个 worker 进程初始化时自动导入该模块并调用 ``register()``，在读取配置和构建模型之前完成注册。
+
+      .. note::
+
+         独立运行的 checkpoint 转换工具（例如 ``python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf``\ ）在调用 ``get_model`` 前同样会加载 ``RLINF_EXT_MODULE``。如果 ``model_type`` 仅在外部包中注册，运行转换工具前也需要设置这个环境变量。
+
+3. 添加 Hydra 模型与 FSDP 配置
+------------------------------
+
+在 ``examples/embodiment/config/<name>.yaml``\ （或 ``examples/embodiment/config/model/`` 下的模型片段）中声明注册好的 ``model_type`` 与超参数：
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_type: "tiny_gaussian"
+       obs_dim: 8
+       action_dim: 4
+       hidden_dim: 64
+       precision: "bf16"
+       is_lora: False
+
+模型在 FSDP 下需要显式指定切分边界时，补充 ``fsdp_config.wrap_policy``。配置了自定义规则时 RLinf 会优先使用，否则回退到模型自身的 ``_no_split_modules``、``_no_split_names`` 以及 ``rlinf/hybrid_engines/fsdp/utils.py`` 中 ``get_fsdp_wrap_policy`` 的内置规则：
+
+.. code-block:: yaml
+
+   actor:
+     fsdp_config:
+       wrap_policy:
+         transformer_layer_cls_to_wrap:
+           - "MyDecoderLayer"
+         module_classes_to_wrap:
+           - "MyVisionTower"
+           - "MyProjector"
+         no_split_names:
+           - "value_head"
+
+- ``transformer_layer_cls_to_wrap``：按类名指定主干 transformer block（如 decoder layer、attention block）。
+- ``module_classes_to_wrap``：按类名指定主干之外需要单独包装的模块（如 vision encoder、projector、adapter）。
+- ``no_split_names``：按模块上的 ``_fsdp_wrap_name`` 属性做细粒度包装。
+
+.. _refl-model-interface:
+
+通过可微奖励训练
+----------------
+
+ReFL 接入分为两部分：模型生成可微样本，scorer 为每个样本打分。奖励梯度经过样本回传到模型的可训练参数。
+
+模型实现 ``refl_forward(forward_inputs, xt_source="rollout", **kwargs)``，返回包含 ``samples`` 的 dict，样本 tensor 的首维为 batch。模型负责状态采样、时间单位、加噪和解码，样本布局与 scorer 保持一致。``BasePolicy.forward`` 根据 ``ForwardType.REFL`` 调用这个方法。重写 ``forward`` 时保留这一分支。
+
+actor 从 ``algorithm.refl_xt_source`` 读取 ``xt_source``。返回值中的 ``forward_inputs`` 用作 scorer 上下文，默认沿用原始输入。``scorer(samples, forward_inputs)`` 返回 shape 为 ``[B]`` 的奖励，数值越大越好。冻结 scorer 的参数，并保留输入样本的梯度。
+
+SD3 的输入为 ``forward_inputs={"prompts": prompts}``，其中 ``prompts`` 是字符串列表。模型用当前权重采样，并将原始提示词传给 ImageReward scorer 分词。传入已有状态时，``refl_inputs`` 提供 ``x_t`` 和 ``timesteps``，``forward_inputs`` 提供 ``prompt_embeds`` 与 ``pooled_prompt_embeds``。SD3 的时间范围为 ``[0, 1]``，0 对应数据，1 对应噪声。
+
+使用 ``register_refl_scorer`` 注册 scorer 的 builder，再通过 ``actor.refl_reward_model.type`` 选择。builder 接收完整的 ``actor.refl_reward_model`` 配置和 actor device，返回 scorer。将下面的扩展模块保存为 ``my_refl_ext.py``，注册 ImageReward scorer：
+
+.. code-block:: python
+
+   # my_refl_ext.py
+   from rlinf.algorithms.refl_scorers import register_refl_scorer
+
+
+   def build_image_scorer(cfg, device):
+       from rlinf.envs.sim.diffusion.rewards.visual.image_reward import ImageRewardScorer
+
+       return ImageRewardScorer.from_config(cfg, device)
+
+
+   def register():
+       register_refl_scorer("custom_image_reward", build_image_scorer)
+
+按 :doc:`SD3 示例 </rst_source/examples/embodied/refl>` 准备模型、数据和启动参数数组。将 ``<ext_dir>`` 替换为 ``my_refl_ext.py`` 所在目录，再启动训练：
 
 .. code-block:: bash
 
-   export RLINF_EXT_MODULE=rlinf_ext
-   # 或使用完整包路径，例如：
-   export RLINF_EXT_MODULE=workflows.scripts.rlinf_ext
+   export PYTHONPATH="<ext_dir>:$PYTHONPATH"
+   export RLINF_EXT_MODULE=my_refl_ext
+   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
+     "${REFL_ARGS[@]}" \
+     actor.refl_reward_model.type=custom_image_reward
 
-独立运行的检查点转换等工具（例如
-``python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf``）在调用
-``get_model`` 之前也会加载 ``RLINF_EXT_MODULE``，与 Worker 侧行为一致；因此若
-``model_type`` 仅通过扩展模块注册，转换前同样需要设置该环境变量。
-
-2. 模型实现
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-在 `rlinf/models/embodiment/your_model_action_model.py` 中创建你的类，并继承自 HuggingFace 基类。  
-对于接入 RLinf 的自定义 VLA 模型，需要遵循 `rlinf.models.embodiment.base_policy.BasePolicy`
-的接口约定，至少提供 `forward` 和 `predict_action_batch` 接口；如果直接继承
-`BasePolicy`，通常需要实现 `default_forward` 和 `predict_action_batch`，其中 `forward`
-会由基类统一分发。`predict_action_batch` 用于封装生成、解码和可选的数值计算，将
-RL 逻辑保持在模型内部。  
-
-.. code-block:: python
-
-  from typing import Any
-
-  from rlinf.models.embodiment.base_policy import BasePolicy
-
-  class YourModelForRLActionPrediction(BasePolicy):
-      def default_forward(
-          self,
-          forward_inputs: dict[str, Any],
-          **kwargs,
-      ) -> dict[str, Any]:
-          return {
-              "logprobs": ...,  # [B, ...]
-              "values": ...,    # [B] or [B, 1]
-              "entropy": ...,   # [B] or [B, 1]
-          }
-
-      def predict_action_batch(
-          self,
-          env_obs: dict[str, Any],
-          mode: str = "train",
-          compute_values: bool = True,
-          **kwargs,
-      ) -> tuple[Any, dict[str, Any]]:
-          actions = ...  # [B, action_chunk, action_dim] or flattened env action
-          result = {
-              "prev_logprobs": ...,
-              "prev_values": ...,
-              "forward_inputs": {
-                  "chains": ...,
-                  "denoise_inds": ...,
-                  "action": ...,
-                  "model_action": ...,
-              },
-          }
-          return actions, result
-
-参考 `rlinf/models/embodiment/openpi/tasks/rl.py`，这三个接口的输入输出建议按下面理解：
-
-- ``forward(forward_type=..., **kwargs)``:
-  统一分发入口，根据 ``forward_type`` 路由到 ``default_forward``、``sft_forward``、
-  ``sac_forward`` 或其他训练分支。对于自定义 VLA 模型，推荐保留这一层分发，
-  让 rollout、actor、sft 等调用方都走统一入口。
-- ``default_forward(forward_inputs, **kwargs)``:
-  用于训练阶段根据 rollout 缓存的中间结果重新计算 logprob / value / entropy。
-  参考 OpenPI，``forward_inputs`` 通常至少包含：
-
-  - ``chains``: 扩散或迭代采样过程中的动作链，供训练时重算 logprob 使用。
-  - ``denoise_inds``: 每个样本对应的去噪 step 索引，决定取哪一步的训练信号。
-  - ``tokenized_prompt`` / ``tokenized_prompt_mask``: 文本 prompt 及其 mask。
-  - ``action``: 实际交给环境执行的动作，通常展平成 ``[B, ...]``。
-  - ``model_action``: 模型原始输出动作，通常在输出变换前保留。
-  - 观测字段: 如 ``observation/image``、``observation/state``、
-    ``observation/wrist_image`` 等，供模型重新构造 observation。
-
-  OpenPI 的 ``default_forward`` 返回一个 ``dict``，核心字段包括：
-
-  - ``logprobs``: 当前动作在训练分支下重算得到的对数概率。
-  - ``values``: value head 输出的状态值。
-  - ``entropy``: 策略熵或等价的不确定性统计，用于 PPO / RL loss。
-- ``predict_action_batch(env_obs, mode="train"|"eval", compute_values=True, **kwargs)``:
-  用于 rollout / 推理阶段，输入环境观测并输出可直接执行的动作。参考 OpenPI，
-  ``env_obs`` 通常包含：
-
-  - ``main_images``: 主视角图像。
-  - ``wrist_images``: wrist camera 图像，可选。
-  - ``extra_view_images``: 额外视角图像，可选。
-  - ``states``: 低维状态。
-  - ``task_descriptions``: 文本任务描述。
-
-  OpenPI 的返回值是 ``(actions, result)``：
-
-  - ``actions``: 直接发送给环境执行的动作张量。
-  - ``result["prev_logprobs"]``: rollout 时记录下来的旧策略 logprob。
-  - ``result["prev_values"]``: rollout 时记录下来的旧 value。
-  - ``result["forward_inputs"]``: 训练阶段会再次送入 ``default_forward`` 的缓存字段集合。
-
-实现自定义模型时，不要求字段名与 OpenPI 完全一致，但建议保证两点：一是
-``predict_action_batch`` 返回的 ``forward_inputs`` 足以让 ``default_forward``
-重建训练所需的全部信息；二是 ``default_forward`` 输出至少覆盖训练算法实际依赖的
-``logprobs``、``values``、``entropy`` 等字段。
-
-3. 配置文件
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-在 `examples/embodiment/config/your_config.yaml` 中创建配置文件，  
-包含 `model_type`、`action_token_len` 和 `precision` 等字段。  
-该模板会暴露你模型的超参数，方便实验设置。  
-
-.. code-block:: yaml
-
-  model:
-    model_type: "your_model_type"
-    action_token_len: 7
-    action_chunks_len: 1
-    unnorm_key: your_action_key
-    precision: "bf16"
-    vocab_size: 32000
-    hidden_size: 4096
-    image_size: [224, 224]
-    is_lora: False
-    low_cpu_mem_usage: True
-    trust_remote_code: True
-
-如果你的自定义模型在 FSDP 下需要显式指定 wrapping 规则，也可以在配置中补充
-``fsdp_config.wrap_policy``。当该字段中出现自定义规则时，RLinf 会优先使用这里的
-配置；否则仍按模型自身的 ``_no_split_modules`` / ``_no_split_names`` 以及内置逻辑
-处理。
-
-常用字段包括：
-
-- ``transformer_layer_cls_to_wrap``: 按类名指定需要按 transformer block 方式 wrapping
-  的模块，适合 decoder layer、attention block 等主体结构。
-- ``module_classes_to_wrap``: 按类名指定额外需要 wrapping 的模块，适合 vision encoder、
-  projector、adapter 等非标准 transformer block。
-- ``no_split_names``: 按模块上的 ``_fsdp_wrap_name`` 做更细粒度的 wrapping，适合类名
-  不方便区分、但模块角色固定的场景。
-
-.. code-block:: yaml
-
-  fsdp_config:
-    wrap_policy:
-      transformer_layer_cls_to_wrap:
-        - "MyDecoderLayer"
-      module_classes_to_wrap:
-        - "MyVisionTower"
-        - "MyProjector"
-      no_split_names:
-        - "value_head"
-
-如果你的自定义模块本质上就是主干 transformer block，通常只配置
-``transformer_layer_cls_to_wrap`` 就够了；``module_classes_to_wrap`` 更适合补充那些
-不属于主干 block、但仍希望单独参与 FSDP wrapping 的模块。
-
-4. 模型使用
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-完成 ``register_model("your_model_type", build_my_model, category="embodied")`` 后，
-即可在 YAML 配置中直接使用 ``model_type: your_model_type``。如果你的模型还依赖
-对应的 ``processor`` 类，建议在 ``build_my_model`` 中统一完成加载后再返回模型实例。
-
-.. code-block:: python
-
-  from omegaconf import OmegaConf
-  from rlinf.models import get_model
-
-  cfg = OmegaConf.create(
-      {
-          "model_type": "your_model_type",
-          "precision": "fp32",
-          "is_lora": False,
-      }
-  )
-  model = get_model(cfg)
-
-5. 注意事项
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-- RLinf 会在环境侧对不同模型输出的 action 做额外处理，例如
-  `rlinf/envs/action_utils.py` 中的 `prepare_actions(...)` 会根据 `env_type`
-  和 `model_type` 执行不同的后处理逻辑。如果你使用的是全新的自定义 `model_type`，
-  建议直接在 `predict_action_batch(...)` 中完成这部分额外的 action 后处理，
-  让返回给环境的 `actions` 已经是最终可执行格式，这样可以避免再为新模型类型补充
-  额外的环境侧分支逻辑。
-- 使用 `register_model(...)` 注册自定义模型时，可以通过 `force=True` 覆盖已有模型实现。
-  这种方式适合“替换 RLinf 内置模型实现但沿用原有 model type”的场景。这样你可以继续复用
-  RLinf 针对该内置 `model_type` 已有的 action 处理、训练分支和其他兼容逻辑，从而减少
-  额外适配代码；前提是你的模型接口需要与 RLinf 内置模型保持完全对齐。
-- 对于不同 VLA 模型，RLinf 在 FSDP 训练下使用了不同的 wrap policy，相关逻辑可参考
-  `rlinf/hybrid_engines/fsdp/utils.py` 中的 `get_fsdp_wrap_policy(...)`。如果你接入的是
-  自定义模型，建议在模型配置中显式补充对应的 wrap policy 配置，确保 transformer layer、
-  vision encoder、projector、value head 等关键模块按预期参与 FSDP wrapping；否则可能
-  出现训练性能下降、显存不合理或某些模块未被正确切分的问题。
-
+每个 worker 导入 ``RLINF_EXT_MODULE`` 并调用 ``register()``。更换打分器时，修改 builder 中的 scorer 构造逻辑。
 
 按 Wrapper 设置混合精度（FSDP1）
-----------------------------------
+--------------------------------
 
-``mixed_precision`` 是全局默认 MP 策略。在 ``wrappers`` 中选择模块，
-在 ``mixed_precision_policies`` 中定义 MP 策略，用 ``mixed_precision_rules``
-将两者的名称配对，覆盖对应 wrapper 的全局默认策略。下面的 Pi05 示例让
-精度敏感模块使用 FP32，其他部分使用 BF16：
+``mixed_precision`` 是全局默认 MP 策略。在 ``wrappers`` 中选择模块，在 ``mixed_precision_policies`` 中定义 MP 策略，用 ``mixed_precision_rules`` 将两者的名称配对，覆盖对应 wrapper 的全局默认策略。下面的 Pi05 示例让精度敏感模块使用 FP32，其他部分使用 BF16。
 
-OpenPI 设置 ``actor.model.precision: fp32``，让原始参数使用 FP32；
-设置 ``actor.model.openpi.embed_dtype: bf16``，让主干激活和残差使用 BF16。
+OpenPI 设置 ``actor.model.precision: fp32``，让原始参数使用 FP32；设置 ``actor.model.openpi.embed_dtype: bf16``，让主干激活和残差使用 BF16。
 
 .. code-block:: yaml
 
@@ -314,44 +340,26 @@ OpenPI 设置 ``actor.model.precision: fp32``，让原始参数使用 FP32；
      amp_autocast:
        enabled: false
 
-每个 wrapper 选择一种匹配方式：``module_names`` 支持完整模块路径和
-``img.encoder.layers.*.mlp`` 等 glob；``module_classes`` 支持短类名和完整限定名，
-与 ``wrap_policy.module_classes_to_wrap`` 共用解析规则；
-``wrap_names`` 匹配已有的 ``_fsdp_wrap_name`` 标签。Pi05 在模型初始化时
-为 projection 模块设置这些标签。
+每个 wrapper 选择一种匹配方式：``module_names`` 支持完整模块路径和 ``img.encoder.layers.*.mlp`` 等 glob；``module_classes`` 支持短类名和完整限定名，与 ``wrap_policy.module_classes_to_wrap`` 共用解析规则；``wrap_names`` 匹配已有的 ``_fsdp_wrap_name`` 标签。Pi05 在模型初始化时为 projection 模块设置这些标签。
 
 通过 ``wrap_mode`` 控制包装边界：
 
-- ``individual`` （默认）：每个命中模块分别包装，保留自动子包装。
-- ``subtree``：每个命中模块的完整子树分别包装，内部不再创建 wrapper。
-  本例为每层 MLP 创建一个 FP32 wrapper。
-- ``combined``：将所有命中模块合到现有共同父模块，内部不再创建 wrapper；
-  需要选中该父模块下的所有参数和 buffer。
+- ``individual``\ （默认）：每个命中模块分别包装，保留自动子包装。
+- ``subtree``：每个命中模块的完整子树分别包装，内部不再创建 wrapper。本例为每层 MLP 创建一个 FP32 wrapper。
+- ``combined``：将所有命中模块合到现有共同父模块，内部不再创建 wrapper；需要选中该父模块下的所有参数和 buffer。
 
-每个 wrapper 管理的参数必须具有一致的原始 dtype，混合 ``requires_grad``
-需要设置 ``use_orig_params: true``。subtree 和 combined 边界不能与其他
-显式选择的 wrapper 重叠。
+每个 wrapper 管理的参数必须具有一致的原始 dtype，混合 ``requires_grad`` 需要设置 ``use_orig_params: true``。subtree 和 combined 边界不能与其他显式选择的 wrapper 重叠。
 
-命名策略必须填写三个 dtype 字段。未绑定规则的 wrapper 使用全局策略，
-嵌套 wrapper 保留各自策略。全局和命名策略的 ``cast_forward_inputs`` 默认均为
-``true``。模块自行处理输入转换时，例如 OpenPI RMSNorm，将其设为 ``false``。输入需要保留 FP32 精度时，例如 Pi05 的 action 和
-timestep，将全局 ``cast_root_forward_inputs`` 设为 ``false``，避免输入到达
-该 wrapper 前已被舍入到 BF16。
+命名策略必须填写三个 dtype 字段。未绑定规则的 wrapper 使用全局策略，嵌套 wrapper 保留各自策略。全局和命名策略的 ``cast_forward_inputs`` 默认均为 ``true``。模块自行处理输入转换时（例如 OpenPI RMSNorm），将其设为 ``false``。输入需要保留 FP32 精度时（例如 Pi05 的 action 和 timestep），将全局 ``cast_root_forward_inputs`` 设为 ``false``，避免输入到达该 wrapper 前被舍入到 BF16。
 
-``buffer_dtype`` 控制浮点 buffer 的计算 dtype。FSDP 在完整和分片模型
-checkpoint 中按原始 dtype 保存 buffer；``LOCAL_STATE_DICT`` 不做该 dtype 恢复。
-``summon_full_params()`` 恢复参数精度，不恢复 buffer 精度。
+``buffer_dtype`` 控制浮点 buffer 的计算 dtype。FSDP 在完整和分片模型 checkpoint 中按原始 dtype 保存 buffer；``LOCAL_STATE_DICT`` 不做该 dtype 恢复。``summon_full_params()`` 恢复参数精度，不恢复 buffer 精度。
 
 保留低精度梯度
-~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~
 
-全局策略和命名策略中的 ``keep_low_precision_grads`` 默认均为 ``false``。
-FSDP 将梯度转回参数的原始 dtype，供优化器更新。设为 ``true`` 时，分片策略和
-FSDP CPU 参数 offload 使用计算 dtype 准备梯度（``param_dtype``，未设置时为原始 dtype）；
-不使用 CPU offload 的 ``no_shard`` 保留实际归约 dtype。保留较小的 dtype 可以减少梯度存储。
+全局策略和命名策略中的 ``keep_low_precision_grads`` 默认均为 ``false``。FSDP 将梯度转回参数的原始 dtype，供优化器更新。设为 ``true`` 时，分片策略和 FSDP CPU 参数 offload 使用计算 dtype 准备梯度（``param_dtype``，未设置时为原始 dtype）；不使用 CPU offload 的 ``no_shard`` 保留实际归约 dtype。保留较小的 dtype 可以减少梯度存储。
 
-使用 FSDP1 的 ``no_shard`` 和 ``FP32MasterAdamW``，可以用保留的不同 dtype
-梯度更新参数。为整个 actor 选择该优化器：
+使用 FSDP1 的 ``no_shard`` 和 ``FP32MasterAdamW``，可以用保留的不同 dtype 梯度更新参数。为整个 actor 选择该优化器：
 
 .. code-block:: yaml
 
@@ -369,7 +377,4 @@ FSDP CPU 参数 offload 使用计算 dtype 准备梯度（``param_dtype``，未�
          buffer_dtype: fp32
          keep_low_precision_grads: true
 
-在 ``mixed_precision_policies`` 中设置 ``keep_low_precision_grads``，可以为指定
-wrapper 保留梯度。优化器沿用参数分组和优化器配置，在更新时将梯度转为 FP32，
-并保持 FP32 优化器状态。原始 BF16/FP16 参数还会有一份 FP32 master weights。
-使用原生 AdamW 时，保持默认的 ``keep_low_precision_grads: false``。
+在 ``mixed_precision_policies`` 中设置 ``keep_low_precision_grads``，可以为指定 wrapper 保留梯度。优化器沿用参数分组和优化器配置，在更新时将梯度转为 FP32，并保持 FP32 优化器状态。原始 BF16/FP16 参数还会有一份 FP32 master weights。使用原生 AdamW 时，保持默认的 ``keep_low_precision_grads: false``。

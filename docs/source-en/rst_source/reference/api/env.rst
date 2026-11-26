@@ -1,24 +1,30 @@
-Environment Interface
-======================
+Env Interface
+=============
 
-This section provides the key APIs of the **environment** in the RLinf framework,  
-specifically designed for **embodied intelligence** scenarios.  
-As an example, we demonstrate the env setup using LIBERO as the background.  
-For any other simulator, the process is analogous.
-
+Use these environment APIs when launching simulator or real-world environment workers, resolving an environment class from ``env_type``, or implementing custom embodied tasks. To integrate a new simulator, see :doc:`../../extending/new_env`.
 
 EnvWorker
----------------
+---------
 
 .. autoclass:: rlinf.workers.env.env_worker.EnvWorker
-   :members: 
+   :show-inheritance:
+   :members:
    :member-order: bysource
 
-Environment
------------------------
+Environment Factory
+-------------------
 
-.. autoclass:: rlinf.envs.sim.libero.libero_env.LiberoEnv
-   :members: 
+.. autoclass:: rlinf.envs.SupportedEnvType
+   :members:
+   :undoc-members:
    :member-order: bysource
 
+.. autofunction:: rlinf.envs.get_env_cls
 
+RealWorldEnv
+------------
+
+.. autoclass:: rlinf.envs.real.env.RealWorldEnv
+   :show-inheritance:
+   :members:
+   :member-order: bysource

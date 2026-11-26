@@ -1,5 +1,5 @@
-机器人架构
-==========
+Robotics 内部架构
+=================
 
 本页说明机器人接口背后的实现机制：任务使用的零部件路径如何对应硬件 connection，多个零部件如何共用一条 connection，以及 placement 与生命周期如何保证每项物理资源只打开和释放一次。
 
@@ -206,7 +206,7 @@ driver 还提供 ``action_dim`` 和 ``state_dim``。独立连接的注册 driver
    finally:
        robot.disconnect()
 
-``build()`` 声明两个零部件，``connect()`` 打开各自的连接。命令向量采用 driver 的动作维度，返回的 ``positions`` 数组采用其状态维度。``disconnect()`` 释放两个零部件，命令失败时也会执行。要在 Franka 任务中使用这个变体，请在构造环境前导入它所在的模块，将硬件条目的 ``end_effector_type`` 设为 ``gentle_tool``，并在 ``end_effector_config.port`` 中填写串口路径。任务中的手部复位和目标数组需要匹配 driver 的维度。将零部件放到远程节点时，状态和命令接口保持一致。
+``build()`` 声明两个零部件，``connect()`` 打开各自的连接。命令向量采用 driver 的动作维度，返回的 ``positions`` 数组采用其状态维度。``disconnect()`` 释放两个零部件，命令失败时也会执行。要在 Franka 任务中使用这个变体，请在构造环境前导入它所在的模块，将硬件条目的 ``end_effector_type`` 设为 ``"gentle_tool"``，并在 ``end_effector_config.port`` 中填写串口路径。任务中的手部复位和目标数组需要匹配 driver 的维度。将零部件放到远程节点时，状态和命令接口保持一致。
 
 控制器检查工具从 ``EndEffector.backends()`` 获取可选名称。通过 ``--end-effector-config`` 传入 JSON object 格式的 driver 参数；省略的值采用 driver 自身的默认值。
 

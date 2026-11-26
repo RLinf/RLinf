@@ -1,7 +1,22 @@
-添加机器人
-==========
+真机硬件
+========
 
-本指南以新增移动底盘为例，最终得到一个已注册的底盘 backend、稳定的观测与动作 contract、可复用的机器人 builder、集群配置，以及无需真机即可运行的测试。完成这些内容后，底盘可以与 RLinf 已有的 Franka 机械臂组成移动操作机器人，并通过真机 Gymnasium 环境使用。
+本指南以新增移动底盘为例，最终得到一个已注册的底盘 backend、稳定的观测与动作 contract、可复用的机器人 builder、集群配置，以及无需真机即可运行的本地验证流程。完成这些内容后，底盘可以与 RLinf 已有的 Franka 机械臂组成移动操作机器人，并通过真机 Gymnasium 环境使用。
+
+.. list-table:: 速览
+   :header-rows: 1
+   :widths: 24 76
+
+   * - 项目
+     - 说明
+   * - 扩展点
+     - 硬件零部件驱动（``MobileBase`` / ``RobotPart``）与组合 ``Robot`` 类型
+   * - 注册接口
+     - ``@MobileBase.register(...)``、``Robot.register_type(RobotConfig)``
+   * - 配置入口
+     - ``cluster.node_groups[].hardware.type``
+   * - 涉及文件
+     - ``rlinf/robotics/parts/``、``rlinf/robotics/robots/``、``tests/robot_mocks/``
 
 整个接入过程分为四个检查点：先让单个本地零部件完成连接、读写和释放，再与现有零部件组合并接入任务；组合确认后，将同一声明迁移到配置、注册和 placement；最后依次运行 contract、远程 mock 和真机检查。按照这一顺序处理，故障会落在明确的层次，而不会同时混入 driver、组合和 scheduler 问题。
 
@@ -120,7 +135,7 @@
        **arm_parts,
    )
 
-这三个声明以同一种形式进入 ``MobileManipulator``。构造移动底盘得到尚未连接的 ``RobotPart``；``build_arms()`` 返回一个字典，标准 key 为 ``arm`` 和 ``end_effector``，每个 value 都是尚未连接的 ``RobotPart``。展开这个 mapping 后，两项会一并传给机器人。``Robot`` 的每个关键字参数都接受一个 ``RobotPart`` 或嵌套的 ``PartGroup``，参数名就是对应的公开路径，因此最终得到 ``base``、``arm`` 和 ``end_effector`` 三条路径。
+这三个声明以同一种形式进入移动操作机器人类。构造移动底盘得到尚未连接的 ``RobotPart``；``build_arms()`` 返回一个字典，标准 key 为 ``arm`` 和 ``end_effector``，每个 value 都是尚未连接的 ``RobotPart``。展开这个 mapping 后，两项会一并传给机器人。``Robot`` 的每个关键字参数都接受一个 ``RobotPart`` 或嵌套的 ``PartGroup``，参数名就是对应的公开路径，因此最终得到 ``base``、``arm`` 和 ``end_effector`` 三条路径。
 
 Franka builder 将末端执行器单独返回，是因为 Franka Hand 会打开自己的 connection。如果某种机械臂通过自身总线驱动夹爪，夹爪就会作为机械臂的 child，组合机械臂后形成 ``arm.end_effector``。零部件采用哪种结构取决于通信资源的归属，而不是机械安装位置。
 
@@ -317,7 +332,7 @@ placement 只决定各条连接在哪个节点打开，不改变任务访问零�
            )
            return cls(base=base, **arm_parts)
 
-配置字段与 builder 分别描述同一构造过程的输入和执行顺序。``base_backend`` 选择已注册的移动底盘 driver，``base_endpoint`` 与 ``arm_ip`` 标识两台设备，``controller_node_rank`` 可将机械臂部署到机器人资源所在节点之外；``worker_rank`` 和 ``env_idx`` 用于生成能够区分 env 实例的 worker 名称。
+配置字段与 builder 分别描述同一构造过程的输入和执行顺序。底盘 backend 字段选择已注册的移动底盘 driver，底盘 endpoint 与机械臂 IP 标识两台设备，``controller_node_rank`` 可将机械臂部署到机器人资源所在节点之外；``worker_rank`` 和 ``env_idx`` 用于生成能够区分 env 实例的 worker 名称。
 
 ``build()`` 按照这一顺序使用各项输入：先通过 ``MobileBase.backend()`` 解析底盘 class，并按指定 placement 声明底盘；再确定机械臂节点，通过 ``FrankaRobot.build_arms()`` 获取标准的机械臂与末端执行器声明；最后返回由三个零部件组成、但尚未连接的机器人。目标位置、奖励、复位姿态与 episode 长度仍属于任务配置，因为切换任务不应改变硬件抽象。
 
@@ -345,7 +360,7 @@ builder 已经能够根据明确参数构造机器人；注册则为这一组合
 7. 配置集群
 -----------
 
-注册完成后，``MobileManipulator`` 已可按名称解析；集群配置接着提供具体硬件实例及其 placement。物理硬件信息写入 ``cluster.node_groups.hardware``，每项配置由已注册的 config class 解析，并在硬件 discovery 过程中生成 ``RobotInfo``。连接地址和 ``node_rank`` 等部署参数应保留在 YAML 中，不应硬编码到 Python 代码中：
+注册完成后，该移动操作机器人类型已可按名称解析；集群配置接着提供具体硬件实例及其 placement。物理硬件信息写入 ``cluster.node_groups.hardware``，每项配置由已注册的 config class 解析，并在硬件 discovery 过程中生成 ``RobotInfo``。连接地址和 ``node_rank`` 等部署参数应保留在 YAML 中，不应硬编码到 Python 代码中：
 
 .. code-block:: yaml
 
@@ -366,7 +381,7 @@ builder 已经能够根据明确参数构造机器人；注册则为这一组合
        - label: arm_controller
          node_ranks: 1
 
-这些字段与前文的构造流程逐一对应：``type`` 选择已注册的机器人，每个 ``configs`` 项生成一条硬件记录；``node_rank`` 指定该记录由哪个节点持有，``base_backend`` 和两个地址标识具体设备，``controller_node_rank`` 则将复用的 Franka connection 部署到控制节点。env 配置另行选择 Gym ID，因此同一套硬件组合可以服务于导航、移动操作或数据采集任务。
+这些字段与前文的构造流程逐一对应：``type`` 选择已注册的机器人，每个 ``configs`` 项生成一条硬件记录；``node_rank`` 指定该记录由哪个节点持有，底盘 backend 和两个设备地址标识具体硬件，``controller_node_rank`` 则将复用的 Franka connection 部署到控制节点。env 配置另行选择 Gym ID，因此同一套硬件组合可以服务于导航、移动操作或数据采集任务。
 
 env 收到 ``RobotInfo`` 后，需要显式调用已注册的 builder。scheduler 提供的 env worker rank 等运行时信息也在这一边界加入：
 
@@ -391,17 +406,22 @@ env 收到 ``RobotInfo`` 后，需要显式调用已注册的 builder。schedule
 
 至此，代码已经跨过单个设备 contract、机器人组合和远程 placement 三个边界，测试也应按照这一顺序进行：先运行 contract 并直接断言公开路径，再使用真实 class 配合 fake SDK 检查本地与远程组合，最后才连接真机。
 
-contract 层需要先在 ``tests/robot_mocks/`` 中为示例 SDK 添加一个最小 fake，并将其加入 ``sdk_modules()``。这个 fake 只需实现上文实际调用的 ``get_pose()``、``set_velocity()``、``stop()`` 和 ``close()``。统一注册后，单元测试、检查脚本和远程 mock worker 会使用同一份 fake。
+contract 层需要先在 ``tests/robot_mocks/`` 中为示例 SDK 添加一个最小 fake，并将其加入 ``sdk_modules()``。这个 fake 只需实现上文实际调用的 ``get_pose()``、``set_velocity()``、``stop()`` 和 ``close()``。统一注册后，本地 contract 检查、检查脚本和远程 mock worker 会使用同一份 fake。
 
-随后在 ``tests/unit_tests/`` 中，按照被扩展的组件补充测试：新增的零部件或机器人写入 ``test_robotics.py``，驱动它的环境写入 ``test_real_env.py``。测试需要覆盖框架依赖的生命周期——连接、重复连接、断开，以及重复断开，并检查零部件声明的观测字段名称与 shape。还应构造一次中途失败的连接：此时不应交回任何机器人。
+运行完整组合检查前，先在本地 CPU 上验证连接、观测 shape、动作下发和幂等断开：
 
-测试还应覆盖组合路径、connection 生命周期、注册、硬件发现，以及现有 policy 依赖的数据结构：
+.. code-block:: python
 
-.. code-block:: bash
+   import numpy as np
 
-   pytest tests/unit_tests/test_robotics.py tests/unit_tests/test_real_env.py
-
-上述测试不依赖真实硬件。
+   base = ExampleMobileBase("tcp://mobile-base:7000")
+   base.connect()
+   obs = base.get_observation()
+   assert obs["pose"].shape == (3,)
+   applied = base.send_action({"velocity": np.array([0.1, 0.0], dtype=np.float32)})
+   assert applied["velocity"].shape == (2,)
+   base.disconnect()
+   base.disconnect()  # 确认重复断开幂等
 
 使用 mock SDK 验证
 ~~~~~~~~~~~~~~~~~~

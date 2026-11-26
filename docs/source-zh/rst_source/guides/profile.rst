@@ -1,27 +1,19 @@
-性能分析
-==============================
+Profiling 性能剖析
+==================
 
 RLinf 提供两种互补的性能理解工具，面向不同层次：
 
-- **GPU Profiling**\ （``cluster.profiling``）：对\ *单个*\ worker 进程的低层系统级
-  profiling。它用特定后端的 profiler（``nsys``/``rocprof-sys``）包装指定的 worker
-  group，采集 CUDA kernel、显存流量、NVTX range 和 CPU 活动。用于回答“某个
-  GPU/进程逐个 kernel 在做什么？”。
-- **Tracing**\ （``cluster.tracer``）：\ *跨所有 worker 和 runner*\ 的 RLinf 自身计时
-  区间的高层时间线——step、阶段，以及 ``generate``、``run_training``、``interact``
-  等 worker RPC。开销极低，用于回答“各 worker 的阶段如何重叠、关键路径在哪？”。
-  见下文 `Tracing`_。
+- **GPU Profiling**\ （``cluster.profiling``）：对\ *单个*\ worker 进程的低层系统级 profiling。它用特定后端的 profiler（``nsys``/``rocprof-sys``）包装指定的 worker group，采集 CUDA kernel、显存流量、NVTX range 和 CPU 活动。用于回答“某个 GPU/进程逐个 kernel 在做什么？”。
+- **Tracing**\ （``cluster.tracer``）：\ *跨所有 worker 和 runner*\ 的 RLinf 自身计时区间的高层时间线——step、阶段，以及生成、训练与环境交互等 worker RPC。开销极低，用于回答“各 worker 的阶段如何重叠、关键路径在哪？”。见下文 `Tracing`_。
 
 两者相互独立，可同时开启。本页其余部分介绍 GPU Profiling；Tracing 见文末。
 
-RLinf 支持使用特定 profiling 工具包装指定的 worker group。通过必填字段 ``backend``
-来选择后端：
+RLinf 支持使用特定 profiling 工具包装指定的 worker group。通过必填字段 ``backend`` 来选择后端：
 
 - ``nsight`` — NVIDIA Nsight Systems（``nsys profile``）
 - ``rocprof_sys`` — AMD ROCm Systems Profiler（``rocprof-sys-python``）
 
-所有后端共享相同的公共字段（``enabled``、``worker_groups``、``steps``、
-``output_dir``）。后端专属选项各自独立。
+所有后端共享相同的公共字段（``enabled``、``worker_groups``、``steps``、``output_dir``）。后端专属选项各自独立。
 
 
 如何启用
@@ -36,9 +28,7 @@ RLinf 支持使用特定 profiling 工具包装指定的 worker group。通过�
      - weight_syncer/patch_syncer@weight_syncer
      - profile/default@cluster.profiling
 
-对应的配置文件是 ``examples/embodiment/config/profile/default.yaml``。
-如需切换后端，在主 YAML 或 Hydra CLI 中覆盖 ``cluster.profiling.backend``
-即可（详见下方各后端专属章节）。
+对应的配置文件是 ``examples/embodiment/config/profile/default.yaml``。如需切换后端，在主 YAML 或 Hydra CLI 中覆盖 ``cluster.profiling.backend`` 即可（详见下方各后端专属章节）。
 
 
 公共字段
@@ -54,7 +44,7 @@ RLinf 支持使用特定 profiling 工具包装指定的 worker group。通过�
      - 默认值
      - 说明
    * - ``backend``
-     - *(必填)*
+     - *（必填）*
      - 后端标识：``"nsight"`` 或 ``"rocprof_sys"``。
    * - ``enabled``
      - ``true``
@@ -66,7 +56,7 @@ RLinf 支持使用特定 profiling 工具包装指定的 worker group。通过�
      - ``null``
      - 限定 profiling 的训练 step 索引。``null`` 表示覆盖整个 worker 生命周期。
    * - ``output_dir``
-     - *(自动推导)*
+     - *（自动推导）*
      - 输出目录。省略时默认为 ``<log_path>/<experiment_name>/profiling/``。
 
 
@@ -109,7 +99,7 @@ RLinf 支持使用特定 profiling 工具包装指定的 worker group。通过�
    cluster:
      profiling:
        backend: nsight
-       output_dir: /mnt/public/profiles/my_run
+       output_dir: /path/to/profiles/my_run
 
 
 如何覆盖 worker_groups
@@ -126,11 +116,7 @@ RLinf 支持使用特定 profiling 工具包装指定的 worker group。通过�
 
 如果省略 ``worker_groups`` 或设为 ``null``，则不会 profile 任何 worker。
 
-这里有一个容易混淆的点：``ChannelWorker`` 不是 ``ActorGroup`` / ``RolloutGroup``
-某个 rank 的子进程，而是通过 ``Channel.create(name)`` 单独 launch 出来的独立
-worker group，名字通常就是 ``Env``、``Rollout``、``Actor``。因此只 profile
-``ActorGroup`` 并不会自动覆盖 ``Actor`` 这个 channel worker；如果你想看
-channel 本身，需要把这些名字显式加进 ``worker_groups``。
+这里有一个容易混淆的点：通道 worker 是通过 ``Channel.create(name)`` 单独启动的独立 worker group，名字通常就是 ``Env``、``Rollout``、``Actor``，独立于 ``ActorGroup`` / ``RolloutGroup`` 进程。因此只 profile ``ActorGroup`` 并不会自动覆盖 ``Actor`` 这个通道 worker；如果你想看通道本身，需要把这些名字显式加进 ``worker_groups``。
 
 对于内置的具身 runner：
 
@@ -145,8 +131,7 @@ channel 本身，需要把这些名字显式加进 ``worker_groups``。
 如何只 Profile 特定训练 step
 ------------------------------
 
-默认情况下，profiling 会覆盖 worker 进程整个生命周期。``steps`` 可以把采样窗口
-收窄到指定的训练 step：
+默认情况下，profiling 会覆盖 worker 进程整个生命周期。``steps`` 可以把采样窗口收窄到指定的训练 step：
 
 .. code-block:: yaml
 
@@ -172,10 +157,8 @@ Hydra CLI：
 
 当 ``steps`` 被设置时：
 
-- 对于 ``nsight`` 后端，RLinf 会自动把 ``capture-range=cudaProfilerApi`` 和
-  ``capture-range-end=stop`` 注入 ``options``。
-- 具身 runner 会在每个列出的 step 之前调用 ``torch.cuda.profiler.start()``，
-  在该 step 之后调用 ``torch.cuda.profiler.stop()``。
+- 对于 ``nsight`` 后端，RLinf 会自动把 ``capture-range=cudaProfilerApi`` 和 ``capture-range-end=stop`` 注入 ``options``。
+- 具身 runner 会在每个列出的 step 之前调用 ``torch.cuda.profiler.start()``，在该 step 之后调用 ``torch.cuda.profiler.stop()``。
 - 最终的 trace 大小由列出的几个 step 决定，与训练总时长无关。
 
 
@@ -236,15 +219,9 @@ NVIDIA：Nsight Systems（``backend: nsight``）
 Compute 路径上的 NVTX 注解
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf 在 actor、rollout、env worker 的关键方法上使用
-``@Worker.timer("...")``。这个装饰器会记录 RLinf timer 指标，并通过
-``AcceleratorUtil.profiling_range`` 打开当前加速器对应的 profiling range。
-对 ``nsight`` 后端来说，这些 range 会在时间线和
-``nsys stats --report nvtx_sum`` 中显示为带标签的 NVTX 区间。
+RLinf 在 actor、rollout、env worker 的关键方法上使用 ``@Worker.timer("...")``。这个装饰器会记录 RLinf timer 指标，并为当前加速器打开对应的 profiling range。对 ``nsight`` 后端来说，这些 range 会在时间线和 ``nsys stats --report nvtx_sum`` 中显示为带标签的 NVTX 区间。
 
-profiling range 只会在 profiling 窗口打开时发射。profiling 关闭时，
-``Worker.timer`` 仍然会记录 timing 指标，而加速器 profiling range 会退化为
-no-op。
+profiling range 只会在 profiling 窗口打开时发射。profiling 关闭时，``Worker.timer`` 仍然会记录 timing 指标，而加速器 profiling range 会退化为 no-op。
 
 内置注解一览：
 
@@ -328,8 +305,7 @@ Ad-Hoc Profiling Range
            ):
                run_inner_phase(batch)
 
-``AcceleratorUtil.profiling_range`` 会分发到当前加速器后端。如果该加速器没有
-注册 profiling range 实现，或当前 profiling 未开启，它会退化为 no-op。
+上述 profiling range 辅助接口会自动分发到当前加速器后端。如果该加速器没有注册 profiling range 实现，或当前 profiling 未开启，它会退化为 no-op。
 
 
 AMD：ROCm Systems Profiler（``backend: rocprof_sys``）
@@ -386,8 +362,7 @@ RLinf 会把每个匹配 worker 的 Python 解释器包装成：
        env:
          ROCPROFSYS_SAMPLING_FREQ: "100"
 
-RLinf 会自动从 ``output_dir`` 推导 ``ROCPROFSYS_OUTPUT_PATH`` 和
-``ROCPROFSYS_OUTPUT_PREFIX``；``env`` 中显式设置的值优先级更高。
+RLinf 会自动从 ``output_dir`` 推导 ``ROCPROFSYS_OUTPUT_PATH`` 和 ``ROCPROFSYS_OUTPUT_PREFIX``；``env`` 中显式设置的值优先级更高。
 
 
 推荐使用方式
@@ -421,29 +396,19 @@ AMD 第一轮定位：
 Tracing
 ------------------------------
 
-与 GPU Profiling 聚焦单个进程不同，Tracing 给出全局视角：它记录 RLinf 自身计时
-区间在 runner 和所有 Ray worker（环境、Rollout、Actor 等）上的执行时间线，并导出
-为 Chrome Trace 格式做交互式可视化。开销极低，是查看各阶段如何重叠、关键路径在哪的
-最快方式。
+与 GPU Profiling 聚焦单个进程不同，Tracing 给出全局视角：它记录 RLinf 自身计时区间在 runner 和所有 Ray worker（环境、Rollout、Actor 等）上的执行时间线，并导出为 Chrome Trace 格式做交互式可视化。开销极低，是查看各阶段如何重叠、关键路径在哪的最快方式。
 
 工作原理
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. 启用追踪后，cluster 会在启动时把 **tracer**\ （一个调度器 manager，位于节点
-   rank 0 的单个 Ray actor）与其他 manager（``WorkerManager``、``NodeManager`` 等）
-   一起启动。
-2. 每个 worker 和 driver 都通过 ``Tracer.get_proxy()`` 自主访问它，与其他 manager
-   完全一致——没有进程级客户端、缓冲区或后台线程。
-3. 所有计时区间——runner 的 ``ScopedTimer`` 区间（如 ``step``、
-   ``generate_rollouts``）与 worker 的 ``Worker.timer`` 区间（如
-   ``run_training``、``interact``、``predict``）——都会发出追踪事件，直接发送给
-   tracer manager，由其追加写入 JSONL 追踪文件。
+1. 启用追踪后，cluster 会在启动时把 **tracer**\ （位于节点 rank 0 的单个 Ray actor）与其他调度器管理进程一并启动。
+2. 每个 worker 和 driver 都按统一方式自主获取其代理——没有进程级客户端、缓冲区或后台线程。
+3. 所有计时区间——runner 计时区间（如 ``step``、``generate_rollouts``）与 worker 的 ``Worker.timer`` 区间（如训练、交互与推理步骤）——都会发出追踪事件，直接发送给 tracer，由其追加写入 JSONL 追踪文件。
 
 如何启用追踪
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-由于 tracer 是一个 cluster manager，其配置位于 ``cluster.tracer``，无需单独启动
-服务器进程：
+由于 tracer 是一个 cluster manager，其配置位于 ``cluster.tracer``，无需单独启动服务器进程：
 
 .. code-block:: yaml
 
@@ -460,17 +425,12 @@ Tracing
         --config-name libero_spatial_ppo_openpi_pi05 \
         +cluster.tracer.enable=true
 
-若未设置 ``output_file``，追踪事件会写入节点 rank 0 上的
-``runner.logger.log_path/runner.logger.experiment_name/trace/trace_events.jsonl``。
+若未设置 ``output_file``，追踪事件会写入节点 rank 0 上的 ``runner.logger.log_path/runner.logger.experiment_name/trace/trace_events.jsonl``。
 
 如何添加自定义 Span
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-计时区间会被自动追踪。在 worker 中，``@Worker.timer(...)`` 和
-``with self.worker_timer(...)`` 默认会发出追踪事件；传入 ``trace=False``
-可以让某个 timer 不参与追踪。若只需要追踪而不需要计时，``Tracer``
-提供了 ``trace_begin`` / ``trace_end``、``trace_span`` 上下文管理器和
-``trace_func`` 装饰器：
+计时区间会被自动追踪。在 worker 中，``@Worker.timer(...)`` 和 ``with self.worker_timer(...)`` 默认会发出追踪事件；传入 ``trace=False`` 可以让某个 timer 不参与追踪。若只需要追踪而不需要计时，``Tracer`` 提供起止标记、span 上下文管理器与函数装饰器（如下例所示）：
 
 .. code-block:: python
 
@@ -479,8 +439,7 @@ Tracing
    with Tracer.trace_span("data_preprocess", cat="actor"):
        preprocess()
 
-追踪关闭时，所有追踪 API 都是 no-op，因此这些调用可以安全地留在
-不开启追踪的代码路径中。
+追踪关闭时，所有追踪 API 都是 no-op，因此这些调用可以安全地留在不开启追踪的代码路径中。
 
 追踪可视化
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -494,9 +453,7 @@ Tracing
 
        jq -s . trace_events.jsonl > trace_events.json
 
-3. 打开基于 Chrome 的浏览器并导航至 `Perfetto UI <https://ui.perfetto.dev/>`_
-   或 ``chrome://tracing``。
+3. 打开基于 Chrome 的浏览器并导航至 `Perfetto UI <https://ui.perfetto.dev/>`_ 或 ``chrome://tracing``。
 4. 点击 **Open trace file** 并选择你转换后的 ``trace_events.json`` 文件。
 
-你将看到一个交互式甘特图，展示执行层次、Actor 等待时间和系统瓶颈，每个进程按其
-worker 名（如 ``ActorGroup:0``）或 ``driver`` 标注。
+你将看到一个交互式甘特图，展示执行层次、Actor 等待时间和系统瓶颈，每个进程按其 worker 名（如 ``ActorGroup:0``）或 ``driver`` 标注。

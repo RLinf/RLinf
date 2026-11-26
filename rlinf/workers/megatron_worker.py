@@ -271,7 +271,7 @@ class MegatronWorker(MegatronModelManager, Worker):
 
     def get_batch(
         self, channel: Channel, tag: Optional[str] = None
-    ) -> tuple[dict[str, torch.Tensor], RolloutResult | DynamicRolloutResult]:
+    ) -> tuple[dict[str, torch.Tensor], RolloutResult]:
         if tag is not None:
             # for pipeline mode to filter channel communicate time.
             start_time = time.perf_counter()
@@ -297,14 +297,11 @@ class MegatronWorker(MegatronModelManager, Worker):
                 ],
             )
 
-        if isinstance(result, DynamicRolloutResult):
-            batch = result.to_actor_batch()
-        else:
-            batch = result.to_actor_batch(
-                self.cfg.data.max_prompt_length,
-                self.role_cfg.model.encoder_seq_length,
-                self.tokenizer.eos_token_id,
-            )
+        batch = result.to_actor_batch(
+            self.cfg.data.max_prompt_length,
+            self.role_cfg.model.encoder_seq_length,
+            self.tokenizer.eos_token_id,
+        )
 
         if tag is not None:
             duration = time.perf_counter() - start_time
@@ -1403,17 +1400,32 @@ class MegatronWorker(MegatronModelManager, Worker):
 class DynamicMegatronBatchMixin:
     """Shared real-length group transport and microbatch scheduling."""
 
-    def get_batch(
+    def _receive_rollout_result(
+        self, channel: Channel
+    ) -> RolloutResult | DynamicRolloutResult:
+        """Fetch one rollout result from ``channel``.
+
+        A subclass may override this to transform the result on the
+        fetching rank before get_step_batch balances and broadcasts it.
+        """
+        return channel.get()
+
+    def get_step_batch(
         self, channel: Channel
     ) -> tuple[DynamicActorBatch, list[DynamicRolloutResult]]:
-        """Balance raw groups once, then broadcast them to model-parallel peers."""
+        """Receive this data-parallel rank's groups for one step, balance them
+        once, and broadcast them to model-parallel peers.
+
+        Unlike get_batch, which receives one rollout result, this receives
+        all of the step's groups and returns them as a list.
+        """
         count = (
             self.cfg.data.rollout_batch_size
             // parallel_state.get_data_parallel_world_size()
         )
         results = None
         if channel.is_local or self.is_data_io_rank:
-            results = [channel.get() for _ in range(count)]
+            results = [self._receive_rollout_result(channel) for _ in range(count)]
             if not channel.is_local:
                 for result in results:
                     result.extra_fields_train["source_dp"] = [
