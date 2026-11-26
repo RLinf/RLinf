@@ -1269,6 +1269,7 @@ def cpu_checkpoint_manager(single_rank_env, monkeypatch):
         )
 
     monkeypatch.setattr(FSDPStrategy, "wrap_model", wrap_cpu)
+    dist.init_process_group("gloo")
 
     class CheckpointManager(FSDPModelManager):
         def model_provider_func(self):
@@ -1381,6 +1382,69 @@ def test_resume_legacy_checkpoint(cpu_checkpoint_manager, tmp_path, caplog):
     )
     assert "actor optimizer state" in caplog.text.lower()
     assert "may be skipped" in caplog.text.lower()
+
+
+def test_local_shard_checkpoint_round_trip(cpu_checkpoint_manager, tmp_path):
+    from rlinf.hybrid_engines.fsdp.checkpoint import Checkpoint
+    from rlinf.hybrid_engines.fsdp.utils import FSDPVersion
+
+    continuous = cpu_checkpoint_manager()
+    resumed = cpu_checkpoint_manager()
+    for _ in range(3):
+        _checkpoint_optimizer_step(continuous)
+
+    checkpoint_path = tmp_path / "local_shard"
+    fsdp_version = continuous._strategy.get_fsdp_version()
+    progress = {
+        "optimizer_steps": continuous.optimizer_warmup.optimizer_steps,
+        "critic_warmup_steps": continuous.optimizer_warmup.steps,
+    }
+    Checkpoint(
+        str(checkpoint_path),
+        fsdp_version,
+        checkpoint_format="local_shard",
+    ).save(
+        continuous.model,
+        continuous.optimizer,
+        continuous.lr_scheduler,
+        save_full_model_weights=False,
+        optimizer_progress=progress,
+    )
+
+    assert (
+        checkpoint_path / "local_shard_checkpoint" / "checkpoint_rank_0.pt"
+    ).is_file()
+    assert not (checkpoint_path / "dcp_checkpoint").exists()
+
+    loader = Checkpoint(
+        str(checkpoint_path),
+        fsdp_version,
+        checkpoint_format="local_shard",
+    )
+    saved_progress = loader.read_optimizer_progress()
+    assert saved_progress == progress
+    if resumed.optimizer_warmup.restore(
+        resumed.model,
+        optimizer_steps=saved_progress["optimizer_steps"],
+        steps=saved_progress["critic_warmup_steps"],
+    ):
+        resumed.optimizer = resumed.build_optimizer(resumed.model)
+        resumed.lr_scheduler = resumed.build_lr_scheduler(
+            optimizer=resumed.optimizer, optim_config=resumed._cfg.optim
+        )
+    loader.load(resumed.model, resumed.optimizer, resumed.lr_scheduler)
+
+    _assert_checkpoint_training_state(continuous, resumed)
+    _checkpoint_optimizer_step(continuous)
+    _checkpoint_optimizer_step(resumed)
+    _assert_checkpoint_training_state(continuous, resumed)
+
+    with pytest.raises(ValueError, match="FSDP version mismatch"):
+        Checkpoint(
+            str(checkpoint_path),
+            FSDPVersion.FSDP2,
+            checkpoint_format="local_shard",
+        ).load(resumed.model, resumed.optimizer, resumed.lr_scheduler)
 
 
 def _embodied_actor(mode_cfg, *, mix_envs=True, rank=0, world_size=1, actor_cls=None):

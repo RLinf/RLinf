@@ -48,6 +48,7 @@ from rlinf.algorithms.supermimic.objectives import (
 from rlinf.algorithms.supermimic.replay import TransitionRing
 from rlinf.envs.sim.g1_mimic.tasks.motion import build_motion_library
 from rlinf.hybrid_engines.fsdp import FSDPModule
+from rlinf.hybrid_engines.fsdp.checkpoint import Checkpoint
 from rlinf.hybrid_engines.fsdp.utils import (
     clip_grad_by_total_norm_,
     get_grad_norm,
@@ -704,11 +705,10 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         """
         self._reshard()
         self.model.requires_grad_(True)
-        self._strategy.save_checkpoint(
+        Checkpoint(save_base_path, self._strategy.get_fsdp_version()).save(
             model=self.model,
             optimizers=self.all_optimizers,
             lr_schedulers=self.all_schedulers,
-            save_path=save_base_path,
             save_full_model_weights=self.cfg.actor.fsdp_config.get(
                 "save_full_model_weights", True
             ),
@@ -726,11 +726,10 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         # Loading replaces optimizer state tensors a recorded update reads.
         self._drop_update_graph()
         self.model.requires_grad_(True)
-        self._strategy.load_checkpoint(
+        Checkpoint(load_base_path, self._strategy.get_fsdp_version()).load(
             model=self.model,
             optimizers=self.all_optimizers,
             lr_schedulers=self.all_schedulers,
-            load_path=load_base_path,
         )
         with open(os.path.join(load_base_path, _COUNTERS_FILE)) as file:
             counters = json.load(file)
