@@ -27,7 +27,7 @@ SuperMimic
    .. grid-item-card:: 训练
       :text-align: center
 
-      1–4 张 NVIDIA GPU（FSDP2）· :ref:`AMD ROCm（实验性） <supermimic-hardware>`
+      1–4 张 NVIDIA GPU（FSDP2）· :ref:`AMD ROCm（MI300X） <supermimic-hardware>`
 
 | **你将完成：** 安装并准备 LAFAN1 → 启动训练 → 查看 TensorBoard → 评测 checkpoint。
 | **前置条件：** :doc:`安装说明 </rst_source/start/installation>` · 一张或多张 NVIDIA GPU（或 AMD ROCm）· 可访问 Hugging Face 下载 LAFAN1 数据。
@@ -134,22 +134,23 @@ SuperMimic 算法原理
 
       首次启动会有约 2–3 分钟的 ``torch.compile`` 编译预热，前 3 次预热更新结束后日志输出 ``Recorded the SuperMimic update as a CUDA graph.``。每 100 次更新打印一次以 ``Global Step: <N>/6000`` 开头的指标表；每 2000 次更新及第 6000 次更新后在 ``logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_<N>/`` 保存 checkpoint。
 
-   .. tab-item:: AMD ROCm（实验性）
+   .. tab-item:: AMD ROCm（MI300X）
       :sync: rocm
 
-      AMD 后端用 ROCm Warp 运行 MuJoCo Warp，面向 MI300X（``gfx942``）。前置条件：Linux x86_64、含 ``hipcc`` 的 ROCm 7.2 SDK、C++ 编译工具链（参考 `ROCm Warp gfx942 Dockerfile <https://github.com/ROCm/warp/blob/36ed75aa65f837a78b20d1a3a1ac08cfe1fc7b71/docker/rocm/Dockerfile>`_）以及支持 flat wheel 索引的新版 ``uv``。
+      AMD 后端用 ROCm Warp 运行 MuJoCo Warp，面向 MI300X（``gfx942``），已在单卡上测试。前置条件：Linux x86_64、Python 3.11 及以上，以及编译 Warp 所需的 C++ 工具链。ROCm 10.2 SDK 以 Python 包的形式装进虚拟环境，宿主机只需要 AMD GPU 驱动。
 
       **1. 安装**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         export ROCM_PATH=/opt/rocm
-         bash requirements/install.sh --platform amd --rocm 7.2 --no-flash-attn \
+         bash requirements/install.sh --platform amd --rocm 10.2 --no-flash-attn \
              embodied --env supermimic --venv .venv-supermimic
          source .venv-supermimic/bin/activate
 
-      安装脚本从 AMD 索引获取 PyTorch 2.9.1，编译 ROCm Warp ``1.13.0+rocm.0``，并安装 mjlab 1.2.0、MuJoCo 3.8.1 与 MuJoCo Warp 3.8.1。如需自定义源码路径或目标架构，可设置 ``SUPERMIMIC_WARP_PATH``\ （默认 ``../warp-rocm``）和 ``SUPERMIMIC_HIP_ARCH``\ （默认 ``gfx942``）。
+      安装脚本从 AMD 的 wheel 索引获取 PyTorch 2.14.0 与 ROCm 10.2 的各个包，基于这套 SDK 编译 `AMD-Ecosystem/warp <https://github.com/AMD-Ecosystem/warp>`_ 的 Warp 1.15，并安装与 NVIDIA 相同的 SuperMimic 依赖。使用已有的 Warp 源码目录可设置 ``SUPERMIMIC_WARP_PATH``，使用 ``gfx942`` 之外的 GPU 可设置 ``SUPERMIMIC_HIP_ARCH``。
+
+      安装脚本还会在虚拟环境中设置 ``TORCH_BLAS_PREFER_HIPBLASLT=0``：在测试的软件栈上，hipBLASLt 会导致 CUDA graph 捕获失败。
 
       **2. 准备 LAFAN1 数据**
 
@@ -165,9 +166,11 @@ SuperMimic 算法原理
          export SUPERMIMIC_MOTION_PATH=./data/lafan1_g1
          bash examples/embodiment/run_embodiment.sh supermimic_lafan1_gencoord
 
+      日志输出与 checkpoint 目录结构同 NVIDIA 标签页。在单张 MI300X 上，单卡 GenCoord 训练（CUDA graph、bf16）6000 次更新约 61 分钟（0.635 s/次），在 40 条评测片段上 normalized return 为 ``0.854``、无跌倒，与下文 A800 的 ``0.856`` 接近（单个 seed）。
+
       .. note::
 
-         AMD ROCm 上尚未验证完整训练收敛。
+         ROCm 不支持条件图节点，因此每个物理步都会跑满全部求解迭代，而不是在所有 world 收敛后提前停止。结果不变，只影响吞吐。
 
 .. dropdown:: 多卡训练
 

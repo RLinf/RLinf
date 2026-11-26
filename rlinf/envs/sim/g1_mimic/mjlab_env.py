@@ -154,6 +154,7 @@ class MjlabG1Env:
     ):
         import mujoco
         import mujoco_warp as mjwarp
+        import warp as wp
         from mjlab.asset_zoo.robots.unitree_g1.g1_constants import get_g1_robot_cfg
         from mjlab.managers.event_manager import RecomputeLevel
         from mjlab.scene import Scene, SceneCfg
@@ -194,6 +195,8 @@ class MjlabG1Env:
             SimulationCfg(
                 nconmax=35,
                 njmax=250,
+                # mujoco-warp enables conditional graph nodes by default; HIP has none.
+                graph_conditional=wp.is_conditional_graph_supported(),
                 mujoco=MujocoCfg(
                     timestep=PHYSICS_DT,
                     iterations=10,

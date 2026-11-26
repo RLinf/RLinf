@@ -32,7 +32,7 @@ G1 动作跟踪环境
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1–4 张 NVIDIA GPU · :ref:`AMD ROCm（实验性） <supermimic-hardware>`
+      1–4 张 NVIDIA GPU · :ref:`AMD ROCm（MI300X） <supermimic-hardware>`
 
 | **你将完成：** 了解 G1 任务、观测、奖励与环境配置 → 使用 :doc:`SuperMimic <supermimic>` 启动训练或评测。
 | **前置条件：** :doc:`安装说明 </rst_source/start/installation>` · 按 :doc:`supermimic` 完成虚拟环境安装和 LAFAN1 数据准备。

@@ -32,7 +32,7 @@ Overview
    .. grid-item-card:: Hardware
       :text-align: center
 
-      1–4 NVIDIA GPUs · :ref:`AMD ROCm (experimental) <supermimic-hardware>`
+      1–4 NVIDIA GPUs · :ref:`AMD ROCm (MI300X) <supermimic-hardware>`
 
 | **You'll do:** review the G1 task, observation, reward, and config specs → launch training or evaluation with :doc:`SuperMimic <supermimic>`.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · SuperMimic environment and prepared LAFAN1 clips from :doc:`supermimic`.

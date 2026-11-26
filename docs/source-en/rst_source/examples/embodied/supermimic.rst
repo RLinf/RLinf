@@ -27,7 +27,7 @@ Overview
    .. grid-item-card:: Training
       :text-align: center
 
-      1–4 NVIDIA GPUs (FSDP2) · :ref:`AMD ROCm (experimental) <supermimic-hardware>`
+      1–4 NVIDIA GPUs (FSDP2) · :ref:`AMD ROCm (MI300X) <supermimic-hardware>`
 
 | **You'll do:** install & prepare LAFAN1 → launch training → watch TensorBoard → evaluate checkpoints.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · one or more NVIDIA GPUs (or AMD ROCm) · network access to Hugging Face for LAFAN1 clips.
@@ -134,22 +134,23 @@ Setup and Run
 
       The first run spends ~2–3 minutes in ``torch.compile`` warmup before printing ``Recorded the SuperMimic update as a CUDA graph.`` after update 3. Every 100 updates it prints a metrics table starting with ``Global Step: <N>/6000``. Checkpoints are written under ``logs/<timestamp>-supermimic_lafan1_gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_<N>/`` every 2000 updates and at step 6000.
 
-   .. tab-item:: AMD ROCm (Experimental)
+   .. tab-item:: AMD ROCm (MI300X)
       :sync: rocm
 
-      The AMD path runs MuJoCo Warp on ROCm Warp and targets MI300X (``gfx942``). Prerequisites: Linux x86_64, ROCm 7.2 SDK with ``hipcc``, a C++ toolchain (see the `ROCm Warp gfx942 Dockerfile <https://github.com/ROCm/warp/blob/36ed75aa65f837a78b20d1a3a1ac08cfe1fc7b71/docker/rocm/Dockerfile>`_), and a recent ``uv`` supporting flat wheel indexes.
+      The AMD path runs MuJoCo Warp on ROCm Warp and targets MI300X (``gfx942``) and is tested on one GPU. Prerequisites: Linux x86_64, Python 3.11 or newer, and a C++ toolchain for building Warp. The ROCm 10.2 SDK is installed into the virtual environment as Python packages, so the host needs only the AMD GPU driver.
 
       **1. Install**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         export ROCM_PATH=/opt/rocm
-         bash requirements/install.sh --platform amd --rocm 7.2 --no-flash-attn \
+         bash requirements/install.sh --platform amd --rocm 10.2 --no-flash-attn \
              embodied --env supermimic --venv .venv-supermimic
          source .venv-supermimic/bin/activate
 
-      The installer fetches PyTorch 2.9.1 from AMD's index, builds ROCm Warp ``1.13.0+rocm.0``, and installs mjlab 1.2.0, MuJoCo 3.8.1, and MuJoCo Warp 3.8.1. To customize the Warp checkout path or target GPU architecture, set ``SUPERMIMIC_WARP_PATH`` (default ``../warp-rocm``) or ``SUPERMIMIC_HIP_ARCH`` (default ``gfx942``).
+      The installer takes PyTorch 2.14.0 and the ROCm 10.2 packages from AMD's wheel index, builds Warp 1.15 from `AMD-Ecosystem/warp <https://github.com/AMD-Ecosystem/warp>`_ against that SDK, and installs the same SuperMimic requirements as on NVIDIA. Set ``SUPERMIMIC_WARP_PATH`` to reuse a Warp checkout, or ``SUPERMIMIC_HIP_ARCH`` for a GPU other than ``gfx942``.
+
+      The installer also exports ``TORCH_BLAS_PREFER_HIPBLASLT=0`` in the virtual environment, because hipBLASLt breaks CUDA graph capture on the tested stack.
 
       **2. Prepare LAFAN1**
 
@@ -165,9 +166,11 @@ Setup and Run
          export SUPERMIMIC_MOTION_PATH=./data/lafan1_g1
          bash examples/embodiment/run_embodiment.sh supermimic_lafan1_gencoord
 
+      Log output and checkpoint layout match the NVIDIA tab. On one MI300X, the single-GPU GenCoord run (CUDA graphs, bf16) takes about 61 minutes for 6000 updates (0.635 s/update) and reaches ``0.854`` normalized return with ``0`` falls on the 40 evaluation clips, close to ``0.856`` on A800 below (single seed).
+
       .. note::
 
-         Full end-to-end training convergence on AMD ROCm is untested.
+         ROCm has no conditional graph nodes, so every physics step runs all solver iterations instead of stopping once every world has converged. Results are unchanged; only throughput is affected.
 
 .. dropdown:: Multi-GPU Training
 
