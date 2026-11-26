@@ -371,7 +371,7 @@ OpenPI 监督微调
    SFT 与 RL 场景设置 ``actor.model.openpi.attention_backend``，独立评测设置 ``rollout.model.openpi.attention_backend``，取值为 ``flash_attention_2`` 或 ``flash_attention_3``。NVIDIA GPU 上 ``eager`` 以 FP32 计算注意力分数，切换后数值可能略有差异。
 
    - **FlashAttention-2**\ （``flash_attention_2``）：多数 ``install.sh embodied --model openpi`` 环境已自带 ``flash-attn`` 2.x；未预装的环境（如 ``polaris``、``robolab``）请在已激活的 OpenPI 环境中安装与当前 PyTorch、CUDA 版本匹配的 2.x 版本。
-   - **FlashAttention-3**\ （``flash_attention_3``，Hopper GPU 且 CUDA Toolkit 12.3 及以上）：先在已激活的 OpenPI 环境中从源码编译安装官方 FlashAttention-3（需 12.3 及以上版本的 ``nvcc`` 与编译工具），再启用 ``flash_attention_3``：
+   - **FlashAttention-3**\ （``flash_attention_3``，Hopper GPU 且 CUDA Toolkit 12.3 及以上）：需 12.3 及以上版本的 ``nvcc`` 与编译工具。启用 ``flash_attention_3`` 前，先在已激活的 OpenPI 环境中从源码编译安装 FlashAttention-3：
 
      .. code-block:: bash
 
