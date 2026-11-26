@@ -107,6 +107,13 @@ Compare what each robot guide covers before choosing a platform.
      - ✓
      - —
      - :doc:`SO-101 Guide <embodied/so101>`
+   * - UR5e
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - —
+     - :doc:`UR5e Guide <embodied/ur5e>`
    * - XSquare Turtle2
      - ✓
      - —
@@ -169,6 +176,12 @@ Single-arm and dual-arm manipulators for hardware setup, teleoperation, data col
       :link-type: doc
 
       Train a 6-DoF GimArm peg-insertion policy over SocketCAN with VR teleoperation and SAC / RLPD.
+
+   .. grid-item-card:: UR5e
+      :link: embodied/ur5e
+      :link-type: doc
+
+      Collect demonstrations with a SpaceMouse, fine-tune OpenPI π₀.₅, and evaluate the policy on a UR5e.
 
    .. grid-item-card:: YAM
       :link: embodied/yam_index

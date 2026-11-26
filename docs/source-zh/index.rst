@@ -126,6 +126,7 @@
   LeKiwi <rst_source/examples/embodied/lekiwi>
   Robbyant R2 <rst_source/examples/embodied/r2>
   SO-101 <rst_source/examples/embodied/so101>
+  UR5e <rst_source/examples/embodied/ur5e>
   XSquare Turtle2 <rst_source/examples/embodied/xsquare_turtle2>
   YAM <rst_source/examples/embodied/yam_index>
 

@@ -107,6 +107,13 @@
      - ✓
      - —
      - :doc:`SO-101 指南 <embodied/so101>`
+   * - UR5e
+     - ✓
+     - ✓
+     - ✓
+     - ✓
+     - —
+     - :doc:`UR5e 指南 <embodied/ur5e>`
    * - XSquare Turtle2
      - ✓
      - —
@@ -169,6 +176,12 @@
       :link-type: doc
 
       在 SocketCAN 6-DoF 机械臂上结合 VR 遥操作与 SAC / RLPD 训练插孔任务。
+
+   .. grid-item-card:: UR5e
+      :link: embodied/ur5e
+      :link-type: doc
+
+      用 SpaceMouse 采集演示数据，微调 OpenPI π₀.₅，再在 UR5e 真机上评估模型。
 
    .. grid-item-card:: YAM
       :link: embodied/yam_index

@@ -376,6 +376,8 @@ OpenPI 监督微调
         - LIBERO
       * - ``pi0_realworld``
         - 真机 Franka
+      * - ``pi05_ur5e``
+        - 真机 UR5e
       * - ``pi05_yam_joint``
         - 真机双臂 YAM
       * - ``pi0_aloha_robotwin``

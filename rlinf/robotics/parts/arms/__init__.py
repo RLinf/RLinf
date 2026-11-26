@@ -67,6 +67,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         Turtle2Connection,
         Turtle2RobotState,
     )
+    from .ur_rtde import URRobotState, URRTDEArm
     from .yam import (
         YamArm,
         YamRobotState,
@@ -103,6 +104,8 @@ _MODULE_BY_NAME: dict[str, str] = {
     "SO101RobotState": ".so101",
     "Turtle2Connection": ".turtle2",
     "Turtle2RobotState": ".turtle2",
+    "URRobotState": ".ur_rtde",
+    "URRTDEArm": ".ur_rtde",
     "YamArm": ".yam",
     "YamRobotState": ".yam",
 }
@@ -138,6 +141,8 @@ __all__ = [
     "SO101RobotState",
     "Turtle2Connection",
     "Turtle2RobotState",
+    "URRTDEArm",
+    "URRobotState",
     "YamArm",
     "YamRobotState",
 ]
