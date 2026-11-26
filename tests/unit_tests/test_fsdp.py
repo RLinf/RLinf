@@ -396,7 +396,7 @@ def test_abot_default_forward_uses_sharded_autocast_dtype(single_rank_env, strat
     from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 
     from rlinf.hybrid_engines.fsdp import FSDP
-    from rlinf.models.embodiment.abot_m0 import _forward_dtype
+    from rlinf.hybrid_engines.fsdp.utils import get_fsdp_param_dtype
     from rlinf.models.embodiment.abot_m0.abot_m0_action_model import (
         ABotM0ForRLActionPrediction,
     )
@@ -499,10 +499,7 @@ def test_abot_default_forward_uses_sharded_autocast_dtype(single_rank_env, strat
         head = wrapped.action_head_rl
         assert isinstance(head, FSDPModule)
         assert not isinstance(head.base.future_tokens, FSDPModule)
-        assert (
-            _forward_dtype(head, head.base.action_encoder.layer1.weight)
-            == torch.bfloat16
-        )
+        assert get_fsdp_param_dtype(head) == torch.bfloat16
         if not hasattr(torch.cpu.Stream, "record_event"):
             return
     else:

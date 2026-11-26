@@ -21,7 +21,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from rlinf.models.embodiment.abot_m0 import _forward_dtype
 from rlinf.models.embodiment.modules.value_head import ValueHead
 
 
@@ -293,9 +292,6 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
         else:
             pooled_state = torch.zeros_like(pooled_vl)
         value_input = torch.cat((pooled_vl, pooled_state), dim=1)
-        value_input = value_input.to(
-            dtype=_forward_dtype(self.value_head, self.value_head.mlp[0].weight)
-        )
         return self.value_head(value_input)  # [B, 1]
 
     @torch.no_grad()

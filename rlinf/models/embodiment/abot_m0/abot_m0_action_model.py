@@ -28,7 +28,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
-from rlinf.models.embodiment.abot_m0 import _forward_dtype
+from rlinf.hybrid_engines.fsdp.utils import get_fsdp_param_dtype
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
 
@@ -362,13 +362,15 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
             spatial_model = self.base_model.spatial_model
             spatial_model.eval()
             aggregator = spatial_model.aggregator
+            spatial_dtype = (
+                torch.get_autocast_dtype(last_hidden.device.type)
+                if torch.is_autocast_enabled(last_hidden.device.type)
+                else last_hidden.dtype
+            )
             spatial_input = preprocess_images(
                 batch_images,
                 batch_images[0][0].size[0],
-            ).to(
-                device=last_hidden.device,
-                dtype=_forward_dtype(aggregator, aggregator.camera_token),
-            )
+            ).to(device=last_hidden.device, dtype=spatial_dtype)
             aggregated_tokens_list, ps_idx = aggregator(spatial_input)
         spatial_tokens = aggregated_tokens_list[-1][:, 0, ps_idx:, :]
         spatial_tokens = self.base_model.spatial_projector(spatial_tokens)
@@ -532,7 +534,11 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
 
         # FSDP1 calls this method on the inner policy, outside the action head's unshard.
         head = self.action_head_rl
-        compute_dtype = _forward_dtype(head, head.base.action_encoder.layer1.weight)
+        compute_dtype = (
+            get_fsdp_param_dtype(head)
+            or get_fsdp_param_dtype(self)
+            or head.base.action_encoder.layer1.weight.dtype
+        )
         with (
             torch.autocast(device_type=chains.device.type, dtype=compute_dtype)
             if compute_dtype in (torch.float16, torch.bfloat16)
