@@ -10,4 +10,5 @@ export MUJOCO_GL=${BACKEND}
 export PYOPENGL_PLATFORM=${BACKEND}
 export PYTHONPATH=${REPO_PATH}:${DREAMZERO_PATH}:$PYTHONPATH
 
-python ${REPO_PATH}/examples/sft/train_vla_sft.py --config-path ${REPO_PATH}/tests/e2e_tests/sft --config-name ${CONFIG}
+exec python "${REPO_PATH}/examples/sft/train_vla_sft.py" \
+    --config-path "${REPO_PATH}/tests/e2e_tests/sft" --config-name "${CONFIG}" "${@:3}"

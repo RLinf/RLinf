@@ -38,6 +38,14 @@ SFT 与模仿学习
 
       在 LIBERO 上评测 FastWAM 并运行全参数 FSDP SFT。
 
+   .. grid-item-card:: GR00T-N1.7 监督微调
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/gr00t.png
+      :img-alt: GR00T-N1.7
+      :link: embodied/sft_gr00t
+      :link-type: doc
+
+      使用 LIBERO 示范数据全参数微调 GR00T-N1.7。
+
    .. grid-item-card:: OpenPI 监督微调
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
       :img-alt: OpenPI 监督微调
@@ -62,5 +70,6 @@ SFT 与模仿学习
    DAgger <embodied/dagger>
    DreamZero <embodied/sft_dreamzero>
    FastWAM <embodied/sft_fastwam>
+   GR00T-N1.7 <embodied/sft_gr00t>
    OpenPI <embodied/sft_openpi>
    Qwen-VL <embodied/sft_vlm>

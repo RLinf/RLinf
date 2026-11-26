@@ -45,6 +45,12 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_openpi_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
+        elif model_type == SupportedModel.GR00T_N1D7:
+            from rlinf.data.datasets.gr00t import build_gr00t_sft_dataloader
+
+            return build_gr00t_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
         elif model_type == SupportedModel.LINGBOTVLA:
             from rlinf.models.embodiment.lingbotvla.sft_builder import (
                 build_lingbot_sft_dataloader,
@@ -122,6 +128,13 @@ class FSDPVlaSftWorker(FSDPSftWorker):
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         super().save_checkpoint(save_path, step)
         self._save_data_checkpoint(save_path)
+        if self._rank == 0:
+            self.model.save_sft_checkpoint_metadata(save_path)
+            save_data_metadata = getattr(
+                self.data_loader, "save_sft_checkpoint_metadata", None
+            )
+            if save_data_metadata is not None:
+                save_data_metadata(save_path)
 
     def _save_data_checkpoint(self, save_path: str) -> None:
         """Save per-rank data order and RNG state alongside the model checkpoint."""
@@ -172,6 +185,8 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         if self.data_loader is None:
             return 0
         model_type = SupportedModel(self.cfg.actor.model.model_type)
+        if model_type == SupportedModel.GR00T_N1D7:
+            return self.cfg.runner.max_steps
         if model_type == SupportedModel.OPENPI:
             from rlinf.data.datasets.openpi import (
                 get_official_openpi_sft_num_batches,

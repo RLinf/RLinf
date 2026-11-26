@@ -38,6 +38,14 @@ Pick this section to cold-start a VLA, WAM, or VLM checkpoint with supervised fi
 
       Evaluate FastWAM on LIBERO and run full-parameter FSDP SFT.
 
+   .. grid-item-card:: GR00T-N1.7 SFT
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/gr00t.png
+      :img-alt: GR00T-N1.7
+      :link: embodied/sft_gr00t
+      :link-type: doc
+
+      Fine-tune all GR00T-N1.7 parameters on LIBERO demonstrations.
+
    .. grid-item-card:: OpenPI SFT
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
       :img-alt: OpenPI supervised fine-tuning
@@ -62,5 +70,6 @@ Pick this section to cold-start a VLA, WAM, or VLM checkpoint with supervised fi
    DAgger <embodied/dagger>
    DreamZero <embodied/sft_dreamzero>
    FastWAM <embodied/sft_fastwam>
+   GR00T-N1.7 <embodied/sft_gr00t>
    OpenPI <embodied/sft_openpi>
    Qwen-VL <embodied/sft_vlm>
