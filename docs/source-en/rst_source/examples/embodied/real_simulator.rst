@@ -1,26 +1,45 @@
 Real-World Simulator
-=====================
+====================
 
-Add realistic observation latency and network conditions to your embodied
-training without leaving simulation.
+Add realistic observation latency and network conditions to embodied training without leaving simulation. RLinf provides two independent YAML-configured modules, ``delay_sampler`` and ``net_emulation``. Both are disabled by default.
 
-RLinf provides two independent modules — ``delay_sampler`` and
-``net_emulation`` — each controlled by configuration parameters in your YAML.
-Both are **disabled by default**: omit the corresponding parameters and your
-workflow runs unchanged.
+Overview
+--------
 
+Inject sensor latency and cross-worker network constraints into simulated training runs.
 
-Observation Delay (delay_sampler)
----------------------------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-Emulate per-environment sensor latency by inserting a configurable delay wait via an ``InsertDelay`` env wrapper that
-delays ``chunk_step`` and ``reset`` returns.
+   .. grid-item-card:: Models
+      :text-align: center
 
-Use this when you need to test how variable observation timing affects
-policy training, or when you're preparing a policy for real-world deployment
-where camera and joint-encoder latencies differ per robot.
+      π₀ · Any embodied policy
 
-Supported distributions:
+   .. grid-item-card:: Algorithms
+      :text-align: center
+
+      DAgger · Sync & Async RL
+
+   .. grid-item-card:: Tasks
+      :text-align: center
+
+      RoboTwin · Any simulator env
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      Single-node or multi-node GPU
+
+| **You'll do:** enable ``delay_sampler`` or ``net_emulation`` in YAML → launch ``run_async.sh`` (or ``run_embodiment.sh``) → evaluate policy robustness.
+| **Prerequisites:** :doc:`RoboTwin <robotwin>` (for the shipped example) · :doc:`DAgger <dagger>`.
+
+Observation Delay
+-----------------
+
+Emulate per-environment sensor latency by inserting a configurable delay before each environment step and reset return. Use this to test how variable camera or joint-encoder timing affects policy training before real-world deployment.
+
+Supported distributions (all values in **seconds**):
 
 .. list-table::
    :header-rows: 1
@@ -42,8 +61,6 @@ Supported distributions:
      - ``mean``, ``stddev``
      - Realistic sensor jitter with a typical value and spread.
 
-All delay values are in **seconds**.
-
 .. code-block:: yaml
 
    env:
@@ -52,32 +69,15 @@ All delay values are in **seconds**.
        min_delay: 0.11       # 110 ms
        max_delay: 0.20       # 200 ms
 
-Requirements:
+- Applies only during training; evaluation is unaffected.
+- Works per environment instance with both synchronous and asynchronous runners.
 
-- The delay applies only in training mode. Evaluation is unaffected.
-- The wrapper is applied per-environment-instance via ``_setup_env_and_wrappers``,
-  independent of the runner type (sync / async).
+Network Emulation
+-----------------
 
+Emulate cross-worker network latency and bandwidth limits cluster-wide. When ``cluster.net_emulation.enabled`` is ``true``, point-to-point sends and broadcasts (such as actor-to-rollout weight synchronization) reserve transmission slots against the configured link delays and bandwidth budgets. Broadcasts are charged once on the sender and once per receiving bandwidth group, and the sender waits for the slowest receiver.
 
-Network Emulation (net_emulation)
----------------------------------
-
-Emulate cross-worker network latency and bandwidth limits with a global
-scheduler. Setting ``cluster.net_emulation.enabled`` launches a
-``NetEmulationManager``, one of the scheduler's global managers, alongside the
-others on node rank 0. Point-to-point sends and broadcasts between configured
-worker groups book a transmission slot with it and wait out the resulting delay,
-so the per-link latency and the per-group bandwidth budget stay consistent
-cluster-wide. Broadcasts — which is how weight synchronization moves parameters
-from Actor to Rollout Workers — are charged once on the sender and once per
-receiving bandwidth group, and the sender waits for the slowest receiver.
-
-Transfers that never leave a node are not emulated: same-device and same-node
-handoffs go through shared-memory IPC rather than the network.
-
-Use this to test how policies behave under bandwidth-constrained or
-high-latency links, such as when Env Workers and Rollout Workers are on
-separate clusters or cloud regions.
+Same-device and same-node transfers use shared-memory IPC and are not emulated. Use this to test policies under bandwidth-constrained or high-latency links, such as when env and rollout workers run across separate clusters or cloud regions.
 
 .. list-table::
    :header-rows: 1
@@ -91,7 +91,7 @@ separate clusters or cloud regions.
      - Toggle network emulation on (``true``) or off (``false``). Default: ``false``.
    * - ``symmetric``
      - ``bool``
-     - If ``true``, every cross-DC pair is mirrored. Default: ``true``.
+     - Mirror every cross-DC pair when ``true``. Default: ``true``.
    * - ``crossdc_pairs``
      - ``list``
      - Source-destination pairs with per-pair ``delay_ms``.
@@ -99,66 +99,56 @@ separate clusters or cloud regions.
      - ``list``
      - Endpoint groups sharing a ``bandwidth_mbps`` budget.
 
-.. code-block:: yaml
+Endpoint names use ``GroupName:Rank`` — ``Env:0`` for the first env worker, ``Rollout:1`` for the second rollout worker. Inclusive ranges such as ``Env:0-3`` expand to ``Env:0`` through ``Env:3``, and any trailing ``Group`` suffix is stripped automatically.
 
-   cluster:
-     net_emulation:
-       enabled: true
-       symmetric: true
-       crossdc_pairs:
-         - src: ["Env:0-1"]
-           dst: ["Rollout:0-1", "Actor:0-1"]
-           delay_ms: 50
-       bandwidth_groups:
-         - members: ["Env:0-1"]
-           bandwidth_mbps: 1000
-         - members: ["Rollout:0-1", "Actor:0-1"]
-           bandwidth_mbps: 500
+- Works with both synchronous and asynchronous runners.
+- Independent of ``delay_sampler``: enable either, both, or neither.
 
-Endpoint names use the ``GroupName:Rank`` convention — ``Env:0`` for the
-first Env Worker, ``Rollout:1`` for the second Rollout Worker. Inclusive rank
-ranges are supported, so ``Env:0-3`` expands to ``Env:0`` through ``Env:3``.
-The ``Group`` suffix is stripped automatically.
+Setup and Run
+-------------
 
-Requirements:
+Prepare the RoboTwin environment and checkpoints as described in :doc:`RoboTwin <robotwin>`, then launch the shipped example config ``examples/embodiment/config/realsimulator_robotwin_adjust_bottle_dagger_openpi.yaml``:
 
-- Works with both the synchronous and asynchronous runners.
-- Independent of ``delay_sampler``. Enable either, both, or neither.
+.. code-block:: bash
 
+   bash examples/embodiment/run_async.sh realsimulator_robotwin_adjust_bottle_dagger_openpi
 
-Together
---------
+.. dropdown:: Advanced configuration (optional)
 
-Combine both modules to simulate a realistic deployment:
+   Full ``net_emulation`` example with ``crossdc_pairs`` and ``bandwidth_groups``:
 
-.. code-block:: yaml
+   .. code-block:: yaml
 
-   env:
-     delay_sampler:
-       type: uniform
-       min_delay: 0.11
-       max_delay: 0.20
+      cluster:
+        net_emulation:
+          enabled: true
+          symmetric: true
+          crossdc_pairs:
+            - src: ["Env:0-1"]
+              dst: ["Rollout:0-1", "Actor:0-1"]
+              delay_ms: 50
+          bandwidth_groups:
+            - members: ["Env:0-1"]
+              bandwidth_mbps: 1000
+            - members: ["Rollout:0-1", "Actor:0-1"]
+              bandwidth_mbps: 500
 
-   cluster:
-     net_emulation:
-       enabled: true
-       crossdc_pairs:
-         - src: ["Env:0", "Env:1"]
-           dst: ["Rollout:0", "Rollout:1"]
-           delay_ms: 50
+   Combine ``delay_sampler`` and ``net_emulation`` together:
 
+   .. code-block:: yaml
 
-Example
--------
+      env:
+        delay_sampler:
+          type: uniform
+          min_delay: 0.11
+          max_delay: 0.20
 
-Full worked example:
+      cluster:
+        net_emulation:
+          enabled: true
+          crossdc_pairs:
+            - src: ["Env:0", "Env:1"]
+              dst: ["Rollout:0", "Rollout:1"]
+              delay_ms: 50
 
-.. code-block:: text
-
-   examples/embodiment/config/realsimulator_robotwin_adjust_bottle_dagger_openpi.yaml
-
-
-See also
-
-- :doc:`RoboTwin <robotwin>` — RoboTwin environment setup and configuration.
-- :doc:`DAgger <dagger>` — DAgger training with expert policy.
+See also: :doc:`RoboTwin <robotwin>` and :doc:`DAgger <dagger>`.

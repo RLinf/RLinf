@@ -1,15 +1,14 @@
 基础配置
 =========
 
-下面给出 RLinf 核心配置参数的完整参考说明，适用于所有工作负载。
-我们对 YAML 中每个重要键做了说明，便于你针对自己的集群、模型或研究需求进行调整。
-各参数按顶层键分组组织。
+如需带注释的最小 YAML、Hydra 预设地图及单卡最常调参数，建议先阅读 :doc:`../reference/configuration`。本页提供具身智能与智能体训练共用基础参数的完整逐字段说明；任务专用字段请参见 :doc:`embodiment_config` 与 :doc:`agentic_config`。
 
-本节涵盖具身智能与智能体训练共用的基础 GPU 和集群配置。
-任务专用配置请参见 :doc:`embodiment_config` 和 :doc:`agentic_config`。
+.. tip::
+
+   **配置文件位置：** 训练 YAML 位于 ``examples/<任务>/config/``\ （例如 ``examples/embodiment/config/``、``examples/sft/config/`` 与 ``examples/reasoning/config/``），独立评测 YAML 位于 ``evaluations/<benchmark>/``。完整目录速查见 :doc:`../reference/configuration`。
 
 hydra
-~~~~~~
+------
 
 .. code:: yaml
 
@@ -30,7 +29,7 @@ hydra
      - 输出子目录（设为 ``null`` 则不创建子目录）。
 
 cluster
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -74,12 +73,12 @@ Rank 取值支持以下形式：
 而对于更高级的组件放置用法（例如，异构集群中使用不同型号的 GPU、机器人硬件或仅 CPU 节点）以及代码中的自定义，请参见 :doc:`../concepts/placement`。
 
 runner
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
   runner:
-    task_type: math
+    task_type: reasoning
     logger:
       log_path: ${runner.output_dir}/${runner.experiment_name}
       project_name: rlinf
@@ -105,7 +104,7 @@ runner
    * - 参数
      - 说明
    * - ``runner.task_type``
-     - 任务类型标识（``math`` 或 ``embodied``）。
+     - 任务类型标识（``embodied``、``embodied_eval``、``reasoning``、``reasoning_eval``、``coding_online_rl``、``sft`` 或 ``offline``）。
    * - ``runner.logger.log_path``
      - 日志输出的根目录。
    * - ``runner.logger.project_name``
@@ -126,7 +125,7 @@ runner
      - 输入到模型的总序列长度（提示 + 生成）。
 
 algorithm
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -148,6 +147,7 @@ algorithm
 
     adv_type: grpo
     normalize_advantages: True
+    recompute_logprobs: True
     early_stop_imp_ratio: 5.0
     use_valid_token_scale: False
 
@@ -177,7 +177,7 @@ algorithm
    * - ``algorithm.kl_beta``
      - 加入到奖励中的 KL 权重。
    * - ``algorithm.kl_penalty_type``
-     - KL 形态（如 ``low_var_kl``）。
+     - KL 形态（``kl``、``abs``、``mse``、``low_var_kl`` 或 ``full``）。
    * - ``algorithm.ratio_clip_eps``
      - PPO 比率裁剪阈值。
    * - ``algorithm.entropy_bonus``
@@ -189,7 +189,9 @@ algorithm
    * - ``algorithm.adv_type``
      - 优势函数估计类型（如 ``grpo``）。
    * - ``algorithm.normalize_advantages``
-     - 是否对优势进行归一化。
+     - 是否对优势归一化。
+   * - ``algorithm.recompute_logprobs``
+     - 是否在 actor 侧为采样序列重新计算对数概率。
    * - ``algorithm.early_stop_imp_ratio``
      - 当重要性比超出阈值时提前终止本次更新。
    * - ``algorithm.use_valid_token_scale``
@@ -206,7 +208,7 @@ algorithm
      - 重复惩罚系数。
 
 rollout
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -218,8 +220,6 @@ rollout
     model:
       model_path: ../../model/DeepSeek-R1-Distill-Qwen-1.5B/
       model_type: qwen2.5
-
-    recompute_logprobs: True
 
 .. list-table::
    :header-rows: 1
@@ -235,11 +235,9 @@ rollout
      - 生成后端所用 HF 模型路径。
    * - ``rollout.model.model_type``
      - 后端内部使用的模型架构标记（如 ``qwen2.5``）。
-   * - ``rollout.recompute_logprobs``
-     - 是否为采样序列重新计算对数概率。
 
 actor
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -265,7 +263,7 @@ actor
      - 全局随机种子，便于复现。
 
 reward
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 
@@ -282,7 +280,7 @@ reward
      - 是否使用奖励模型。
 
 critic
-~~~~~~~~~~~~~~~
+---------------
 
 .. code:: yaml
 

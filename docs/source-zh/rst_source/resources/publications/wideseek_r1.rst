@@ -24,7 +24,7 @@ WideSeek-R1: Exploring Width Scaling for Broad Information Seeking via Multi-Age
             <sup>3</sup>无问芯穹 &nbsp;&nbsp;
             <sup>4</sup>清华大学交叉信息研究院
         </p>
-       <p class="affiliations" style="color: #333;">
+       <p class="affiliations" style="color: var(--pst-color-text-muted);">
          <sup>*</sup>共同第一作者。 &nbsp;&nbsp;<sup>&dagger;</sup>通讯作者。
        </p>
      </div>
@@ -44,16 +44,9 @@ WideSeek-R1: Exploring Width Scaling for Broad Information Seeking via Multi-Age
 摘要
 ----
 
-近年来，大语言模型（LLM）的进展主要聚焦于深度扩展，即由单个智能体通过多轮推理与工具使用来解决长时程问题。
-然而，随着任务的广度不断增加，关键瓶颈正从个体能力转向组织能力。
-在这项工作中，我们探索了一个互补维度，即利用多智能体系统进行 **宽度扩展**，以解决广域信息检索问题。
-现有多智能体系统通常依赖手工设计的工作流和轮流交互机制，无法有效实现并行化。
-为弥合这一差距，我们提出了 **WideSeek-R1**，这是一个通过 **多智能体强化学习（MARL）** 训练得到的主智能体-子智能体框架，用于协同实现可扩展的编排与并行执行。
-WideSeek-R1 采用共享的 LLM、隔离的上下文以及专用工具，在一个精心构建的 2 万条广域信息检索任务数据集上，对主智能体和并行子智能体进行联合优化。
-大量实验表明，WideSeek-R1-4B 在 WideSearch 基准上取得了 40.0% 的 item F1 分数，可与单智能体 DeepSeek-R1-671B 的表现相当。
-此外，随着并行子智能体数量的增加，WideSeek-R1-4B 持续获得性能提升，凸显了宽度扩展的有效性。
+近年来，大语言模型（LLM）的进展主要聚焦于深度扩展，即由单个智能体通过多轮推理与工具使用来解决长时程问题。然而，随着任务的广度不断增加，关键瓶颈正从个体能力转向组织能力。在这项工作中，我们探索了一个互补维度，即利用多智能体系统进行 **宽度扩展**，以解决广域信息检索问题。现有多智能体系统通常依赖手工设计的工作流和轮流交互机制，无法有效实现并行化。为弥合这一差距，我们提出了 **WideSeek-R1**，这是一个通过 **多智能体强化学习（MARL）** 训练得到的主智能体-子智能体框架，用于协同实现可扩展的编排与并行执行。WideSeek-R1 采用共享的 LLM、隔离的上下文以及专用工具，在一个精心构建的 2 万条广域信息检索任务数据集上，对主智能体和并行子智能体进行联合优化。大量实验表明，WideSeek-R1-4B 在 WideSearch 基准上取得了 40.0% 的 item F1 分数，可与单智能体 DeepSeek-R1-671B 的表现相当。此外，随着并行子智能体数量的增加，WideSeek-R1-4B 持续获得性能提升，凸显了宽度扩展的有效性。
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/scaling.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/scaling.png
    :alt: 深度扩展与宽度扩展对比
    :align: center
 
@@ -97,7 +90,7 @@ WideSeek-R1 采用共享的 LLM、隔离的上下文以及专用工具，在一�
 
 WideSeek-R1 是一个层级式的主智能体-子智能体系统，通过 **端到端 MARL 训练，以协同实现可扩展编排与并行执行**，从而支持宽度扩展。主智能体和子智能体共享同一个 LLM，但拥有彼此隔离的上下文以及专用工具：主智能体负责任务分解与编排，而每个子智能体则使用外部工具并行执行分配到的子任务，收集信息并返回结果。
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/overview.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/overview.png
    :alt: WideSeek-R1 的 rollout 与训练流程
    :align: center
 
@@ -142,7 +135,7 @@ WideSeek-R1 通过共享模型对主智能体和子智能体进行联合优化�
 
 为了释放宽度扩展的潜力，WideSeek-R1 需要大量广域信息检索任务。我们构建了一条全自动数据生成流程，通过带有模式约束的查询和标准化表格输出，合成高质量训练样本，最终得到 **20,000** 条样本。
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/data_pipeline.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/data_pipeline.png
    :alt: 自动化数据构建流程
    :align: center
 
@@ -160,7 +153,7 @@ WideSeek-R1 通过共享模型对主智能体和子智能体进行联合优化�
 WideSearch 上的主要结果
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-在 4B 和 8B 基线模型中，WideSeek-R1-4B 在六项指标中的五项上取得了最佳结果。该多智能体系统稳定优于单智能体变体，在 item F1 分数上绝对提升 11.9 个点，并且在相同多智能体设定下，相比基础模型 Qwen3-4B 提升了 8.8 个点。值得注意的是，WideSeek-R1-4B 仅用近 170 倍更少的参数量，就达到了与单智能体 DeepSeek-R1-671B 可比的表现。
+在 4B 和 8B 基线模型中，WideSeek-R1-4B 在六项指标中的五项上取得了最佳结果。该多智能体系统稳定优于单智能体变体，在 item F1 分数上绝对提升 11.9 个点，并且在相同多智能体设定下，相比基础模型 Qwen3-4B 提升了 8.8 个点。WideSeek-R1-4B 仅用近 170 倍更少的参数量，就达到了与单智能体 DeepSeek-R1-671B 可比的表现。
 
 .. list-table:: 表 1a. WideSearch 基准上的单智能体结果
    :header-rows: 1
@@ -267,7 +260,7 @@ WideSearch 上的主要结果
 - **宽度扩展：** 性能在子智能体数量增加时最初会提升，但当未训练的主智能体接收到相互冲突的信号时，在更大宽度下可能下降。
 - **宽度扩展 + MARL：** 随着子智能体数量增加，性能持续提升，在 10 个子智能体时达到 40.0% 的 item F1。
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/exp_scaling.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/exp_scaling.png
    :alt: 深度扩展与宽度扩展
    :align: center
 
@@ -276,17 +269,15 @@ WideSearch 上的主要结果
 消融实验
 ~~~~~~~~
 
-我们进行了消融实验，以回答两个问题：
-(1) 是否有必要同时联合优化主智能体与子智能体；
-以及 (2) 数据组成如何影响最终能力。
+我们进行了消融实验，以回答两个问题：(1) 是否有必要同时联合优化主智能体与子智能体；以及 (2) 数据组成如何影响最终能力。
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/ablation_agent.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/ablation_agent.png
    :alt: 主智能体与子智能体的消融实验
    :align: center
 
 *图 5. 主智能体与子智能体的消融实验。*
 
-.. image:: https://github.com/RLinf/misc/raw/main/pic/wideseek_r1/ablation_data.png
+.. image:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wideseek_r1/ablation_data.png
    :alt: 训练数据组成的消融实验
    :align: center
 

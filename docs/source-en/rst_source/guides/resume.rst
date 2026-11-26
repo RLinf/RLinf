@@ -1,5 +1,5 @@
-Checkpoint Resume
-=================
+Resume Training
+===============
 
 Unexpected events—network errors, power loss, node pre-emptions—can
 interrupt a long-running distributed job.  
@@ -15,7 +15,7 @@ Assume the following YAML fragment:
 .. code-block:: yaml
 
    runner:
-     task_type: math
+     task_type: reasoning
      logger:
        log_path: ${runner.output_dir}/${runner.experiment_name}
        project_name: rlinf
@@ -25,8 +25,7 @@ Assume the following YAML fragment:
      experiment_name: grpo-1.5b
      output_dir: ./logs
 
-If Megatron is used as the training backend, its checkpoints will appear under `output_dir/experiment_name/checkpoints/`,
-while if FSDP/FSDP2 is used as the training backend, its checkpoints will appear under `log_path/experiment_name/checkpoints/`.
+Reasoning and agentic runners save checkpoints under ``<runner.output_dir>/<runner.experiment_name>/checkpoints/`` (for example ``logs/grpo-1.5b/checkpoints/``). Embodied runners save checkpoints under ``<runner.logger.log_path>/<runner.logger.experiment_name>/checkpoints/`` (embodied configs typically set ``runner.logger.log_path: "../results"`` rather than nesting ``experiment_name`` inside ``log_path``).
 
 Megatron Checkpoints
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -75,7 +74,7 @@ layout is:
 .. code-block:: text
 
    experiment_name/checkpoints/
-   ├── global_step_10/
+   ├── global_step_50/
    │   └── actor/
    │       ├── dcp_checkpoint/
    │       │   ├── __0_0.distcp
@@ -84,7 +83,7 @@ layout is:
    │       │   └── __3_0.distcp
    │       └── model_state_dict/
    │           └── full_weights.pt
-   └── global_step_20/
+   └── global_step_100/
        └── …
 
 DCP stores the training state across distributed checkpoint files (``.distcp``).
@@ -99,7 +98,7 @@ directory for two ranks contains:
 
 .. code-block:: text
 
-   global_step_10/actor/
+   global_step_50/actor/
    └── local_shard_checkpoint/
        ├── checkpoint_rank_0.pt
        └── checkpoint_rank_1.pt
@@ -119,7 +118,7 @@ Resuming training
 
 1. **Choose the latest checkpoint**
 
-   If ``global_step_10/`` is the highest numbered directory it is the
+   If ``global_step_50/`` is the highest numbered directory, it is the
    newest snapshot.
 
 2. **Edit the YAML**
@@ -127,22 +126,21 @@ Resuming training
    .. code-block:: yaml
 
       runner:
-        resume_dir: ${runner.output_dir}/${runner.experiment_name}/checkpoints/global_step_10
+        resume_dir: ${runner.output_dir}/${runner.experiment_name}/checkpoints/global_step_50
 
 
 3. **Relaunch exactly as before**
 
-   Start Ray, then the same ``run_main_*.sh`` launcher. 
-   RLinf will automatically detect the ``resume_dir`` and:
+   Run the same launch script as the original job (for example ``run_main_*.sh`` for reasoning or ``run_embodiment.sh`` for embodied tasks; on multi-node clusters, ensure Ray is already running across nodes first).
+   RLinf detects ``resume_dir`` automatically and:
 
-   * Restores model shards, optimizer, RNG and dataloader state on every
+   * Restores model shards, optimizer, RNG, and dataloader state on every
      node/rank.
-   * Continues step counting from ``global_step_10`` — your next saved
-     checkpoint will be ``global_step_20`` (because ``save_interval`` is
-     10).
+   * Continues step counting from ``global_step_50`` — your next saved
+     checkpoint will be ``global_step_100`` (because ``save_interval`` is
+     50).
 
 .. tip::
 
-   To verify resumption, look for the log line.  
-   If the next training step starts at 30, then the resume is working well!
+   To verify resumption, check the training log: the next training step should start at step 51 (after ``global_step_50``).
 

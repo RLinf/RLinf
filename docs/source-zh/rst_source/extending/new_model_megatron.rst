@@ -1,14 +1,33 @@
-使用 Megatron+SGLang 添加新模型
-=============================================
+LLM 模型（手动 Megatron）
+=========================
 
-使用 Megatron+SGLang 后端为 RLinf 添加新的 HuggingFace 模型，本指南完整介绍所需步骤。  
+使用 Megatron+SGLang 后端为 RLinf 添加新的 HuggingFace 模型，本指南介绍手动适配 Megatron 模型的完整步骤。
+
+.. list-table:: 速览
+   :header-rows: 1
+   :widths: 24 76
+
+   * - 项目
+     - 说明
+   * - 扩展点
+     - 手动适配 Megatron 模型构建、checkpoint 转换与同步到 ``SGLangWorker`` 的权重重分片
+   * - 核心接口
+     - ``model_provider_func``、``convert_hf_to_mg``、``get_tp_gather_fn``、``get_mg2hf_convertor``
+   * - 配置入口
+     - ``actor.training_backend: megatron``、``rollout.model.model_type``
+   * - 涉及文件
+     - ``rlinf/hybrid_engines/megatron/megatron_model_manager.py``、``rlinf/utils/ckpt_convertor/megatron_convertor/``、``rlinf/utils/resharding/utils.py``、``rlinf/utils/convertor/utils.py``
+
+.. tip::
+
+   对于较新的 HuggingFace 模型（如 Qwen3、Qwen3-MoE、Qwen2.5-VL、Qwen3-VL、DeepSeek-V3/Moonlight-16B 与 GLM-4.7-Flash），优先使用 :doc:`mbridge`\ （``actor.megatron.mbridge: True``），可在进程内直接加载 HuggingFace 权重，无需手动编写 ``megatron_convertor`` 和 ``mcore_weight_reshard`` 规则。
 
 前置条件
 -------------
 
-* 熟悉 **Megatron-LM** 分布式训练框架  
-* 理解 **RLinf** 框架架构  
-* 掌握 **PyTorch** 和分布式训练知识  
+* 熟悉 **Megatron-LM** 分布式训练框架
+* 理解 **RLinf** 框架架构
+* 掌握 **PyTorch** 和分布式训练知识
 
 逐步实现
 ---------------------------
@@ -16,18 +35,17 @@
 1. Megatron 模型配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-如需添加新模型到 RLinf 中，请先确保使用的 Megatron-LM 版本已经支持该模型。
+如需添加新模型到 RLinf 中，先确认使用的 Megatron-LM 版本已经支持该模型。
 
-否则，您需要先在 Megatron-LM 中添加对新模型的支持。
+否则，需要先在 Megatron-LM 中添加对新模型的支持。
 
-参考官方指南：
-`Megatron-LM <https://github.com/NVIDIA/Megatron-LM/>`__
+参考官方指南：`Megatron-LM <https://github.com/NVIDIA/Megatron-LM/>`__
 
-**文件：** ``rlinf/hybrid_engines/megatron/megatron_model_manager.py``  
+**文件：** ``rlinf/hybrid_engines/megatron/megatron_model_manager.py``
 
-当前 RLinf 框架中 Megatron-LM 训练框架中调用模型配置文件为 ``rlinf/hybrid_engines/megatron/megatron_model_manager.py``。
+当前 RLinf 框架中 Megatron-LM 训练框架调用的模型配置文件为 ``rlinf/hybrid_engines/megatron/megatron_model_manager.py``。
 
-修改 RLinf 传递给 Megatron-LM 的 ``model_provider_func``，以支持您需要进行训练的模型结构。  
+修改 RLinf 传递给 Megatron-LM 的 ``model_provider_func``，以支持需要训练的模型结构。
 
 .. code-block:: python
 
@@ -74,62 +92,60 @@
 
 Megatron-LM 训练框架并不能直接从 hf 格式的 checkpoint 直接读取，需要进行权重转换操作。
 
-您可以在 yaml 文件中通过配置 use_hf_ckpt 选项，启用是否在第一次 RLinf 的训练过程中从 huggingface 格式的 checkpoint 直接读取并转换为 Megatron-LM 格式的 checkpoint。
+你可以在 YAML 文件中配置 ``use_hf_ckpt`` 选项，在首次训练时将 HuggingFace 格式的 checkpoint 自动转换为 Megatron-LM 格式。
 
-转换后，当前 Megatron-LM 格式 的 checkpoint 会保存在 ``save_path`` 目录下。
-
-例如：
-
-.. code-block:: yaml
-
-   actor:
-    group_name: "ActorGroup"
-    training_backend: megatron
-    mcore_gpt: True
-    spec_name: decoder_gpt
-    model:
-      megatron_checkpoint: null
-   megatron:
-    use_hf_ckpt: True
-    ckpt_convertor:
-      model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model.model_path}
-      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
-
-这样的方式会在 RLinf 的第一次训练过程中，进行一次 Megatron-LM 格式的 checkpoint 转换。但是，从 huggingface 格式的 checkpoint 转换到 Megatron-LM 格式的 checkpoint 是非常耗时的过程。
-
-如果您之前已经转换过 Megatron-LM 格式 checkpoint, 您也可以直接在 yaml 文件中通过配置 ``actor.model.megatron_checkpoint`` 选项，指定转换好的 Megatron-LM 格式 checkpoint 路径，在后续的训练过程中可以直接使用。
+转换后的 Megatron-LM 格式 checkpoint 会保存在 ``save_path`` 目录下。
 
 例如：
 
 .. code-block:: yaml
 
    actor:
-    group_name: "ActorGroup"
-    training_backend: megatron
-    mcore_gpt: True
-    spec_name: decoder_gpt
-    model:
-      megatron_checkpoint: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
-   megatron:
-    use_hf_ckpt: False
-    ckpt_convertor:
-      model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model.model_path}
-      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+     group_name: "ActorGroup"
+     training_backend: megatron
+     mcore_gpt: True
+     spec_name: decoder_gpt
+     model:
+       megatron_checkpoint: null
+     megatron:
+       use_hf_ckpt: True
+       ckpt_convertor:
+         model: DeepSeek-R1-Distill-Qwen-1.5B
+         hf_model_path: ${rollout.model.model_path}
+         save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+
+这样会在 RLinf 首次训练时执行一次 Megatron-LM 格式的 checkpoint 转换。由于从 HuggingFace 格式转换到 Megatron-LM 格式耗时较长，如果之前已经转换过，可以直接在 YAML 中配置 ``actor.model.megatron_checkpoint`` 指向已转换的 checkpoint 目录，后续训练直接复用。
+
+例如：
+
+.. code-block:: yaml
+
+   actor:
+     group_name: "ActorGroup"
+     training_backend: megatron
+     mcore_gpt: True
+     spec_name: decoder_gpt
+     model:
+       megatron_checkpoint: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+     megatron:
+       use_hf_ckpt: False
+       ckpt_convertor:
+         model: DeepSeek-R1-Distill-Qwen-1.5B
+         hf_model_path: ${rollout.model.model_path}
+         save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
 
 
-这样转换好的 checkpoint 会直接被 RLinf 使用，无需再进行转换。
+这样 RLinf 会直接使用已转换的 checkpoint，无需再次转换。
 
-如果您有需要适配其他模型权重转换的需求，您可以直接在 `RLinf <https://github.com/RLinf/RLinf/issues>`__ 的 github 仓库中提出对应的 issue。
+如果需要适配其他模型的权重转换，可以直接在 `RLinf <https://github.com/RLinf/RLinf/issues>`__ GitHub 仓库提交 issue。
 
-您也可以通过参考 ``rlinf/utils/ckpt_convertor/megatron_convertor/`` 中的文件，自主适配新的模型转换代码。
+也可以参考 ``rlinf/utils/ckpt_convertor/megatron_convertor/`` 中的文件，自行适配新模型转换代码。
 
-**工具：** ``rlinf/utils/ckpt_convertor/megatron_convertor/``  
+**工具：** ``rlinf/utils/ckpt_convertor/megatron_convertor/``
 
-当前 RLinf 中的 ckpt_convert 转换工具是先将 huggingface 格式的 checkpoint 转换为中间文件格式，然后再将中间文件格式转换为 Megatron-LM 格式的 checkpoint。
+RLinf 的 ckpt_convert 转换工具先将 HuggingFace 格式的 checkpoint 转换为中间文件格式，再将中间文件格式转换为 Megatron-LM 格式。
 
-具体的接口在 ``rlinf/utils/ckpt_convertor/megatron_convertor/convert_hf_to_mg.py`` 文件中。
+具体接口位于 ``rlinf/utils/ckpt_convertor/megatron_convertor/convert_hf_to_mg.py``。
 
 .. code-block:: python
 
@@ -146,44 +162,41 @@ Megatron-LM 训练框架并不能直接从 hf 格式的 checkpoint 直接读取�
     convert_config.load_path = load_path
     ...
 
-RLinf 使用 hf_to_middle_file 方法将 huggingface 格式的 checkpoint 转换为中间文件格式。
+RLinf 使用 ``hf_to_middle_file`` 将 HuggingFace 格式的 checkpoint 转换为中间文件格式，再用 ``middle_file_to_mg`` 将中间文件格式转换为 Megatron-LM 格式。
 
-然后再使用 middle_file_to_mg  方法将中间文件格式转换为 Megatron-LM 格式的 checkpoint。
+如需适配新模型，修改这两个方法以处理新模型对应的权重切分与转换。
 
-如果您需要适配新的模型，那么您需要修改这两个方法，来对新模型中的权重进行对应的切分以及转换。
-
-如果您已经适配了新的模型，我们特别欢迎您可以将 code 提交 pull request 贡献到我们的 `RLinf <https://github.com/RLinf/RLinf/pulls>`__ 仓库中，让更多的用户受益！
+完成新模型适配后，欢迎提交 pull request 到 `RLinf <https://github.com/RLinf/RLinf/pulls>`__ 仓库，让更多用户受益。
 
 3. SGLang 模型配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf 仅支持已经被 SGLang 适配过的模型。  
+RLinf 仅支持已经被 SGLang 适配过的模型。
 
-如果需要新模型，需要在 SGLang 中添加适配代码。
+如果需要新模型，需先在 SGLang 中添加适配代码。
 
-参考官方指南：  
-`SGLang-support-new-model <https://docs.SGLang.ai/supported_models/support_new_models.html>`__  
+参考官方指南：`SGLang-support-new-model <https://docs.sglang.io/supported_models/support_new_models.html>`__
 
 4. 从 Megatron 同步权重到 SGLang
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-在 RLinf 中 MegatronActor 在每次开始训练前将当前的权重转换为同步到各个 SGLangActor 中。
+在 RLinf 中 MegatronActor 在每次开始训练前将当前的权重转换为同步到各个 SGLangWorker 中。
 
-其中就会涉及到对 MegatronActor 的权重格式转换到 SGLangActor 的权重格式。
+其中就会涉及到对 MegatronActor 的权重格式转换到 SGLangWorker 的权重格式。
 
-权重转换分为两个阶段，第一个阶段是 MegatronActor 会将权重转换为 Sglang 格式并发送给各个 SGLangActor。
+权重转换分为两个阶段，第一个阶段是 MegatronActor 会将权重转换为 Sglang 格式并发送给各个 SGLangWorker。
 
-第二个阶段是 SGLangActor 会将接收到的权重进行加载并更新当前自己的权重。
+第二个阶段是 SGLangWorker 会将接收到的权重进行加载并更新当前自己的权重。
 
 **文件：** ``rlinf/utils/resharding/mcore_weight_reshard.py``  
 
 在每次 rollout 前，**MegatronActor** 会使用 gather_and_reshard_model 将权重格式进行转换。
 
-共享式下每个 MegatronActor 会一一对应给一个 SGLangActor 发送权重。  
+共享式下每个 MegatronActor 会一一对应给一个 SGLangWorker 发送权重。  
 
-首先会按照 MegatronActor 的并行配置重新进行权重的合并以及切分，然后对切分后的权重进行重命名，最后转换为 SGLangActor 的权重格式。
+首先会按照 MegatronActor 的并行配置重新进行权重的合并以及切分，然后对切分后的权重进行重命名，最后转换为 SGLangWorker 的权重格式。
 
-转换后的权重会通过 send 接口发送给对应的 SGLangActor。
+转换后的权重会通过 send 接口发送给对应的 SGLangWorker。
 
 .. code-block:: python
 
@@ -258,12 +271,12 @@ RLinf 仅支持已经被 SGLang 适配过的模型。
                 model_state_dict, self.merge_factor, tp_sub_group
             )
         
-        # 对切分后的权重进行重命名，最后转换为 SGLangActor 的权重格式
+        # 对切分后的权重进行重命名，最后转换为 SGLangWorker 的权重格式
         if self.config.convert_fn is not None:
             model_state_dict = self.config.convert_fn(model_state_dict)
         ...
 
-如果需要支持更多的模型，您需要新增 tp_reshard_fn 和 pp_reshard_fn 方法，来对新模型中的权重进行对应的切分以及转换， 新增 convert_fn 转换规则来适配对切分后的权重进行重命名。
+如果需要支持更多模型，你需要新增 TP 和 PP 权重切分与转换函数，并补充权重重命名规则。
 
 以 qwen2.5 为例。
 
@@ -406,11 +419,11 @@ MegatronActor 对切分后的权重进行重命名代码在 ``rlinf/utils/conver
                 ),
             ]
 
-目前仅实现了 *Qwen-2.5* 系列。  
+这套手动转换路径用于 Qwen2.5 等模型；较新的架构（Qwen3、Qwen3-MoE、Qwen2.5-VL、Qwen3-VL、DeepSeek-V3/Moonlight-16B 与 GLM-4.7-Flash）请使用 :doc:`mbridge`。
 
-完成上述步骤后，MegatronActor 会将权重发送给 SglangActor，更新当前 SglangActor 的权重。
+完成上述步骤后，MegatronActor 会将权重发送给 SGLangWorker，更新当前 SGLangWorker 的权重。
 
-SglangActor 接收权重代码 ``rlinf/hybrid_engines/sglang/common/sgl_scheduler.py`` 文件中。
+SGLangWorker 接收权重代码位于 ``rlinf/hybrid_engines/sglang/common/sgl_scheduler.py``。
 
 .. code-block:: python
 
@@ -437,7 +450,7 @@ SglangActor 接收权重代码 ``rlinf/hybrid_engines/sglang/common/sgl_schedule
                 list_args = list(args)
                 # NOTE: the key is to change device id to the current device id
                 # in case two processes have different CUDA_VISIBLE_DEVICES
-                list_args[6] = torch.cuda.current_device()
+                list_args[6] = Worker.torch_platform.current_device()
                 new_weight = func(*list_args)
 
                 model.load_weights([(name, new_weight)])
@@ -449,74 +462,92 @@ SglangActor 接收权重代码 ``rlinf/hybrid_engines/sglang/common/sgl_schedule
         self.flush_cache()
         return SyncHFWeightOutput()
 
-若需要对 SglangActor 接收的权重进行特殊处理，可在此处进行修改。
+若需要对 SGLangWorker 接收的权重做特殊处理，可在此处修改。
 
-若您对整个适配新模型的过程存在任何疑问以及问题，欢迎随时给我们 `RLinf <https://github.com/RLinf/RLinf/issue>`__ 提出对应的 issue，我们会尽快解答您的问题。
+如果对适配新模型的过程有任何疑问，欢迎在 `RLinf <https://github.com/RLinf/RLinf/issues>`__ 仓库提交 issue，我们会尽快解答。
 
-5. qwen2.5 系列模型演示
+5. Qwen2.5 系列模型演示
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-完成上述步骤后，您就可以适配您的新模型到 RLinf 中，下面展示是 qwen2.5 系列模型演示的 yaml 配置文件。
-
-您可以在适配好新模型后，参考这个 yaml 配置文件，进行相应的修改。
+完成上述步骤后，即可将新模型接入 RLinf。下面展示 Qwen2.5 系列模型的 YAML 配置示例，适配新模型后可参考修改。
 
 **文件：** ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
 
-设置 RLinf 使用的 Megatron 参数。  
+设置 RLinf 使用的 Megatron 参数。
 
 .. code-block:: yaml
 
-   # Megatron 参数
-   model:
-    precision: fp16
-    add_bias_linear: False
+   actor:
+     # Megatron 参数
+     model:
+       precision: fp16
+       add_bias_linear: False
 
-    tensor_model_parallel_size: 2
-    pipeline_model_parallel_size: 1
+       tensor_model_parallel_size: 2
+       pipeline_model_parallel_size: 1
 
-    activation: swiglu
-    sequence_parallel: True
-    # recompute_method: block
-    # recompute_granularity: selective
+       activation: swiglu
+       sequence_parallel: True
+       # recompute_method: block
+       # recompute_granularity: selective
 
-    recompute_method: block
-    recompute_granularity: full
-    recompute_num_layers: 20
+       recompute_method: block
+       recompute_granularity: full
+       recompute_num_layers: 20
 
-    seq_length: ${runner.seq_length}
-    encoder_seq_length: ${runner.seq_length}
+       seq_length: ${runner.seq_length}
+       encoder_seq_length: ${runner.seq_length}
 
-    normalization: rmsnorm
+       normalization: rmsnorm
 
-    position_embedding_type: rope
+       position_embedding_type: rope
 
-    apply_rope_fusion: True
-    bias_dropout_fusion: False
-    persist_layer_norm: False
-    bias_activation_fusion: False
-    attention_softmax_in_fp32: True
-    batch_p2p_comm: False
-    variable_seq_lengths: True
-    gradient_accumulation_fusion: False
-    moe_token_dispatcher_type: alltoall
-    use_cpu_initialization: False
+       apply_rope_fusion: True
+       bias_dropout_fusion: False
+       persist_layer_norm: False
+       bias_activation_fusion: False
+       attention_softmax_in_fp32: True
+       batch_p2p_comm: False
+       variable_seq_lengths: True
+       gradient_accumulation_fusion: False
+       moe_token_dispatcher_type: alltoall
+       use_cpu_initialization: False
 
-   megatron:
-    ddp_bucket_size: null
-    distributed_backend: nccl # 支持 'nccl' 和 'gloo'
-    distributed_timeout_minutes: 30
-    ckpt_format: torch
-    use_dist_ckpt: False
-    tp_comm_bootstrap_backend: nccl
-    tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
-    use_hf_ckpt: True # 若为 True，会将 hf 模型转换生成 megatron 检查点，并用于训练。
+     megatron:
+       ddp_bucket_size: null
+       distributed_backend: nccl # 支持 'nccl' 和 'gloo'
+       distributed_timeout_minutes: 30
+       ckpt_format: torch
+       use_dist_ckpt: False
+       tp_comm_bootstrap_backend: nccl
+       tp_comm_overlap_cfg: null # tp_comm_overlap_cfg.yaml
+       use_hf_ckpt: True # 若为 True，会将 hf 模型转换生成 megatron checkpoint，并用于训练。
 
-    ckpt_convertor: # ckpt 转换器配置
-      model: DeepSeek-R1-Distill-Qwen-1.5B
-      hf_model_path: ${rollout.model.model_path} # hf 模型路径
-      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
-      use_gpu_num : 0
-      use_gpu_index: null
-      process_num: 16 # 用于检查点转换的进程数
-      tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
-      pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
+       ckpt_convertor: # ckpt 转换器配置
+         model: DeepSeek-R1-Distill-Qwen-1.5B
+         hf_model_path: ${rollout.model.model_path} # hf 模型路径
+         save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/actor
+         use_gpu_num : 0
+         use_gpu_index: null
+         process_num: 16 # 用于 checkpoint 转换的进程数
+         tensor_model_parallel_size: ${actor.model.tensor_model_parallel_size}
+         pipeline_model_parallel_size: ${actor.model.pipeline_model_parallel_size}
+
+本地验证
+--------
+
+启动多卡训练前，可先在本地 CPU 环境检查新模型类型是否已正确解析 TP 聚合函数与权重转换器：
+
+.. code-block:: bash
+
+   python -c '
+   from rlinf.utils.convertor.utils import get_mg2hf_convertor
+   from rlinf.utils.resharding.utils import get_tp_gather_fn
+
+   gather_fn = get_tp_gather_fn("qwen2.5")
+   assert callable(gather_fn), "Expected callable TP gather function"
+   print("Resolved gather_fn:", gather_fn.__name__)
+   '
+
+将 ``"qwen2.5"`` 替换为新接入的 ``rollout.model.model_type``，确认注册查找通过后再启动分布式训练。
+

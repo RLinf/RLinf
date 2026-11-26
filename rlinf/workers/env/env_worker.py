@@ -52,6 +52,14 @@ from rlinf.utils.placement import HybridComponentPlacement
 
 
 class EnvWorker(Worker):
+    """Distributed environment worker for embodied training and evaluation.
+
+    Owns one or more simulator or real-world environment instances per rank.
+    Steps environments with actions from rollout workers, applies optional
+    reward models or wrappers, and streams observations and transitions over
+    channels.
+    """
+
     # Class-level default so the observation send path is safe even when the
     # instance is built without running ``__init__`` (e.g. ``object.__new__`` in
     # unit tests). ``None`` means "use the scheduler's default split"; when
@@ -1483,3 +1491,14 @@ class EnvWorker(Worker):
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
         return {**eval_metrics, **self.eval_assignment.scoped(eval_metrics)}
+
+    def finalize_eval_results(
+        self, env_results: list[dict | None], step: int | None = None
+    ) -> tuple[dict[str, float], str | None] | None:
+        """Summarize and optionally export eval results when the env provides a hook."""
+        if not getattr(self, "eval_env_list", None):
+            return None
+        finalize_fn = get_env_attr(self.eval_env_list[0], "finalize_eval_results")
+        if not callable(finalize_fn):
+            return None
+        return finalize_fn(self.cfg, env_results, step=step)

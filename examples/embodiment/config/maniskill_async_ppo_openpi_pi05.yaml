@@ -103,7 +103,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-ManiSkill-25Main-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT
+    model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
 actor:
   group_name: "ActorGroup"

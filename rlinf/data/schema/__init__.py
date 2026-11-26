@@ -50,7 +50,9 @@ from rlinf.data.schema.reasoning_requests import (
 from rlinf.data.schema.reasoning_results import (
     DiscardedGroup,
     DynamicRolloutResult,
+    GroupDelivery,
     GroupMetadata,
+    PayloadRef,
     RolloutResult,
 )
 
@@ -58,7 +60,9 @@ __all__ = [
     "DiscardedGroup",
     "DynamicActorBatch",
     "DynamicRolloutResult",
+    "GroupDelivery",
     "GroupMetadata",
+    "PayloadRef",
     "FinishReasonEnum",
     "RolloutRequest",
     "RolloutResult",

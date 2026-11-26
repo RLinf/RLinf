@@ -1,5 +1,5 @@
-5D Parallelism Configuration
-================================
+5D Parallelism
+==============
 
 RLinf employs **NVIDIA Megatron-LM** as its large-scale Transformer training
 backend and exposes five orthogonal parallelism modes:
@@ -29,7 +29,7 @@ process group. Each GPU holds and computes only its slice.
 * Linear layers  
   – split ``Linear(h, 4h)`` **by columns**  
   – split ``Linear(4h, h)`` **by rows**  
-* Attention projections – shard :math:`Q,K,V` along the head dimension  
+* Attention projections – shard Q, K, V along the head dimension
 * Results are fused via *all-reduce* after every sharded operation.
 
 **Sample YAML**
@@ -180,7 +180,7 @@ sharded in that dimension.
 
 **Mechanics**
 
-* Split :math:`Q,K,V` and logits into *context* chunks.  
+* Split Q, K, V and logits into *context* chunks.
 * Use ring attention to communicate and incrementally accumulate output.
 
 **Sample YAML**
@@ -201,11 +201,53 @@ sharded in that dimension.
 * High bandwidth cost; parameters are **not** sharded, so model memory is
   replicated.
 
-Summary
--------
+6. Expert Parallelism (EP) for MoE Models
+-----------------------------------------
 
-Megatron-LM’s flexible combination of **TP, DP, PP, SP, and CP** enables
-RLinf to scale models by *width* (TP), *data volume* (DP),
-*depth* (PP), or *context length* (SP / CP).  
-Select sizes based on model architecture, target sequence length, GPU
-memory, and interconnect topology for best throughput.
+*Expert Parallelism* shards Mixture-of-Experts (MoE) experts across GPUs so each rank stores only a subset of experts and exchanges tokens via All-to-All communication. RLinf uses EP for MoE recipes such as :doc:`Moonlight-16B GRPO <../examples/agentic/math_reasoning/moonlight>` and :doc:`GLM-4.7-Flash Search-R1 <../examples/agentic/searchr1/index>`.
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       tensor_model_parallel_size: 4
+       expert_model_parallel_size: 8
+       expert_tensor_parallel_size: 1
+       moe_token_dispatcher_type: alltoall
+
+Keep ``expert_model_parallel_size`` within one 8-GPU node (typically ``8``) so MoE All-to-All stays over NVLink instead of crossing inter-node links. On Hopper/Ampere clusters, pair EP with :doc:`FUSCO <../examples/system/fusco>` to fuse permutation and All-to-All communication.
+
+Quick GPU Sizing Reference
+--------------------------
+
+Start from the shipped RLinf parallelism presets below and scale DP with your cluster size (``DP = total_actor_GPUs / (TP * PP * CP)``):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 14 14 26 22
+
+   * - Model
+     - Type
+     - Min GPUs (80 GB)
+     - Actor Parallelism (TP / PP / CP / EP)
+     - Example Recipe
+   * - Qwen2.5-1.5B
+     - Dense
+     - 2–8
+     - TP 2 / PP 1 / CP 1 / EP 1
+     - :doc:`Qwen2.5 GRPO <../examples/agentic/math_reasoning/reasoning>`
+   * - Qwen2.5-7B
+     - Dense
+     - 4–8
+     - TP 4 / PP 1 / CP 1 / EP 1
+     - :doc:`Qwen2.5 GRPO <../examples/agentic/math_reasoning/reasoning>`
+   * - Moonlight-16B-A3B
+     - MoE
+     - 8
+     - TP 1–2 / PP 1 / CP 1 / EP 8
+     - :doc:`Moonlight-16B <../examples/agentic/math_reasoning/moonlight>`
+   * - GLM-4.7-Flash (~3B active)
+     - MoE
+     - 8 (1–2 nodes)
+     - TP 4 / PP 1 / CP 1 / EP 8
+     - :doc:`GLM-4.7-Flash <../examples/agentic/searchr1/index>`

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://github.com/RLinf/misc/raw/main/pic/logo_white.svg" alt="RLinf-logo" width="600"/>
+  <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/logo_white.svg" alt="RLinf-logo" width="600"/>
 </div>
 
 <div align="center">
@@ -29,12 +29,25 @@
 RLinf is a flexible and scalable open-source RL infrastructure designed for Embodied and Agentic AI. The 'inf' in RLinf stands for `Infrastructure`, highlighting its role as a robust backbone for next-generation training. It also stands for `Infinite`, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
 
 <div align="center">
-  <img src="https://github.com/RLinf/misc/raw/main/pic/overview.svg" alt="RLinf-overview"/>
+  <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/overview.svg" alt="RLinf-overview"/>
 </div>
 
 
+## Quick Start
+
+Install locally with `requirements/install.sh` (pass `--venv <dir>` when keeping separate model/env stacks, or pull a prebuilt image from [Docker Hub](https://hub.docker.com/r/rlinf/rlinf)):
+
+```bash
+git clone https://github.com/RLinf/RLinf.git && cd RLinf
+bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin/activate
+bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
+```
+
+That launches ManiSkill3 PPO MLP training on one GPU. Next, follow the [Quick Start](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html) for OpenVLA / OpenVLA-OFT PPO training, read the [RLinf Walkthrough](https://rlinf.readthedocs.io/en/latest/rst_source/start/walkthrough.html) for a visual tour of the framework and repo layout, try the [5-Minute Evaluation Quick Tour](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/get_started/quick_tour.html), or browse [Embodied Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) and the [Installation Guide](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html).
+
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports SuperMimic for Unitree G1 whole-body motion tracking with a differentiable world model in MuJoCo Warp, including multi-GPU FSDP2 scaling, CUDA graphs, and bf16 mixed precision. On NVIDIA A800, it reaches **1.34×** throughput on 1 GPU (0.383 s vs. 0.515 s/update) and **2.27×** on 4 GPUs (0.227 s/update, 6000 updates in ~23 min) over the official single-GPU code, and reaches **0.856** normalized return on 40 LAFAN1 clips (paper: 0.82) with **0** falls. Doc: [SuperMimic](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/supermimic.html).
 - [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
 - [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
 - [2026/11] 🔥 RLinf supports Reward Feedback Learning (ReFL) for fine-tuning SD3.5 Medium with ImageReward. Doc: [ReFL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html).
@@ -45,7 +58,13 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/11] 🎉 The [RLinf website](https://rlinf.org/) is live. Read our [blog posts](https://rlinf.org/en/blog/) and browse [community events](https://rlinf.org/en/events/).
 - [2026/11] 🔥 RLinf supports MuJoCo Warp for batched GPU simulation on five classic locomotion tasks with an MLP + PPO recipe. Doc: [MuJoCo Warp](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/mujoco_warp.html).
 - [2026/11] 🔥 RLinf supports LeKiwi, a three-wheel omnidirectional mobile base, with per-part bring-up tools and a registered real-world drive environment. Doc: [LeKiwi](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html).
+
+<details>
+<summary><b>More updates</b></summary>
+
 - [2026/11] 🔥 RLinf supports dual-arm ARX X5 data collection with Pico teleoperation. Doc: [ARX X5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/arx5.html).
+- [2026/11] 🔥 RLinf supports a session server for asynchronous agentic RL: trajectories stay on the rollout nodes instead of node 0, requests are routed by an SGLang router, and agents can use the OpenAI chat completions API. Doc: [Session Server](https://rlinf.readthedocs.io/en/latest/rst_source/guides/session_server.html).
+- [2026/11] 🔥 RLinf supports asynchronous agentic RL: the rollout keeps generating while the actor trains on data from an earlier weight version, with bounded staleness. On Search-R1 with GLM-4.7-Flash, the step time drops from 278.6 s to 139.0 s with a comparable reward. Docs: [Asynchronous Agentic RL](https://rlinf.readthedocs.io/en/latest/rst_source/guides/async_agentic.html), [Asynchronous Search-R1 Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/async.html).
 - [2026/11] 🔥 RLinf supports DiffusionART fine-tuning for SD3 image generation and Wan2.2 video generation with OCR rewards, reaching the same reward threshold in about 30% less wall-clock time and a third fewer trajectories than NFT on Wan2.2. Doc: [DiffusionART](https://rlinf.readthedocs.io/en/latest/rst_source/examples/diffusion_art.html).
 - [2026/11] 🔥 RLinf supports LIBERO-Mem and MEM-inspired visual short memory for OpenPI SFT and evaluation, raising strict LIBERO-Mem success from 20.0% to 35.5% over the current-frame baseline. Docs: [LIBERO-Mem](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#libero-mem-benchmark), [OpenPI Short Memory](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0/short_memory.html).
 - [2026/11] 🔥 RLinf supports evaluating OpenPI π₀.₅ on the RoboLab manipulation benchmark. Doc: [RoboLab evaluation](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/robolab.html).
@@ -79,10 +98,6 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/07] 🔥 RLinf supports OPD for online policy distillation of OpenVLA-OFT on LIBERO. Doc: [OPD](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html).
 - [2026/07] 🎉 RLinf v0.3 is released with major upgrades in the real-world RL full pipeline (data collection → SFT → RL → deployment), more simulators and SOTA models, and system-level optimizations. Release notes: [RLinf v0.3](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.3.html).
 - [2026/07] 🔥 RLinf supports RLT for online RL fine-tuning of VLA policies. Doc: [RLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rlt.html).
-
-<details>
-<summary><b>More updates</b></summary>
-
 - [2026/06] 🔥 RLinf supports STEAM for offline advantage estimation and policy optimization. Doc: [STEAM](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/steam.html).
 - [2026/06] 🔥 RLinf supports reinforcement learning fine-tuning for [GR00T-N1.7](https://github.com/NVIDIA/Isaac-GR00T). Doc: [RL on GR00T-N1.7](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html).
 - [2026/06] 🔥 RLinf supports reinforcement learning fine-tuning with the Polaris simulator. Doc: [RL on Polaris](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/polaris.html).
@@ -95,7 +110,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/05] 🔥 RLinf supports DreamZero SFT with a refactored training pipeline, achieving nearly **4×** throughput improvement over the official baseline and better convergence. Doc: [DreamZero](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html)
 - [2026/05] 🔥 RLinf supports GimArm. Doc: [GimArm](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gim_arm.html)
 - [2026/05] 🔥 RLinf supports real-world reinforcement learning with a dexterous hand. Doc: [Franka + Dexterous Hand](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_dexhand.html)
-- [2026/05] 🔥 RLinf supports DM0. In particular, RLinf and Dexbotic enable Lego-style SFT-RL integration. Link: [Dexbotic project link](https://github.com/dexmal/dexbotic/blob/main/docs/RLinfAsRLBackend.md)
+- [2026/04] 🔥 RLinf supports DM0. In particular, RLinf and Dexbotic enable Lego-style SFT-RL integration. Link: [Dexbotic project link](https://github.com/dexmal/dexbotic/blob/main/docs/RLinfAsRLBackend.md)
 - [2026/04] 🔥 RLinf supports Dexmal DOS-W1 for real-world reinforcement learning. Doc: [Real-World RL on Dexmal DOS-W1](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dosw1.html).
 - [2026/04] 🔥 RLinf supports RECAP (RL with Experience and Corrections via Advantage-conditioned Policies) for offline advantage-based policy optimization. Doc: [RECAP](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/recap.html).
 - [2026/04] 🔥 RLinf now supports offline IQL training on D4RL benchmarks. Doc: [IQL on D4RL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/iql_d4rl.html), paper: [Offline Reinforcement Learning with Implicit Q-Learning](https://arxiv.org/abs/2110.06169).
@@ -118,7 +133,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/02] 🔥 RLinf supports sim-real co-training for π₀ and π₀.₅. Doc: [Sim-Real Co-Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/co_training.html).
 - [2026/02] 🔥 RLinf officially supports world-model-based reinforcement learning fine-tuning for VLA. Doc: [WoVR](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/wovr.html), paper: [WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL](https://arxiv.org/abs/2602.13977).
 - [2026/02] 🔥 RLinf supports reinforcement learning fine-tuning for VLA based on [Wan World Model](https://github.com/RLinf/diffsynth-studio). Doc: [RL on Wan World Model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/wan.html).
-- [2026/02] 🔥 RLinf is now available on [PyPI](https://pypi.org/project/rlinf/) for installation via pip as a library. Doc: [Installation as a Library](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html#install-as-library).
+- [2026/02] 🔥 RLinf is now available on [PyPI](https://pypi.org/project/rlinf/) for installation via pip as a library. Doc: [Installation](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html).
 - [2026/02] 🔥 The Technical Report of our realworld online learning system [USER: A Unified and Extensible System for Real-World Online Policy Learning in Embodied AI](https://arxiv.org/abs/2602.07837) is released. Doc: [USER](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/rlinf_user.html).
 - [2026/02] 🔥 RLinf supports reinforcement learning fine-tuning for [Dexbotic](https://github.com/dexmal/dexbotic). Doc: [RL on Dexbotic Model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexbotic.html).
 - [2026/02] 🔥 RLinf supports reinforcement learning with [GSEnv](https://github.com/chenkang455/ManiSkill-GS) for Real2Sim2Real. Doc: [RL with GSEnv](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gsenv.html).
@@ -225,6 +240,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robolab.html">RoboLab (evaluation only)</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/g1_mimic.html">G1 Motion Tracking (MuJoCo Warp)</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -255,8 +271,6 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><b>World Model</b></li>
           <ul>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opensora.html">OpenSora</a> ✅</li>
-          </ul>
-          <ul>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/wan.html">Wan</a> ✅</li>
           </ul>
           <li><b>Custom Models</b></li>
@@ -299,6 +313,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html">OPD</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/diffusion_art.html">DiffusionART</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html">ReFL</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/supermimic.html">SuperMimic</a> ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>
@@ -444,14 +459,6 @@ Follow a model or environment link for its training recipe and available backend
 </table>
 
 
-## Quick Start
-**Installation:** Users can refer to our [installation guide](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html) to install RLinf. We recommend users to use our provided docker image (i.e., [Installation Method 1](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html#installation-method-1-docker-image)), as the environment and dependencies of embodied RL are complex.
-
-**Run a simple example:** After setting up the environment, users can run a simple example of embodied RL with ManiSkill3 simulator following [this document](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html).
-
-**SOTA RL Training Reproduction:** RLinf provides end-to-end recipes that reproduce or match **state-of-the-art (SOTA) RL results** out of the box—users can directly run our configs and scripts to obtain SOTA performance without custom engineering. Check out our [example gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) for more details.
-
-
 ## Awesome Community Projects with RLinf
 We are excited to see a growing ecosystem of projects building on top of or integrate with RLinf, spanning embodied AI, robotics, and long-horizon agentic systems. Here are some awesome community projects:
 - [Qwen-VLA](https://github.com/QwenLM/Qwen-VLA): A unified vision-language-action model that uses RLinf for reinforcement learning to optimize closed-loop task success.
@@ -470,22 +477,16 @@ We are excited to see a growing ecosystem of projects building on top of or inte
 RLinf is a production-grade, open-source reinforcement learning framework for embodied AI. It is being adopted by leading companies and startups across AI infrastructure and robotics, including AgiBot, X Square Robot, PsiBot, Dexmal, Moore Threads, D-Robotics, DexForce, YinWang, Robbyant and GigaAI.
 
 <div align="center">
-  <img src="https://github.com/RLinf/misc/raw/main/pic/adoption_logos/adoption.png" alt="adoption"/>
+  <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/adoption_logos/adoption.png" alt="adoption"/>
 </div>
 
 ✨ If your organization is using RLinf, feel free to reach out or submit a PR to be listed here.
 
 
-# CI Test Status
-RLinf has comprehensive CI tests for both the core components (via unit tests) and end-to-end RL training workflows of embodied, agent, and reasoning scenarios.
-Below is the summary of the CI test status of the main branch:
+## CI Test Status
+RLinf runs CI tests on `main` covering core components (`unit-tests`, `scheduler-tests`) and end-to-end RL training workflows (`embodied-e2e-tests`, `agent-reason-e2e-tests`):
 
-| Test Name | Status |
-| -------- | ------ |
-| unit-tests | <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/RLinf/RLinf/ci-tests.yml?label=Status"> |
-| agent-reason-e2e-tests | <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/RLinf/RLinf/ci-tests.yml?label=Status"> |
-| embodied-e2e-tests | <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/RLinf/RLinf/ci-tests.yml?label=Status"> |
-| scheduler-tests | <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/RLinf/RLinf/ci-tests.yml?label=Status"> |
+[![CI Tests](https://img.shields.io/github/actions/workflow/status/RLinf/RLinf/ci-tests.yml?label=CI%20Tests)](https://github.com/RLinf/RLinf/actions/workflows/ci-tests.yml)
 
 ## Contribution Guidelines
 We welcome contributions to RLinf. Before opening a pull request, read the [contribution guide](CONTRIBUTING.md) and add `Signed-off-by` to each commit to certify compliance with the [Developer Certificate of Origin (DCO)](DCO). Thank you to everyone who contributes to the project.

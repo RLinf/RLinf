@@ -19,8 +19,8 @@ RTC 的核心思想是将策略推理与动作执行流水线化。标准 rollou
 
 RTC 使用 ``软重叠引导``\ （soft overlap guidance）来平滑 chunk 边界。当新 chunk 到达时，前一个 chunk 可能还有若干步未执行。RTC 引导机制使新 chunk 的前 ``delay_steps`` 步与旧 chunk 的剩余部分保持一致，避免动作突变：
 
-- ``硬掩码`` （hard mask）：前 ``delay_steps`` 步，强制使用旧 chunk 的剩余动作。
-- ``软掩码`` （soft mask）：后续若干步，通过指数衰减引导新 chunk 逐渐过渡到其自身预测。
+- ``硬掩码``\ （hard mask）：前 ``delay_steps`` 步，强制使用旧 chunk 的剩余动作。
+- ``软掩码``\ （soft mask）：后续若干步，通过指数衰减引导新 chunk 逐渐过渡到其自身预测。
 - 引导强度由 ``rtc_guidance_clip`` 限制，避免过度修正。
 
 仿真实验
@@ -28,23 +28,23 @@ RTC 使用 ``软重叠引导``\ （soft overlap guidance）来平滑 chunk 边�
 
 环境安装与模型下载
 
-.. code:: bash
+.. code-block:: bash
 
    # 安装依赖
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
    # 下载模型
    hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
 运行 RTC 评测
 
-.. code:: bash
+.. code-block:: bash
 
    bash evaluations/run_eval.sh libero_spatial_eval_pi05_RTC
 
 启用 / 禁用 RTC 通过 YAML 中 ``runner.rtc.enabled`` 控制（默认 ``True``）：
 
-.. code:: bash
+.. code-block:: bash
 
    bash evaluations/run_eval.sh libero_spatial_eval_pi05_RTC \
        'runner.rtc.enabled=True'
@@ -65,7 +65,7 @@ RTC 使用 ``软重叠引导``\ （soft overlap guidance）来平滑 chunk 边�
    * - 指标
      - RTC 关闭
      - RTC 开启
-   * - ``episode_time`` （秒）
+   * - ``episode_time``\ （秒）
      - 56.93
      - 54.02
    * - ``step_total_time``
@@ -83,7 +83,7 @@ RTC 使用 ``软重叠引导``\ （soft overlap guidance）来平滑 chunk 边�
    * - ``residual``
      - 0.17
      - 0.89
-   * - ``speed_up`` （秒）
+   * - ``speed_up``\ （秒）
      -
      - 2.91
 
@@ -127,19 +127,19 @@ RTC 将 ``wait_inference_time`` 从数秒降至约 2ms（接近零），几乎�
 
 控制节点安装
 
-.. code:: bash
+.. code-block:: bash
 
-   bash requirements/install.sh embodied --env franka
+   bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
 训练节点安装
 
-.. code:: bash
+.. code-block:: bash
 
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero
+   bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
 下载模型
 
-.. code:: bash
+.. code-block:: bash
 
    hf download RLinf/RLinf-Pi05-Pick_Red --local-dir ./RLinf-Pi05-Pick_Red
 
@@ -147,22 +147,23 @@ RTC 将 ``wait_inference_time`` 从数秒降至约 2ms（接近零），几乎�
 
 训练节点（head）：
 
-.. code:: bash
+.. code-block:: bash
 
-   source ray_utils/realworld/setup_before_ray.sh
+   source .venv/bin/activate
+   export RLINF_NODE_RANK=0
    ray start --head --port=6379 --node-ip-address=<head_node_ip_address>
 
 控制节点（worker）：
 
-.. code:: bash
+.. code-block:: bash
 
    source .venv/bin/activate
-   source ray_utils/realworld/setup_before_ray.sh
+   export RLINF_NODE_RANK=1
    ray start --address='<head_node_ip_address>:6379'
 
 在训练节点上启动评测
 
-.. code:: bash
+.. code-block:: bash
 
    bash evaluations/run_eval.sh realworld_pnp_eval_pi05_sft_RTC
 
@@ -264,7 +265,7 @@ RTC 将 ``wait_inference_time`` 从数秒降至约 2ms（接近零），几乎�
 
 RTC 参数分布在两个位置：
 
-``runner.rtc`` （控制 RTC 循环行为）
+``runner.rtc``\ （控制 RTC 循环行为）
 
 .. list-table::
    :header-rows: 1
@@ -295,7 +296,7 @@ RTC 参数分布在两个位置：
      - ``8``
      - 滑动窗口大小，用于估计推理延迟。RTC 使用窗口内的最大延迟步数作为下一轮预测值。
 
-``model.openpi.rtc_*`` （控制 RTC 引导行为，建议与 ``runner.rtc.enabled`` 保持同步）
+``model.openpi.rtc_*``\ （控制 RTC 引导行为，建议与 ``runner.rtc.enabled`` 保持同步）
 
 .. list-table::
    :header-rows: 1
@@ -309,7 +310,7 @@ RTC 参数分布在两个位置：
      - 建议使用 Hydra 引用 ``${runner.rtc.enabled}`` 保持同步。启用后模型输出 action chunk 时会参考前一 chunk 的剩余动作。
    * - ``rtc_guidance_mode``
      - ``"approx"``
-     - 引导模式，当前仅支持 ``"approx"`` （近似引导）。
+     - 引导模式，仅支持 ``"approx"``\ （近似引导）。
    * - ``rtc_guidance_clip``
      - ``5.0``
      - 引导强度裁剪阈值。值越大引导越强，chunk 边界越平滑；过大可能导致动作偏离。推荐范围 3.0-10.0。
