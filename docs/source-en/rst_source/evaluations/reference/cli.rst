@@ -100,6 +100,9 @@ Supported Benchmark Prefixes
    * - ``simple_*`` / ``simple-*``
      - ``simple``
      - SIMPLE
+   * - ``supermimic_*`` / ``supermimic-*``
+     - ``supermimic``
+     - SuperMimic
 
 Benchmark Environment Variables
 -------------------------------
@@ -141,6 +144,7 @@ Full launch examples per benchmark:
 - :doc:`../guides/robolab`
 - :doc:`../guides/robotwin`
 - :doc:`../guides/simple`
+- :doc:`../guides/supermimic`
 - :doc:`../guides/cosmos3_sglang`
 - :doc:`../guides/dreamzero_sglang`
 

@@ -519,3 +519,150 @@ def test_ragged_training_rows_match_schedule(
         nprocs=2,
         join=True,
     )
+
+
+class _DecoderStage(torch.nn.Module):
+    pre_process = post_process = True
+
+    def __init__(self):
+        super().__init__()
+        self.output_layer = torch.nn.Linear(3, 3, bias=False)
+        with torch.no_grad():
+            self.output_layer.weight.copy_(torch.diag(torch.tensor([1.0, 2.0, 3.0])))
+
+    def forward(self, input_ids, attention_mask, position_ids, packed_seq_params):
+        hidden = torch.nn.functional.one_hot(input_ids.T, 3).to(
+            self.output_layer.weight
+        )
+        return self.output_layer(hidden).transpose(0, 1).contiguous()
+
+
+@pytest.fixture
+def scoring_actor(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    pytest.importorskip("megatron.training")
+    import torch.distributed as dist
+    from megatron.core import parallel_state
+    from omegaconf import OmegaConf
+
+    from rlinf.utils.utils import masked_mean
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+    actor = MAMegatronActor.__new__(MAMegatronActor)
+    actor.cfg = OmegaConf.create(
+        {
+            "runner": {"task_type": "reasoning"},
+            "actor": {"model": {"encoder_seq_length": 4}},
+            "algorithm": {
+                "sampling_params": {"temperature": 0.5},
+                "loss_type": "actor",
+                "use_valid_token_scale": False,
+                "early_stop_imp_ratio": None,
+            },
+        }
+    )
+    actor.transformer_config = SimpleNamespace(sequence_parallel=False)
+    actor.tokenizer = SimpleNamespace(eos_token_id=0)
+    actor.clip_ratio_c, actor.clip_ratio_low, actor.clip_ratio_high = 3.0, 0.2, 0.2
+    actor.kl_beta = 0.0
+    actor.loss_agg_func = masked_mean
+    actor.torch_platform = SimpleNamespace(current_device=lambda: "cpu")
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+    ids = torch.tensor([[0, 1, 2, 1]])
+    batch = {
+        "input_ids": ids,
+        "response_mask": torch.tensor([[False, True, False, True]]),
+        "advantages": torch.ones_like(ids, dtype=torch.float),
+        "loss_scales": torch.ones_like(ids, dtype=torch.float),
+        "rollout_logprobs": torch.zeros_like(ids, dtype=torch.float),
+    }
+    batch = {key: list(value.unbind()) for key, value in batch.items()}
+    dist.init_process_group(
+        "gloo", init_method=(tmp_path / "pg").as_uri(), rank=0, world_size=1
+    )
+    try:
+        for name in (
+            "_TENSOR_MODEL_PARALLEL_GROUP",
+            "_DATA_PARALLEL_GROUP",
+            "_CONTEXT_PARALLEL_GROUP",
+        ):
+            monkeypatch.setattr(parallel_state, name, dist.group.WORLD)
+        yield actor, batch
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("entropy_bonus", [0.0, 0.1])
+def test_actor_entropy_uses_response_predictors(scoring_actor, entropy_bonus):
+    actor, batch = scoring_actor
+    actor.cfg.algorithm.entropy_bonus = entropy_bonus
+    actor.calculate_entropy = actor.return_loss = True
+    actor.calculate_entropy_loss = entropy_bonus > 0
+    model = _DecoderStage()
+    # Responses at 1 and 3 are predicted from tokens 0 and 2.
+    logits = (
+        model.output_layer.weight.T[[0, 2]]
+        / actor.cfg.algorithm.sampling_params.temperature
+    )
+    logp = logits.log_softmax(-1)
+    selected = logp[:, 1]
+    old = selected.detach()
+    batch["rollout_logprobs"][0][[1, 3]] = old
+    scores, loss_fn = actor.get_forward_step_func()(iter([batch]), model)
+    loss, metrics = loss_fn(scores)
+    expected_entropy = -(logp.exp() * logp).sum(-1).mean()
+    expected_loss = (
+        -(selected - old).exp().mean()
+        - actor.cfg.algorithm.entropy_bonus * expected_entropy
+    )
+    torch.testing.assert_close(
+        metrics["actor/entropy_loss"].squeeze(), expected_entropy
+    )
+    torch.testing.assert_close(loss, expected_loss)
+    weight = model.output_layer.weight
+    torch.testing.assert_close(
+        torch.autograd.grad(loss, weight)[0],
+        torch.autograd.grad(expected_loss, weight)[0],
+    )
+
+
+def _check_tp_entropy_gradient(rank, init_file):
+    from megatron.core import parallel_state
+
+    from rlinf.utils.distributed import vocab_parallel_entropy_and_log_probs
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=60),
+    )
+    try:
+        parallel_state.initialize_model_parallel(tensor_model_parallel_size=2)
+        torch.manual_seed(101)
+        logits = (torch.randn(2, 5, 8) + 37).requires_grad_()
+        labels = torch.arange(10).reshape(2, 5) % 8
+        reference = logits.log_softmax(-1)
+        expected_lp = reference.gather(-1, labels.unsqueeze(-1)).squeeze(-1)
+        expected_h = -(reference.exp() * reference).sum(-1)
+        shard = logits.detach().chunk(2, dim=-1)[rank].contiguous().requires_grad_()
+        entropy, log_probs = vocab_parallel_entropy_and_log_probs(
+            shard, labels, calculate_entropy_loss=True
+        )
+        torch.testing.assert_close(entropy, expected_h)
+        torch.testing.assert_close(log_probs, expected_lp)
+        (grad,) = torch.autograd.grad((log_probs + 0.1 * entropy).sum(), shard)
+        (ref_grad,) = torch.autograd.grad(
+            (expected_lp + 0.1 * expected_h).sum(), logits
+        )
+        torch.testing.assert_close(grad, ref_grad.chunk(2, dim=-1)[rank])
+    finally:
+        parallel_state.destroy_model_parallel()
+        dist.destroy_process_group()
+
+
+def test_tp_entropy_and_log_probs_match_dense_gradient(tmp_path):
+    pytest.importorskip("megatron.core")
+    mp.spawn(_check_tp_entropy_gradient, args=(str(tmp_path / "tp"),), nprocs=2)

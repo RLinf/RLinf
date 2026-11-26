@@ -84,6 +84,10 @@ The matrix below covers benchmarks with ready-to-run configs under ``evaluations
      - 8 G1 whole-body Teleop tasks (``G1WholebodyOpenOvenTeleop-v0``, etc.)
      - ``simple/simple_psi0_eval.yaml``
      - :doc:`Psi0 <../examples/embodied/psi0>`
+   * - :doc:`SuperMimic <guides/supermimic>`
+     - LAFAN1 reference motion; GenCoord and MaxCoord; standing push recovery
+     - ``supermimic/supermimic_lafan1_eval.yaml``, ``supermimic/supermimic_push_recovery.yaml``
+     - :doc:`SuperMimic <../examples/embodied/supermimic>`
    * - :doc:`RealWorld <guides/realworld>`
      - ``realworld_franka_sft_env``, ``realworld_bin_relocation``, Dual Franka
      - ``realworld/realworld_pnp_eval.yaml``, ``realworld/realworld_eval.yaml``, ``realworld/realworld_pnp_eval_dreamzero.yaml``
@@ -161,6 +165,8 @@ The evaluation runner coordinates env workers and rollout workers over channels 
         - RoboTwin bimanual manipulation evaluation configs.
       * - ``evaluations/simple/``
         - SIMPLE whole-body humanoid evaluation configs for Psi0.
+      * - ``evaluations/supermimic/``
+        - Unitree G1 motion tracking and standing push recovery configs.
 
 Reference
 ---------

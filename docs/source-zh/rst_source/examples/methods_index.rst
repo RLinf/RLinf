@@ -78,6 +78,14 @@ RL 算法示例
 
       用集成优势预测器对离线样本做保守评估。
 
+   .. grid-item-card:: SuperMimic
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/supermimic.jpg
+      :img-alt: SuperMimic 概览
+      :link: embodied/supermimic
+      :link-type: doc
+
+      在 MuJoCo Warp 中通过可微世界模型训练 G1 全身动作跟踪 policy。
+
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -91,3 +99,4 @@ RL 算法示例
    RL Token <embodied/rlt>
    SAC-Flow <embodied/sac_flow>
    STEAM <embodied/steam>
+   SuperMimic <embodied/supermimic>

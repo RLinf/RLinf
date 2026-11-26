@@ -100,6 +100,9 @@ Hydra 参数覆盖
    * - ``simple_*`` / ``simple-*``
      - ``simple``
      - SIMPLE
+   * - ``supermimic_*`` / ``supermimic-*``
+     - ``supermimic``
+     - SuperMimic
 
 Benchmark 环境变量
 ------------------
@@ -141,6 +144,7 @@ Benchmark 环境变量
 - :doc:`../guides/robolab`
 - :doc:`../guides/robotwin`
 - :doc:`../guides/simple`
+- :doc:`../guides/supermimic`
 - :doc:`../guides/cosmos3_sglang`
 - :doc:`../guides/dreamzero_sglang`
 
