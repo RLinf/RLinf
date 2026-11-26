@@ -263,9 +263,8 @@ rollout, giving the rollout more capacity or generating with a smaller model.
 Limitations
 -----------
 
-Asynchronous agentic RL runs only on the combination it was built for: a
-Megatron actor, the multi-turn agent loop, the SGLang server backend, and a
-disaggregated placement of actor and rollout. There is no off-policy
+Asynchronous agentic RL requires a Megatron or FSDP actor, the multi-turn
+agent loop, the SGLang server backend, and a disaggregated placement of
+actor and rollout. There is no off-policy
 correction: the rollout logprob is used directly as the PPO old logprob, so
-the staleness bounds described above are what keeps the training data close to
-the current policy.
+the staleness bounds above keep the training data close to the current policy.

@@ -40,7 +40,7 @@ Search-R1 异步训练
 异步训练依赖以下四点协同工作：
 
 - 分离式 placement：actor 与 rollout 跑在不同的 GPU 上（本配置在不同节点上），训练不与生成争抢同一批设备。
-- Megatron actor：异步训练循环由 Megatron 的 actor worker 实现。
+- Megatron 或 FSDP actor：两种 actor 后端都支持异步训练循环（本配置使用 Megatron）。
 - ``rollout.sglang.backend_type: server``：SGLang server 后端，支持异步 runner 所用的权重同步与暂停协议。
 - ``agentloop.task_name``：任务名，作为 rollout buffer 按任务记录状态的 key，并盖在每次 rollout 请求上；异步训练下未设置时启动即报错。
 
@@ -220,6 +220,6 @@ rollout buffer worker 会把 dataloader 位置存进 checkpoint（``data/data.pt
 限制
 --------------------------------
 
-- 异步训练基于 Megatron actor 与 Search-R1 使用的多轮 agent loop 实现。
+- 异步训练需要 Megatron 或 FSDP actor，并搭配多轮 agent loop 使用。
 - rollout 的 logprob 直接作为 PPO 的 old logprob（``algorithm.recompute_logprobs: False``）。
 - 开启 ``reject_equal_reward`` 后丢弃率可能很高；长跑之前先看 ``rollout/buffer/dropped_groups``。

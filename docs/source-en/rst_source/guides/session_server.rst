@@ -58,9 +58,8 @@ At launch, three components start on the rollout nodes:
 
 Enabling it requires:
 
-- ``runner.async_mode: True`` and a Megatron actor;
+- ``runner.async_mode: True`` and a Megatron or FSDP actor;
 - ``rollout.sglang.backend_type: server``;
-- the Search-R1 agent (``reward.reward_type: searchr1``);
 - ``rollout.pause_mode`` of ``retract`` or ``in_place``, not ``drain``;
 - ``cluster.auto_scheduler`` off;
 - the ``sglang_router`` package.
@@ -126,6 +125,12 @@ server runs, no payload write failed, and
 ``rollout/session_server/payload_queued_groups`` tracked
 ``rollout/buffer/size``. See :ref:`Metrics to Watch <session-server-metrics>` for
 how to read these series.
+
+For a single 8-GPU node with an FSDP actor, use
+``examples/agent/searchr1/config/train_qwen2.5_fsdp_async_session_server.yaml``,
+which places the FSDP actor on GPUs 0–3 and 4 SGLang instances on GPUs 4–7.
+Fill in the same three values in that file and start training with
+``bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp_async_session_server``.
 
 How It Works
 ------------
@@ -415,11 +420,8 @@ holds the template's role lines, such as ``system`` and ``user``, so
 
 Launch this class in your entry script instead of the agent loop that sends
 token ids, the way ``examples/agent/searchr1/train.py`` launches the Search-R1
-agent loop. Keep ``reward.reward_type: searchr1`` in the config: startup
-validation still requires it even when your agent loop scores trajectories
-itself.
-``idx_to_sub_traj`` is needed when ``algorithm.loss_scales`` includes
-``agent_level``.
+agent loop. ``idx_to_sub_traj`` is needed when ``algorithm.loss_scales``
+includes ``agent_level``.
 
 A 410 means the session server has already dropped the group, for example
 after a failed payload write. The example drops the whole group, as the agent
@@ -565,9 +567,9 @@ Configuration Reference
 Limitations
 ^^^^^^^^^^^
 
-- Requires the asynchronous runner, a Megatron actor, the SGLang server
-  backend, and the Search-R1 agent. To connect the session server to another
-  runner, see :doc:`/rst_source/extending/session_server_runner`.
+- Requires the asynchronous runner, a Megatron or FSDP actor, and the SGLang
+  server backend. To connect the session server to another runner, see
+  :doc:`/rst_source/extending/session_server_runner`.
 - The chat completions endpoint has no real streaming. With
   ``stream: true``, the whole turn comes back in one chunk, followed by
   ``[DONE]``.

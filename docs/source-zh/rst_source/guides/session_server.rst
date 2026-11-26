@@ -46,9 +46,8 @@ session server 还提供：
 
 开启 session server 需要满足以下条件：
 
-- ``runner.async_mode: True``，actor 使用 Megatron
+- ``runner.async_mode: True``，actor 使用 Megatron 或 FSDP
 - ``rollout.sglang.backend_type: server``
-- 使用 Search-R1 agent（``reward.reward_type: searchr1``）
 - ``rollout.pause_mode`` 为 ``retract`` 或 ``in_place``，不能是 ``drain``
 - 关闭 ``cluster.auto_scheduler``
 - 安装 ``sglang_router`` 包
@@ -100,6 +99,8 @@ session server 还提供：
      - 2.0
 
 无论是否开启 session server，训练表现都一致。两次开启 session server 的训练都没有 payload 写入失败，``rollout/session_server/payload_queued_groups`` 始终与 ``rollout/buffer/size`` 同步变化。这些指标的含义见 :ref:`监控指标 <session-server-metrics>`。
+
+单机 8 卡配合 FSDP actor 运行时，使用 ``examples/agent/searchr1/config/train_qwen2.5_fsdp_async_session_server.yaml``\ （GPU 0–3 放 FSDP actor，GPU 4–7 放 4 个 SGLang 实例）。在这个文件里填好同样的三项后，运行 ``bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp_async_session_server``。
 
 工作原理
 --------
@@ -309,7 +310,7 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
 
 ``input_ids`` 是数据集 prompt 的 token id，已经应用过 chat 模板。去掉特殊 token 解码后，文字里仍有模板的角色行（如 ``system``、``user``），所以 ``build_messages`` 要先从中取出任务，再构造消息。
 
-在入口脚本里启动这个类，替换原来发送 token id 的 agent loop，写法参照 ``examples/agent/searchr1/train.py`` 启动 Search-R1 agent loop 的方式。即使由自己的 agent loop 打分，配置里也必须保留 ``reward.reward_type: searchr1``，否则启动校验会拒绝该配置。``algorithm.loss_scales`` 里包含 ``agent_level`` 时需要 ``idx_to_sub_traj``。
+在入口脚本里启动这个类，替换原来发送 token id 的 agent loop，写法参照 ``examples/agent/searchr1/train.py`` 启动 Search-R1 agent loop 的方式。``algorithm.loss_scales`` 里包含 ``agent_level`` 时需要 ``idx_to_sub_traj``。
 
 返回 410 说明 session server 已经丢弃了这个组，比如 payload 写入失败之后。示例随即丢弃整个组，和 agent loop 处理其他无法完成的组一样。
 
@@ -420,7 +421,7 @@ session server 会复用之前各轮的 token：一轮的 prompt 是上一轮的
 限制
 ^^^^
 
-- 要求异步 runner、Megatron actor、SGLang server 后端和 Search-R1 agent。要接入其他 runner，见 :doc:`/rst_source/extending/session_server_runner`。
+- 要求异步 runner、Megatron 或 FSDP actor，以及 SGLang server 后端。要接入其他 runner，见 :doc:`/rst_source/extending/session_server_runner`。
 - chat completions 接口不支持真正的流式输出。``stream: true`` 时，整轮结果在一个 chunk 中返回，随后是 ``[DONE]``。
 - chat completions 接口不支持 ``tool_choice: required``、指定函数和 ``response_format``，并忽略 ``seed``。
 - ``session_server.verify_assembly`` 只适用于发送 token id 的 agent loop。开启它时，chat completions 接口会拒绝所有请求。

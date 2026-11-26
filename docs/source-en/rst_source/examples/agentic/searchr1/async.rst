@@ -58,7 +58,8 @@ Asynchronous training relies on these four pieces working together:
 - A disaggregated placement: the actor and the rollout run on different GPUs
   (in this config, on different nodes), so that training does not contend
   with generation for the same devices.
-- A Megatron actor: the actor worker implements the async training loop.
+- A Megatron or FSDP actor: both actor backends support the async training
+  loop (this config uses Megatron).
 - ``rollout.sglang.backend_type: server``: the SGLang server backend, which
   supports the weight sync and pause protocol the async runner uses.
 - ``agentloop.task_name``: the task name that keys the rollout buffer's
@@ -313,8 +314,8 @@ groups, plus one prefetched dataloader batch of 64).
 Limitations
 -----------
 
-- Asynchronous training is implemented for the Megatron actor with the
-  multi-turn agent loop used by Search-R1.
+- Asynchronous training requires a Megatron or FSDP actor and the multi-turn
+  agent loop.
 - The rollout logprob is used directly as the PPO old logprob
   (``algorithm.recompute_logprobs: False``).
 - With ``reject_equal_reward`` enabled the drop rate can be high; check
