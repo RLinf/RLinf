@@ -209,10 +209,7 @@ class Scheduler(_Scheduler):
 
         return rename
 
-    def batch_load_hf_weight(self, state_dict: dict[str, Any]) -> Any:
-        assert self.weight_reload == "sync", (
-            "only sglang with 'sync' can run 'batch_load_hf_weight'"
-        )
+    def _resume_weights_if_offloaded(self) -> None:
         if self.is_weight_offloaded:
             # Resume model weights only. KV cache and cuda graph are deferred
             # to onload_kv_cudagraph() in the runner, which runs after the
@@ -221,6 +218,12 @@ class Scheduler(_Scheduler):
             self.resume_memory_occupation(
                 ResumeMemoryOccupationReqInput(tags=["weights"])
             )
+
+    def batch_load_hf_weight(self, state_dict: dict[str, Any]) -> Any:
+        assert self.weight_reload == "sync", (
+            "only sglang with 'sync' can run 'batch_load_hf_weight'"
+        )
+        self._resume_weights_if_offloaded()
 
         model = self.tp_worker.worker.model_runner.model
         rename = self._hf_to_sglang_name(model)
@@ -264,6 +267,7 @@ class Scheduler(_Scheduler):
             self._actor_group_name,
             self.actor_weight_rank,
             self.batch_load_hf_weight,
+            on_first_bucket=self._resume_weights_if_offloaded,
         )
 
         if self.weight_norm_dict is not None:

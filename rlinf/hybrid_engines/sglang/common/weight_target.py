@@ -32,6 +32,8 @@ def receive_hf_weights(
     actor_group_name: str,
     actor_rank: int,
     load_bucket: Callable[[dict], None],
+    *,
+    on_first_bucket: Callable[[], None] | None = None,
 ) -> int | None:
     """Receive named actor weight buckets and load them in order.
 
@@ -44,6 +46,8 @@ def receive_hf_weights(
     version = bucket.pop("weight_version", None)
     if count < 1:
         raise ValueError(f"Expected positive weight bucket count, got {count}")
+    if on_first_bucket is not None:
+        on_first_bucket()
     for index in range(count):
         pending = (
             worker.recv(
@@ -82,7 +86,10 @@ class SGLangWeightTarget(torch.nn.Module):
         self.shapes: dict[str, tuple[int, ...]] = {}
         self._full_sync = False
         self._received_names: set[str] = set()
-        self._patch_state: dict[str, torch.Tensor] | None = None
+        self._patch_module: torch.nn.Module | None = None
+        self._patch_specs: (
+            list[tuple[str, str, tuple[int, int, int] | None, tuple[int, ...]]] | None
+        ) = None
         for path in sorted(Path(checkpoint_dir).glob("*.safetensors")):
             with safe_open(path, framework="pt", device="cpu") as reader:
                 for name in reader.keys():
@@ -97,6 +104,8 @@ class SGLangWeightTarget(torch.nn.Module):
 
         Fused linear projections are exposed as nonoverlapping slices, so sparse
         updates preserve serving storage and do not require a second model copy.
+        Specs are resolved dynamically in ``state_dict`` so CPU offload/onload
+        cycles never hold stale device views.
         """
         from sglang.multimodal_gen.runtime.loader.utils import get_param_names_mapping
         from torch.distributed.tensor import DTensor
@@ -108,7 +117,7 @@ class SGLangWeightTarget(torch.nn.Module):
         ]
         parameters = dict(module.named_parameters())
         parameters.update(module.named_buffers())
-        views = {}
+        specs: list[tuple[str, str, tuple[int, int, int] | None, tuple[int, ...]]] = []
         for name, shape in self.shapes.items():
             mapped, shard = name, None
             if name not in parameters:
@@ -116,6 +125,8 @@ class SGLangWeightTarget(torch.nn.Module):
                     mapped, index, _ = mapper(mapped)
                     if index is not None:
                         shard = index
+                    if not mapped or mapped in parameters:
+                        break
             # SGLang maps checkpoint-only, unused weights to an empty name.
             if not mapped:
                 continue
@@ -129,32 +140,48 @@ class SGLangWeightTarget(torch.nn.Module):
                     f"Patch target must be resident and unsharded: {mapped}"
                 )
             value = parameter.detach()
+            narrow_spec: tuple[int, int, int] | None = None
             if shard is not None:
                 owner = module.get_submodule(mapped.rsplit(".", 1)[0])
                 sizes = getattr(owner, "output_sizes", None)
                 dim = getattr(parameter, "output_dim", None)
-                if sizes is None or dim is None or not isinstance(shard, int):
+                if (
+                    sizes is None
+                    or dim is None
+                    or not isinstance(shard, int)
+                    or not 0 <= shard < len(sizes)
+                ):
                     raise ValueError(
                         f"Unsupported fused patch parameter: {name} -> {mapped}"
                     )
-                value = value.narrow(dim, sum(sizes[:shard]), sizes[shard])
+                offset = sum(sizes[:shard])
+                size = sizes[shard]
+                narrow_spec = (dim, offset, size)
+                value = value.narrow(dim, offset, size)
             if tuple(value.shape) != shape or not value.is_contiguous():
                 raise ValueError(
                     f"Patch target {name} requires a contiguous full-shape view "
                     f"{shape}, got {tuple(value.shape)}"
                 )
-            views[name] = value
-        if not views:
+            specs.append((name, mapped, narrow_spec, shape))
+        if not specs:
             raise ValueError("No serving parameters are available for patch sync")
-        self._patch_state = views
+        self._patch_module = module
+        self._patch_specs = specs
 
     def state_dict(self, destination=None, prefix="", keep_vars=False):
         """Return writable serving views for PatchWeightSyncer."""
-        if self._patch_state is None:
+        if self._patch_module is None or self._patch_specs is None:
             raise RuntimeError("Bind a serving module before initializing patch sync")
         if destination is None:
             destination = OrderedDict()
-        for name, value in self._patch_state.items():
+        parameters = dict(self._patch_module.named_parameters())
+        parameters.update(self._patch_module.named_buffers())
+        for name, param_name, narrow_spec, _ in self._patch_specs:
+            value = parameters[param_name]
+            if narrow_spec is not None:
+                dim, offset, size = narrow_spec
+                value = value.narrow(dim, offset, size)
             destination[prefix + name] = value if keep_vars else value.detach()
         return destination
 

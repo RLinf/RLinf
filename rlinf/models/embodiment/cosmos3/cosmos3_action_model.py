@@ -23,20 +23,11 @@ import torch
 import torch.nn as nn
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+from rlinf.models.embodiment.cosmos3.action_codec import shifted_timesteps
 from rlinf.models.embodiment.cosmos3.cosmos3_policy import (
     Cosmos3Policy,
     decode_prompts,
 )
-
-
-def shifted_timesteps(
-    num_steps: int, shift: float, device: torch.device
-) -> torch.Tensor:
-    """Return the descending flow schedule used for stochastic actor sampling."""
-    if num_steps < 1 or shift <= 0:
-        raise ValueError(f"Expected num_steps>=1 and shift>0, got {num_steps}, {shift}")
-    base = torch.linspace(1.0, 0.0, num_steps + 1, device=device)
-    return shift * base / (1.0 + (shift - 1.0) * base)
 
 
 def flow_sde_transition(
@@ -169,13 +160,15 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
             )
         if not has_actions:
             raise ValueError("Cosmos3 NFT requires an action target")
-        model_dim = int(clean.x0_tokens_action[0].shape[-1])
-        if horizon != int(self._option("num_action_chunks", 16)) or raw_dim != int(
-            self._option("raw_action_dim", 10)
-        ):
+        expected_horizon = int(self._option("num_action_chunks", 16))
+        expected_raw_dim = int(self._option("raw_action_dim", 10))
+        if horizon != expected_horizon or raw_dim != expected_raw_dim:
             raise ValueError(
                 f"Invalid Cosmos3 NFT action shape: {tuple(actions.shape)}"
             )
+        model_dim = self._validate_action_layout(
+            clean, horizon=horizon, raw_dim=raw_dim
+        )
         endpoint = forward_inputs["nft_joint_x0"].float()
         noise = forward_inputs["nft_joint_noise"].float()
         ref = torch.stack(reference).float()
@@ -256,6 +249,22 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
             return original(omni_self, state, *args, **kwargs)
 
         self.omni._encode_vision_item = functools.partial(_patched, self.omni)
+
+    def _validate_action_layout(self, clean: Any, *, horizon: int, raw_dim: int) -> int:
+        if getattr(self.omni.config, "sound_gen", False):
+            raise ValueError("Cosmos3 action replay requires a vision-action model")
+        actual_horizon = int(clean.x0_tokens_action[0].shape[0])
+        model_dim = int(clean.x0_tokens_action[0].shape[-1])
+        if actual_horizon != horizon:
+            raise ValueError(
+                f"Cosmos3 action horizon mismatch: expected {horizon}, "
+                f"got {actual_horizon}"
+            )
+        if raw_dim > model_dim:
+            raise ValueError(
+                f"Cosmos3 raw_action_dim ({raw_dim}) exceeds model_dim ({model_dim})"
+            )
+        return model_dim
 
     def _option(self, name: str, default):
         return (
@@ -340,14 +349,12 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         )
         if not has_actions:
             raise RuntimeError("Cosmos3 policy plan has no action target")
-        if getattr(self.omni.config, "sound_gen", False):
-            raise ValueError("Cosmos3 action replay requires a vision-action model")
+        model_dim = self._validate_action_layout(
+            clean, horizon=horizon, raw_dim=raw_dim
+        )
         x = torch.stack([value.float() for value in initial])
         ref = torch.stack([value.float() for value in reference])
         cond_mask = torch.stack([value.float() for value in mask])
-        model_dim = int(clean.x0_tokens_action[0].shape[-1])
-        if clean.x0_tokens_action[0].shape[0] != horizon or raw_dim > model_dim:
-            raise ValueError("Cosmos3 action shape does not match rollout config")
         action_width = horizon * model_dim
         cond_mask[:, -action_width:].view(n, horizon, model_dim)[..., raw_dim:].fill_(1)
         ref[:, -action_width:].view(n, horizon, model_dim)[..., raw_dim:].zero_()

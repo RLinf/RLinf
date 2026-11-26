@@ -30,6 +30,7 @@ Standard-library only: installed alongside the control routes inside the
 sglang server subprocess, and unit-tested without FastAPI.
 """
 
+from collections.abc import Collection
 from typing import Any, Callable, MutableMapping
 
 # Paths a non-local peer may request. Exact matches only: default-deny
@@ -43,6 +44,15 @@ from typing import Any, Callable, MutableMapping
 # periodic /health traffic. Config validation pins these two settings
 # whenever the session server is enabled.
 WHITELISTED_PATHS = frozenset({"/generate", "/health", "/server_info", "/model_info"})
+EMBODIED_WHITELISTED_PATHS = frozenset(
+    {
+        "/v1/actions/generations",
+        "/rollout/generate",
+        "/health",
+        "/server_info",
+        "/model_info",
+    }
+)
 
 # Loopback values of ``scope["client"][0]``.
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
@@ -54,18 +64,29 @@ _FORBIDDEN_BODY = (
 
 
 class PeerWhitelistMiddleware:
-    """ASGI middleware enforcing :data:`WHITELISTED_PATHS` for remote peers.
+    """ASGI middleware enforcing router-facing path allowlists for remote peers.
 
     HTTP requests whose TCP peer is loopback pass through untouched. For
     any other peer (including a scope with no client address — treat
-    unverifiable as untrusted) only the whitelisted paths pass; everything
+    unverifiable as untrusted) only the allowed paths pass; everything
     else is answered with 403 before the app, so no handler and no request
     body deserialization runs. Non-HTTP scopes (lifespan, websockets) pass
     through.
     """
 
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: Any, allowed_paths: Collection[str] | None = None) -> None:
         self.app = app
+        self._allowed_paths = (
+            frozenset(allowed_paths) if allowed_paths is not None else WHITELISTED_PATHS
+        )
+        if allowed_paths is None:
+            self._forbidden_body = _FORBIDDEN_BODY
+        else:
+            paths = ", ".join(sorted(self._allowed_paths))
+            self._forbidden_body = (
+                "403 Forbidden: non-local requests are only allowed on the "
+                f"router-facing paths ({paths})."
+            ).encode()
 
     async def __call__(
         self,
@@ -78,14 +99,17 @@ class PeerWhitelistMiddleware:
             peer = client[0] if client else None
             if (
                 peer not in _LOOPBACK_HOSTS
-                and scope.get("path", "") not in WHITELISTED_PATHS
+                and scope.get("path", "") not in self._allowed_paths
             ):
-                await self._send_forbidden(send)
+                await self._send_forbidden(send, self._forbidden_body)
                 return
         await self.app(scope, receive, send)
 
     @staticmethod
-    async def _send_forbidden(send: Callable[[MutableMapping[str, Any]], Any]) -> None:
+    async def _send_forbidden(
+        send: Callable[[MutableMapping[str, Any]], Any],
+        body: bytes = _FORBIDDEN_BODY,
+    ) -> None:
         """Answer the request with a plain-text 403."""
         await send(
             {
@@ -93,8 +117,8 @@ class PeerWhitelistMiddleware:
                 "status": 403,
                 "headers": [
                     (b"content-type", b"text/plain; charset=utf-8"),
-                    (b"content-length", str(len(_FORBIDDEN_BODY)).encode("ascii")),
+                    (b"content-length", str(len(body)).encode("ascii")),
                 ],
             }
         )
-        await send({"type": "http.response.body", "body": _FORBIDDEN_BODY})
+        await send({"type": "http.response.body", "body": body})

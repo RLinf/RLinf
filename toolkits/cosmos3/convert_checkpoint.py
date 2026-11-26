@@ -115,7 +115,8 @@ def export_from_template(
     source = torch.load(src, map_location="cpu", mmap=True, weights_only=True)
     prefix = "omni.net_ema." if use_ema else "omni.net."
     state = {}
-    for name, tensor in source.items():
+    for raw_name, tensor in source.items():
+        name = _mapping_module.strip_wrapper_prefixes(raw_name)
         if not name.startswith(prefix):
             continue
         key = _diffusers_key(name.removeprefix(prefix))
@@ -124,6 +125,28 @@ def export_from_template(
         state[key] = tensor
     if not state:
         raise ValueError(f"Expected SFT tensors with prefix {prefix!r} in {src}")
+
+    safetensors_dtypes = {
+        "BOOL": torch.bool,
+        "U8": torch.uint8,
+        "I8": torch.int8,
+        "I16": torch.int16,
+        "I32": torch.int32,
+        "I64": torch.int64,
+        "F16": torch.float16,
+        "BF16": torch.bfloat16,
+        "F32": torch.float32,
+        "F64": torch.float64,
+    }
+    for attr_name, safetensor_name in (
+        ("uint16", "U16"),
+        ("uint32", "U32"),
+        ("uint64", "U64"),
+        ("float8_e4m3fn", "F8_E4M3"),
+        ("float8_e5m2", "F8_E5M2"),
+    ):
+        if hasattr(torch, attr_name):
+            safetensors_dtypes[safetensor_name] = getattr(torch, attr_name)
 
     shard_keys = {}
     shapes = {}
@@ -134,8 +157,18 @@ def export_from_template(
             for key in reader.keys():
                 if key in shapes:
                     raise ValueError(f"Duplicate template transformer tensor: {key}")
-                shapes[key] = tuple(reader.get_slice(key).get_shape())
-                dtypes[key] = reader.get_tensor(key).dtype
+                slice_info = reader.get_slice(key)
+                shapes[key] = tuple(slice_info.get_shape())
+                dtype_name = slice_info.get_dtype()
+                if dtype_name not in safetensors_dtypes:
+                    raise ValueError(
+                        f"Unsupported template safetensors dtype {dtype_name!r} for {key}"
+                    )
+                dtypes[key] = safetensors_dtypes[dtype_name]
+    if not shard_keys:
+        raise FileNotFoundError(
+            f"No template transformer safetensors found in {base / 'transformer'}"
+        )
     missing = shapes.keys() - state.keys()
     unexpected = state.keys() - shapes.keys()
     if missing or unexpected:

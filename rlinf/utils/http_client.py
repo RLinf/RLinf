@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import pickle
@@ -299,6 +300,22 @@ class InferenceHTTPClient:
             body["image_data"] = image_data
         return body
 
+    @staticmethod
+    def _load_msgpack_codec():
+        # 0.5.17+: sglang renamed vla/ -> action/; support both for
+        # compatibility with older sglang forks.
+        try:
+            from sglang.multimodal_gen.runtime.entrypoints.action.protocol import (
+                pack_msgpack,
+                unpack_msgpack,
+            )
+        except ImportError:
+            from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
+                pack_msgpack,
+                unpack_msgpack,
+            )
+        return pack_msgpack, unpack_msgpack
+
     def post(
         self,
         path: str,
@@ -324,20 +341,7 @@ class InferenceHTTPClient:
         retries = max(0, int(max_retries))
         retry_statuses = {500, 502, 503, 504}
         if msgpack:
-            # 0.5.17+: sglang renamed vla/ -> action/; support both for
-            # compatibility with older sglang forks.
-
-            try:
-                from sglang.multimodal_gen.runtime.entrypoints.action.protocol import (
-                    pack_msgpack,
-                    unpack_msgpack,
-                )
-            except ImportError:
-                from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
-                    pack_msgpack,
-                    unpack_msgpack,
-                )
-
+            pack_msgpack, unpack_msgpack = self._load_msgpack_codec()
             ct = "application/msgpack"
             request_kwargs = {
                 "data": pack_msgpack(self._to_msgpackable(body)),
@@ -427,44 +431,96 @@ class InferenceHTTPClient:
         body: dict,
         headers: Optional[dict[str, str]] = None,
         timeout_s: Optional[float] = None,
+        *,
+        msgpack: bool = False,
+        response_msgpack: bool = False,
+        max_retries: int = 0,
+        retry_backoff_s: float = 0.0,
     ) -> dict:
-        """POST ``body`` with custom headers and a total timeout.
+        """POST ``body`` with custom headers, optional msgpack codec, and retries.
 
         Errors propagate: ``HTTPStatusError`` on an HTTP status of 400 or
         above, with status and body text.
 
         Args:
             path: Path appended to the base URL.
-            body: JSON request body.
+            body: Request body dict.
             headers: Extra request headers, e.g. a routing key for a router.
             timeout_s: Total timeout for the request, connect and read
                 included; None waits indefinitely.
+            msgpack: Serialize the request with the sglang msgpack codec and
+                decode the msgpack response.
+            response_msgpack: Send JSON and decode a plain msgpack response.
+            max_retries: Number of retries on connection/5xx failures.
+            retry_backoff_s: Linear backoff multiplier between retries.
 
         Returns:
-            The decoded response dict.
+            The decoded response payload.
         """
         session = self._get_or_create_session()
-        headers = dict(headers or {})
+        request_headers = dict(headers or {})
         if path.startswith("/rlinf/") and self._control_token is not None:
-            headers["X-RLinf-Control-Token"] = self._control_token
-        async with session.post(
-            f"{self.base_url}{path}",
-            json=body,
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(
-                total=timeout_s,
-                sock_connect=self.connect_timeout,
-                sock_read=timeout_s,
-            ),
-        ) as resp:
-            # ClientResponseError is not picklable and Ray would hide it
-            # behind "can't pickle"; raise HTTPStatusError (a RuntimeError
-            # subclass) with status and body instead.
-            if resp.status >= 400:
-                text = await resp.text()
-                raise HTTPStatusError(
-                    f"POST {path} failed with HTTP {resp.status}: {text[:2000]}",
-                    status=resp.status,
-                    body=text,
-                )
-            return await resp.json()
+            request_headers["X-RLinf-Control-Token"] = self._control_token
+
+        request_kwargs: dict[str, Any]
+        if msgpack:
+            pack_msgpack, unpack_msgpack = self._load_msgpack_codec()
+            ct = "application/msgpack"
+            request_headers.setdefault("Content-Type", ct)
+            request_headers.setdefault("Accept", ct)
+            request_kwargs = {"data": pack_msgpack(self._to_msgpackable(body))}
+        else:
+            request_kwargs = {"json": body}
+
+        retries = max(0, int(max_retries))
+        retry_statuses = {500, 502, 503, 504}
+        timeout = aiohttp.ClientTimeout(
+            total=timeout_s,
+            sock_connect=self.connect_timeout,
+            sock_read=timeout_s,
+        )
+
+        for attempt in range(retries + 1):
+            is_last = attempt >= retries
+            try:
+                async with session.post(
+                    f"{self.base_url}{path}",
+                    headers=request_headers,
+                    timeout=timeout,
+                    **request_kwargs,
+                ) as resp:
+                    if resp.status in retry_statuses and not is_last:
+                        if retry_backoff_s > 0:
+                            await asyncio.sleep(retry_backoff_s * float(attempt + 1))
+                        continue
+                    # ClientResponseError is not picklable and Ray would hide it
+                    # behind "can't pickle"; raise HTTPStatusError (a RuntimeError
+                    # subclass) with status and body instead.
+                    if resp.status >= 400:
+                        text = await resp.text()
+                        raise HTTPStatusError(
+                            f"POST {path} failed with HTTP {resp.status}: {text[:2000]}",
+                            status=resp.status,
+                            body=text,
+                        )
+                    if msgpack:
+                        content_type = resp.headers.get("content-type", "").lower()
+                        if "msgpack" not in content_type:
+                            raise RuntimeError(
+                                "expected a msgpack response, got content-type="
+                                f"{resp.headers.get('content-type')!r}"
+                            )
+                        return unpack_msgpack(await resp.read())
+                    if response_msgpack:
+                        import msgspec
+
+                        content_type = resp.headers.get("content-type", "").lower()
+                        if "msgpack" not in content_type:
+                            raise RuntimeError("Expected a msgpack rollout response")
+                        return msgspec.msgpack.decode(await resp.read())
+                    return await resp.json()
+            except (aiohttp.ClientError, TimeoutError):
+                if is_last:
+                    raise
+                if retry_backoff_s > 0:
+                    await asyncio.sleep(retry_backoff_s * float(attempt + 1))

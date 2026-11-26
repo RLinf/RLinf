@@ -1441,17 +1441,18 @@ def validate_embodied_sglang_weight_sync_cfg(cfg: DictConfig) -> None:
         return
     if syncer.get("type") != "patch":
         raise ValueError("Embodied SGLang weight_syncer must have type='patch'")
-    patch = syncer.get("patch", {})
-    init = patch.get("init_sync", {})
+    patch = syncer.get("patch") or {}
+    init = patch.get("init_sync") or {}
     if not init.get("enabled", False) or init.get("prefixes") is not None:
         raise ValueError(
             "SGLang patch sync requires init_sync.enabled=true and prefixes=null "
             "to establish the complete serving weight baseline"
         )
-    server = cfg.rollout.sglang.get("server", {})
+    server = cfg.rollout.sglang.get("server") or {}
     if server.get("quantization") is not None:
         raise ValueError("SGLang patch sync requires unquantized serving weights")
-    if server.get("tp_size", 1) != 1:
+    tp_size = server.get("tp_size")
+    if tp_size is not None and int(tp_size) != 1:
         raise ValueError(
             "SGLang patch sync requires tp_size=1; omit weight_syncer to use "
             "full weight synchronization with tensor parallelism"

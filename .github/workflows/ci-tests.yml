@@ -174,10 +174,12 @@ jobs:
               - 'tests/e2e_tests/sft/**'
               - '.github/workflows/sft-e2e-tests.yml'
               - '.github/scripts/ascend_ci_workspace.sh'
+              - 'rlinf/models/embodiment/cosmos3/**'
               - 'rlinf/models/embodiment/dreamzero/**'
               - 'rlinf/models/embodiment/fastwam/**'
               - 'tests/e2e_tests/evaluations/libero_spatial_fastwam_eval.yaml'
               - 'evaluations/libero/*fastwam*'
+              - 'examples/embodiment/config/model/cosmos3*.yaml'
               - 'examples/embodiment/config/model/fastwam.yaml'
             offline_rl_filter: &offline_rl
               - *shared
@@ -210,6 +212,8 @@ jobs:
               # real-world compatibility suite, maniskill offload, delay
               # sampler), so env changes have to trigger this job.
               - 'rlinf/envs/**'
+              - 'rlinf/workers/actor/fsdp_actor_worker.py'
+              - 'rlinf/workers/actor/embodied_fsdp_actor_worker.py'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
               # The agent loop, rollout buffer, agentic tokenizer, Megatron MA actor

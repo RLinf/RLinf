@@ -791,7 +791,7 @@ class FSDPModelManager:
                     tensor = tensor.full_tensor()
                 if not dst_ranks:
                     continue
-                if dtype is not None:
+                if dtype is not None and tensor.is_floating_point():
                     tensor = tensor.to(dtype)
                 if cpu_offload:
                     tensor = tensor.cpu()

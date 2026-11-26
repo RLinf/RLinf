@@ -216,17 +216,11 @@ class AsyncAgentRunner(AgentRunner):
         """
         if self._session_servers is None:
             return None, None, None
-        self._session_router.init_router().wait()
-        instance_urls = [
-            url for url in self.rollout.get_server_url().wait() if url is not None
-        ]
-        assert instance_urls, (
-            "no rollout instance advertised a server URL: the session server "
-            "requires rollout.sglang.backend_type 'server'."
+        from rlinf.workers.rollout.sglang import attach_workers_to_router
+
+        router_url = attach_workers_to_router(
+            self._session_router, self.rollout, init_router=True
         )
-        for url in instance_urls:
-            self._session_router.register_server(url).wait()
-        router_url = self._session_router.get_router_url().wait()[0]
         session_urls = []
         for server, payload_channels in zip(
             self._session_servers, self._session_payload_channels

@@ -33,7 +33,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from rlinf.hybrid_engines.sglang.common import io_struct
     from rlinf.hybrid_engines.sglang.common.sgl_engine import Engine
     from rlinf.workers.rollout.sglang.launcher import (
+        attach_workers_to_router,
         get_sglang_api_url,
+        launch_router_for_workers,
         launch_sglang_api,
         launch_sglang_router_and_server,
     )
@@ -54,9 +56,17 @@ _LAZY_ATTRS = {
         "rlinf.workers.rollout.sglang.server_worker",
         "SGLangServerWorker",
     ),
+    "attach_workers_to_router": (
+        "rlinf.workers.rollout.sglang.launcher",
+        "attach_workers_to_router",
+    ),
     "get_sglang_api_url": (
         "rlinf.workers.rollout.sglang.launcher",
         "get_sglang_api_url",
+    ),
+    "launch_router_for_workers": (
+        "rlinf.workers.rollout.sglang.launcher",
+        "launch_router_for_workers",
     ),
     "launch_sglang_api": (
         "rlinf.workers.rollout.sglang.launcher",
@@ -72,8 +82,10 @@ __all__ = [
     "Engine",
     "SGLangRouterWorker",
     "SGLangServerWorker",
+    "attach_workers_to_router",
     "get_sglang_api_url",
     "io_struct",
+    "launch_router_for_workers",
     "launch_sglang_api",
     "launch_sglang_router_and_server",
 ]

@@ -171,7 +171,8 @@ class SGLangServerBackend(RolloutBackend):
         node_rank: int = 0,
         dist_init_addr: Optional[str] = None,
         server_type: str = "srt",
-        bind_to_node_ip: bool = False,
+        expose_to_router: bool = False,
+        apply_rlinf_patch: bool = True,
     ):
         super().__init__(server_args, rlinf_ctx)
         self._acquire_free_port = acquire_free_port
@@ -181,7 +182,8 @@ class SGLangServerBackend(RolloutBackend):
         self._node_rank = node_rank
         self._dist_init_addr = dist_init_addr
         self._server_type = server_type
-        self._bind_to_node_ip = bind_to_node_ip
+        self._expose_to_router = expose_to_router
+        self._apply_rlinf_patch = apply_rlinf_patch
         self._process: Optional[SGLangServerProcess] = None
         self._client: Optional[InferenceHTTPClient] = None
 
@@ -257,6 +259,7 @@ class SGLangServerBackend(RolloutBackend):
                     self._rlinf_ctx.cfg.session_server.engine_keep_alive_s
                 )
             }
+        expose_data_plane = session_server_enabled or self._expose_to_router
         self._process = SGLangServerProcess(
             server_args_kwargs=server_args_kwargs,
             acquire_free_port=self._acquire_free_port,
@@ -264,10 +267,9 @@ class SGLangServerBackend(RolloutBackend):
             nnodes=self._nnodes,
             node_rank=self._node_rank,
             dist_init_addr=self._dist_init_addr,
-            bind_host="0.0.0.0" if session_server_enabled else "127.0.0.1",
-            advertise_host=None if session_server_enabled else "127.0.0.1",
-            bind_to_node_ip=self._bind_to_node_ip,
-            apply_rlinf_patch=True,
+            bind_host="0.0.0.0" if expose_data_plane else "127.0.0.1",
+            advertise_host=None if expose_data_plane else "127.0.0.1",
+            apply_rlinf_patch=self._apply_rlinf_patch,
             extra_env=extra_env,
             log_info=self._log_info,
             log_error=self._log_error,
@@ -291,24 +293,27 @@ class SGLangServerBackend(RolloutBackend):
         # keepalive_timeout must be shorter than the server's keep-alive
         # (uvicorn default 5s) so we never reuse a connection the server
         # is about to close (an ECONNRESET race).
-        # SRT control stays on loopback; Diffusion may bind only the node IP.
+        # Control stays on loopback even when exposed to a router.
         self._client = InferenceHTTPClient(
             self._process.get_control_url(),
             keepalive_timeout=4.0,
-            control_token=self._process.control_token,
+            control_token=self._process.control_token
+            if self._apply_rlinf_patch
+            else None,
         )
-        await self._client.async_run_task_method(
-            io_struct.TaskMethodInput(
-                method_name="init_rlinf_worker",
-                args=(
-                    self._rlinf_ctx.parent_address,
-                    self._rlinf_ctx.weight_reload,
-                    self._rlinf_ctx.placement,
-                    self._rlinf_ctx.cfg,
-                    self._rlinf_ctx.model_instance_id,
-                ),
+        if self._apply_rlinf_patch:
+            await self._client.async_run_task_method(
+                io_struct.TaskMethodInput(
+                    method_name="init_rlinf_worker",
+                    args=(
+                        self._rlinf_ctx.parent_address,
+                        self._rlinf_ctx.weight_reload,
+                        self._rlinf_ctx.placement,
+                        self._rlinf_ctx.cfg,
+                        self._rlinf_ctx.model_instance_id,
+                    ),
+                )
             )
-        )
 
     async def async_generate(
         self,
@@ -370,9 +375,25 @@ class SGLangServerBackend(RolloutBackend):
         )
 
     async def offload(self, tags: Optional[list[str]] = None) -> None:
+        if self._server_type == "embodied":
+            await self.http_client.async_run_task_method(
+                io_struct.TaskMethodInput(
+                    method_name="release_memory_occupation",
+                    kwargs={"tags": tags},
+                )
+            )
+            return
         await self.http_client.async_release_memory_occupation(tags=tags)
 
     async def onload(self, tags: Optional[list[str]] = None) -> None:
+        if self._server_type == "embodied":
+            await self.http_client.async_run_task_method(
+                io_struct.TaskMethodInput(
+                    method_name="resume_memory_occupation",
+                    kwargs={"tags": tags},
+                )
+            )
+            return
         await self.http_client.async_resume_memory_occupation(tags=tags)
 
     async def abort_generation(self) -> None:
@@ -392,6 +413,15 @@ class SGLangServerBackend(RolloutBackend):
             io_struct.TaskMethodInput(method_name="get_scheduler_running_state")
         )
         return RolloutEngineStats(**state)
+
+    async def async_shutdown(self) -> None:
+        """Close the HTTP session cleanly and terminate the server subprocess."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+        if self._process is not None:
+            self._process.terminate()
+            self._process = None
 
     def shutdown(self) -> None:
         if self._client is not None:
@@ -418,7 +448,8 @@ def make_backend(
     node_rank: int = 0,
     dist_init_addr: Optional[str] = None,
     server_type: str = "srt",
-    bind_to_node_ip: bool = False,
+    expose_to_router: bool = False,
+    apply_rlinf_patch: bool = True,
 ) -> RolloutBackend:
     """Select a rollout backend implementation by config value.
 
@@ -440,8 +471,10 @@ def make_backend(
             negotiated via `negotiate_model_instance_dist_addr` (server
             backend only, multi-node).
         server_type: Native server runtime, ``srt`` or ``embodied``.
-        bind_to_node_ip: Bind and advertise the Ray node IP for router access;
-            otherwise use loopback (server backend only).
+        expose_to_router: Bind 0.0.0.0 and advertise the Ray node IP for
+            router access; otherwise use loopback (server backend only).
+        apply_rlinf_patch: Inject RLinf scheduler/app hooks into the
+            spawned server subprocess (server backend only).
 
     Returns:
         A backend instance (not yet initialized).
@@ -465,6 +498,7 @@ def make_backend(
             node_rank=node_rank,
             dist_init_addr=dist_init_addr,
             server_type=server_type,
-            bind_to_node_ip=bind_to_node_ip,
+            expose_to_router=expose_to_router,
+            apply_rlinf_patch=apply_rlinf_patch,
         )
     raise ValueError(f"Unsupported rollout.sglang.backend_type: {backend_type!r}")

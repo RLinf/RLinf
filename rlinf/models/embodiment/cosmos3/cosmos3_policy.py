@@ -18,68 +18,32 @@ from __future__ import annotations
 
 import torch
 
+from rlinf.models.embodiment.cosmos3.action_codec import (
+    Cosmos3ActionCodec,
+    decode_prompts,
+    encode_prompts,
+)
 
-def encode_prompts(prompts: list[str], width: int) -> torch.Tensor:
-    """Pack environment instructions into fixed-width trajectory tensors."""
-    encoded = torch.zeros((len(prompts), width), dtype=torch.uint8)
-    for index, prompt in enumerate(prompts):
-        data = prompt.encode("utf-8")
-        if len(data) > width:
-            raise ValueError(
-                f"Cosmos3 prompt needs {len(data)} bytes; prompt_bytes={width}."
-            )
-        encoded[index, : len(data)] = torch.tensor(list(data), dtype=torch.uint8)
-    return encoded
-
-
-def decode_prompts(encoded: torch.Tensor) -> list[str]:
-    """Decode instructions saved in an RLinf trajectory."""
-    return [bytes(row[row != 0].cpu().tolist()).decode("utf-8") for row in encoded]
+__all__ = ["Cosmos3Policy", "decode_prompts", "encode_prompts"]
 
 
 class Cosmos3Policy:
     """Translate RLinf environment observations and native model actions."""
 
-    def _codec(self):
-        from omegaconf import OmegaConf
-
-        from rlinf.models.embodiment.cosmos3.sglang_adapter import Cosmos3SGLangAdapter
-
+    def _codec(self) -> Cosmos3ActionCodec:
         if not hasattr(self, "_action_codec"):
-            cfg = OmegaConf.create(
-                {
-                    "rollout": {
-                        "model": OmegaConf.to_container(self.model_cfg, resolve=True),
-                        "sglang": {},
-                    },
-                    "env": {
-                        "eval": {"env_type": self._option("domain_name", "libero")}
-                    },
-                }
-            )
-            self._action_codec = Cosmos3SGLangAdapter(cfg, rank=0)
+            self._action_codec = Cosmos3ActionCodec(self.model_cfg)
         return self._action_codec
 
     def _observations(self, env_obs: dict) -> tuple[torch.Tensor, torch.Tensor]:
-        codec = self._codec()
-        tasks = codec._extract_tasks(env_obs)
-        n_cam = 2 if env_obs.get("wrist_images") is not None else 1
-        prompts = [codec._augment_prompt(task, n_cam) for task in tasks]
-        images = codec.prepare_images(
-            env_obs, len(tasks), codec._target_w, codec._target_h
-        )
-        if images is None:
-            raise ValueError("Cosmos3 local inference requires camera images")
-        return torch.from_numpy(images.copy()), encode_prompts(
-            prompts, int(self._option("prompt_bytes", 512))
-        )
+        return self._codec().encode_observations(env_obs)
 
     def _env_actions(self, action_list: list[torch.Tensor]) -> torch.Tensor:
         import numpy as np
 
         codec = self._codec()
         chunks = [
-            codec._action_to_env(a.detach().float().cpu().numpy()) for a in action_list
+            codec.action_to_env(a.detach().float().cpu().numpy()) for a in action_list
         ]
         return torch.from_numpy(np.stack(chunks)).float().contiguous()
 

@@ -2316,10 +2316,6 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.assertEqual(self.worker.record_env_metrics.call_count, 1)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class _SGLangWeightLoader:
     """SGLang loading callback backed by a tiny serving state."""
 
@@ -2594,7 +2590,8 @@ def test_embodied_control_reaches_all_dp_replicas(
 ):
     from types import SimpleNamespace
 
-    from fastapi import HTTPException
+    fastapi = pytest.importorskip("fastapi")
+    HTTPException = fastapi.HTTPException
 
     client_module = pytest.importorskip(
         "sglang.multimodal_gen.runtime.scheduler_client"
@@ -2780,8 +2777,10 @@ def test_sglang_weight_target_propagates_serving_weight_update_failure(tmp_path)
 )
 @pytest.mark.parametrize("token", [None, "wrong-server-token"])
 def test_sglang_control_routes_reject_before_unpickling(method, token):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
+    fastapi = pytest.importorskip("fastapi")
+    testclient = pytest.importorskip("fastapi.testclient")
+    FastAPI = fastapi.FastAPI
+    TestClient = testclient.TestClient
 
     from rlinf.hybrid_engines.sglang.common.http_routes import add_rlinf_routes
 
@@ -2801,8 +2800,10 @@ def test_sglang_control_routes_reject_before_unpickling(method, token):
     "method", ["run_task_method", "sync_hf_weight", "abort_generation"]
 )
 def test_sglang_control_routes_accept_authenticated_requests(method):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
+    fastapi = pytest.importorskip("fastapi")
+    testclient = pytest.importorskip("fastapi.testclient")
+    FastAPI = fastapi.FastAPI
+    TestClient = testclient.TestClient
 
     from rlinf.hybrid_engines.sglang.common.http_routes import add_rlinf_routes
 
@@ -2830,7 +2831,8 @@ def test_sglang_control_routes_accept_authenticated_requests(method):
 
 
 def test_sglang_control_routes_require_token_at_registration():
-    from fastapi import FastAPI
+    fastapi = pytest.importorskip("fastapi")
+    FastAPI = fastapi.FastAPI
 
     from rlinf.hybrid_engines.sglang.common.http_routes import add_rlinf_routes
 
@@ -2966,7 +2968,7 @@ def test_sglang_srt_sync_waits_before_load_and_handles_cache(monkeypatch, pause_
         ("0.5.5", "srt", True, "requires sglang > 0.5.5"),
         ("0.5.6", "srt", True, None),
         ("0.5.5", "srt", False, None),
-        ("0.5.5", "embodied", True, None),
+        ("0.5.5", "embodied", False, None),
     ],
 )
 def test_sglang_server_patch_version_checked_before_launch(
@@ -2994,3 +2996,38 @@ def test_sglang_server_patch_version_checked_before_launch(
     else:
         with pytest.raises((RuntimeError, AssertionError), match=error):
             SGLangServerProcess(**kwargs)
+
+
+@pytest.mark.parametrize("has_hooks", [False, True])
+def test_embodied_sglang_patch_hooks_checked_before_launch(monkeypatch, has_hooks):
+    launch_mod = pytest.importorskip("sglang.multimodal_gen.runtime.launch_server")
+    from rlinf.workers.rollout.sglang.process import SGLangServerProcess
+
+    def fake_dispatch_with_hooks(
+        server_args, *, run_scheduler_process_func=None, app_factory=None
+    ):
+        del server_args, run_scheduler_process_func, app_factory
+
+    def fake_dispatch_without_hooks(server_args):
+        del server_args
+
+    monkeypatch.setattr(
+        launch_mod,
+        "dispatch_launch",
+        fake_dispatch_with_hooks if has_hooks else fake_dispatch_without_hooks,
+    )
+    kwargs = {
+        "server_args_kwargs": {},
+        "acquire_free_port": None,
+        "server_type": "embodied",
+        "apply_rlinf_patch": True,
+    }
+    if has_hooks:
+        SGLangServerProcess(**kwargs)
+    else:
+        with pytest.raises(RuntimeError, match="dispatch_launch"):
+            SGLangServerProcess(**kwargs)
+
+
+if __name__ == "__main__":
+    unittest.main()

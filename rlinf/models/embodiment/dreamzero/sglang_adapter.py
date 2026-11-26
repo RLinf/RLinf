@@ -72,6 +72,7 @@ class DreamZeroSGLangAdapter(SGLangEmbodiedAdapter):
     """
 
     action_path = "/v1/actions/generations"
+    supports_router = False
 
     def __init__(self, cfg: Any, rank: int):
         self.cfg_rollout = cfg.rollout

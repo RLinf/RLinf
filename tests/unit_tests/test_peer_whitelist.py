@@ -31,7 +31,10 @@ from typing import Any, MutableMapping
 
 import pytest
 
-from rlinf.hybrid_engines.sglang.common.peer_whitelist import PeerWhitelistMiddleware
+from rlinf.hybrid_engines.sglang.common.peer_whitelist import (
+    EMBODIED_WHITELISTED_PATHS,
+    PeerWhitelistMiddleware,
+)
 
 # The three pickled control routes plus an arbitrary other endpoint.
 LOCAL_ONLY_PATHS = [
@@ -57,7 +60,7 @@ PATH_DEFORMATIONS = [
 ]
 
 
-def _drive(path: str, client: Any) -> tuple[bool, int]:
+def _drive(path: str, client: Any, allowed_paths: Any = None) -> tuple[bool, int]:
     """Run one request through the middleware over a counting inner app.
 
     Args:
@@ -65,6 +68,7 @@ def _drive(path: str, client: Any) -> tuple[bool, int]:
             ``scope["path"]``.
         client: The ``scope["client"]`` tuple, or ``None`` for a scope
             without a client address.
+        allowed_paths: Optional override allowlist passed to the middleware.
 
     Returns:
         ``(handler_ran, status)`` — whether the inner app was reached and
@@ -100,7 +104,7 @@ def _drive(path: str, client: Any) -> tuple[bool, int]:
         "client": client,
         "server": ("10.0.0.1", 80),
     }
-    middleware = PeerWhitelistMiddleware(app)
+    middleware = PeerWhitelistMiddleware(app, allowed_paths=allowed_paths)
     asyncio.run(middleware(scope, receive, send))
     status = next(m["status"] for m in messages if m["type"] == "http.response.start")
     return handler_ran, status
@@ -141,6 +145,27 @@ class TestPeerWhitelistMiddleware:
         handler_ran, status = _drive("/generate", None)
         assert handler_ran
         assert status == 200
+
+    def test_remote_peer_embodied_whitelist_allows_actions_only(self):
+        peer = ("10.208.10.188", 40000)
+        for path in (
+            "/v1/actions/generations",
+            "/rollout/generate",
+            "/health",
+            "/server_info",
+            "/model_info",
+        ):
+            handler_ran, status = _drive(
+                path, peer, allowed_paths=EMBODIED_WHITELISTED_PATHS
+            )
+            assert handler_ran, f"{path}: handler must run"
+            assert status == 200, f"{path}: got {status}"
+        for path in LOCAL_ONLY_PATHS:
+            handler_ran, status = _drive(
+                path, peer, allowed_paths=EMBODIED_WHITELISTED_PATHS
+            )
+            assert not handler_ran, f"{path}: handler must not run"
+            assert status == 403, f"{path}: got {status}"
 
     def test_non_http_scopes_pass_through(self):
         handler_ran = False
@@ -194,9 +219,10 @@ class TestControlPlaneUrl:
         assert process.get_server_url() == "http://127.0.0.1:31234"
 
     @pytest.mark.parametrize("host", ["127.0.0.1", "10.208.10.188"])
-    def test_diffusion_control_url_uses_bound_interface(self, host):
-        process = self._unstarted_process(host, host, server_type="embodied")
-        assert process.get_control_url() == f"http://{host}:31234"
+    def test_diffusion_control_url_stays_loopback(self, host):
+        process = self._unstarted_process("0.0.0.0", host, server_type="embodied")
+        assert process.get_control_url() == "http://127.0.0.1:31234"
+        assert process.get_server_url() == f"http://{host}:31234"
 
 
 @pytest.mark.parametrize("use_whitelist", [False, True])
@@ -204,8 +230,9 @@ def test_control_authentication_and_remote_peer_policy(use_whitelist):
     import base64
     import pickle
 
-    import httpx
-    from fastapi import FastAPI
+    httpx = pytest.importorskip("httpx")
+    fastapi = pytest.importorskip("fastapi")
+    FastAPI = fastapi.FastAPI
 
     from rlinf.hybrid_engines.sglang.common.http_routes import add_rlinf_routes
 

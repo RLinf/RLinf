@@ -61,8 +61,8 @@ def load_pretrained_checkpoint(
     if checkpoint_format == "diffusers":
         _load_diffusers_checkpoint(model, Path(model_path).expanduser())
     elif checkpoint_format == "native":
-        _load_native_checkpoint(model, model_path, keys_to_skip_loading)
-        if any("net_ema.".startswith(key) for key in keys_to_skip_loading):
+        ema_loaded = _load_native_checkpoint(model, model_path, keys_to_skip_loading)
+        if not ema_loaded:
             net_ema = getattr(model, "net_ema", None)
             if net_ema is not None:
                 net_ema.load_state_dict(model.net.state_dict())
@@ -135,8 +135,11 @@ def _load_diffusers_checkpoint(model: nn.Module, checkpoint_path: Path) -> None:
 
 def _load_native_checkpoint(
     model: nn.Module, model_path: str, keys_to_skip_loading: list[str]
-) -> None:
-    """Warm-start the native model from Cosmos VFM safetensors or DCP."""
+) -> bool:
+    """Warm-start the native model from Cosmos VFM safetensors or DCP.
+
+    Returns whether ``model.net_ema`` was populated from the checkpoint.
+    """
     from cosmos_framework.utils.generator.model_loader import (
         _is_safetensors_checkpoint,
         _load_model,
@@ -156,7 +159,7 @@ def _load_native_checkpoint(
             parallel_dims=getattr(model, "parallel_dims", None),
             skip_patterns=skip_patterns or None,
         )
-        return
+        return False
 
     dcp_dir = (
         os.path.join(model_path, "model")
@@ -169,3 +172,13 @@ def _load_native_checkpoint(
         credential_path=None,
         keys_to_skip_loading=keys_to_skip_loading or None,
     )
+    net_ema = getattr(model, "net_ema", None)
+    if net_ema is None:
+        return True
+    skips = [key for key in keys_to_skip_loading if key]
+    ema_skipped = any(
+        skip in f"net_ema.{param_name}"
+        for param_name in net_ema.state_dict()
+        for skip in skips
+    )
+    return not ema_skipped

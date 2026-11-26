@@ -24,6 +24,7 @@ An adapter whose server cannot batch every env together also defines
 ``request_groups(env_obs)``; the worker then sends one request per group.
 """
 
+import asyncio
 from typing import Any, Callable
 
 import torch
@@ -39,7 +40,12 @@ class SGLangEmbodiedAdapter:
 
     action_path = "/v1/actions/generations"
     rollout_path = "/rollout/generate"
+    action_request_msgpack = True
+    action_response_msgpack = False
+    rollout_request_msgpack = False
+    rollout_response_msgpack = True
     supports_training = False
+    supports_router = True
 
     def validate_training(self, cfg) -> None:
         if not self.supports_training:
@@ -57,23 +63,91 @@ class SGLangEmbodiedAdapter:
         """Map an actor key to serving state, or return None to exclude it."""
         raise NotImplementedError("Training adapters must implement map_weight_name()")
 
-    def request_actions(self, client, env_obs, mode="eval", **http_options):
-        """Build, send and parse one model request."""
+    def build_request(
+        self, env_obs: dict[str, Any], mode: str = "eval"
+    ) -> tuple[dict[str, Any], Any]:
+        """Build an HTTP payload and local state for parsing the server response."""
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement build_request()"
+        )
+
+    def parse_response(
+        self, response: Any, state: Any
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Parse an evaluation action response into ``(actions, info)``."""
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement parse_response()"
+        )
+
+    def parse_rollout_response(
+        self, response: Any, state: Any
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Parse a training rollout response into ``(actions, info)``."""
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement parse_rollout_response()"
+        )
+
+    def prepare_request_context(
+        self, env_obs: dict[str, Any], mode: str = "eval"
+    ) -> dict[str, Any]:
+        """Extract deterministic per-group state on the event loop before off-thread encoding."""
+        del env_obs, mode
+        return {}
+
+    def build_request_with_context(
+        self,
+        env_obs: dict[str, Any],
+        mode: str = "eval",
+        request_context: dict[str, Any] | None = None,
+    ):
+        """Build a request using any pre-drawn deterministic context."""
+        del request_context
+        return self.build_request(env_obs, mode=mode)
+
+    async def async_build_request(
+        self,
+        env_obs: dict[str, Any],
+        mode: str = "eval",
+        *,
+        request_context: dict[str, Any] | None = None,
+    ):
+        """Build a request off the event loop so CPU image encoding overlaps HTTP I/O."""
+        return await asyncio.to_thread(
+            self.build_request_with_context, env_obs, mode, request_context
+        )
+
+    async def async_request_actions(self, client, env_obs, mode="eval", **http_options):
+        """Build, asynchronously send, and parse one model request."""
         if mode == "train" and not self.supports_training:
             raise ValueError(f"{type(self).__name__} does not support training rollout")
-        payload, state = self.build_request(env_obs, mode=mode)
-        return self.send_request(client, payload, state, mode=mode, **http_options)
+        request_context = self.prepare_request_context(env_obs, mode=mode)
+        payload, state = await self.async_build_request(
+            env_obs, mode=mode, request_context=request_context
+        )
+        return await self.async_send_request(
+            client, payload, state, mode=mode, **http_options
+        )
 
-    def send_request(self, client, payload, state, mode="eval", **http_options):
-        """Send a prepared request and parse its response using the retained state."""
+    async def async_send_request(
+        self, client, payload, state, mode="eval", **http_options
+    ):
+        """Asynchronously send a prepared request and parse its response."""
         if mode == "train" and not self.supports_training:
             raise ValueError(f"{type(self).__name__} does not support training rollout")
         training = mode == "train"
-        response = client.post(
+        response = await client.async_post(
             self.rollout_path if training else self.action_path,
             payload,
-            msgpack=not training,
-            response_msgpack=training,
+            msgpack=(
+                self.rollout_request_msgpack
+                if training
+                else self.action_request_msgpack
+            ),
+            response_msgpack=(
+                self.rollout_response_msgpack
+                if training
+                else self.action_response_msgpack
+            ),
             **http_options,
         )
         if training:

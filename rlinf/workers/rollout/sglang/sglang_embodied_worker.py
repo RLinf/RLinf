@@ -17,7 +17,7 @@
 Training and evaluation own the same server backend and direct control client.
 """
 
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
 from typing import Any, Literal, Optional
 
 import torch
@@ -57,7 +57,12 @@ class SGLangEmbodiedWorker(Worker):
         self.sglang_server_url = None
         self._backend = None
         self._placement = EmbodiedComponentPlacement(config, Cluster())
-        self.only_eval = config.runner.get("only_eval", False)
+        self.only_eval = bool(
+            config.runner.get("only_eval", False)
+            or config.runner.get("task_type") == "embodied_eval"
+        )
+        self.enable_offload = bool(config.rollout.get("enable_offload", False))
+        self._is_offloaded = False
         self._weights_ready = False
         self.version = 0
         self.global_step = 0
@@ -82,11 +87,9 @@ class SGLangEmbodiedWorker(Worker):
             self.n_eval_chunk_steps = 0
 
         if not self.only_eval:
-            if config.rollout.get("enable_offload", False) or config.rollout.get(
-                "enable_cuda_graph", False
-            ):
+            if config.rollout.get("enable_cuda_graph", False):
                 raise ValueError(
-                    "SGLang embodied training requires offload and CUDA graphs disabled"
+                    "SGLang embodied training requires CUDA graphs disabled"
                 )
             train_env_cfg = config.env.train
             self.rollout_epoch = int(train_env_cfg.rollout_epoch)
@@ -123,8 +126,11 @@ class SGLangEmbodiedWorker(Worker):
             sglang_cfg.get("http_max_retries", 5 if self.only_eval else 0)
         )
         self._http_retry_backoff_s = float(sglang_cfg.get("http_retry_backoff_s", 1.0))
-        self._max_concurrent_requests = int(
-            sglang_cfg.get("max_concurrent_requests", self._placement.rollout_dp_size)
+        configured_concurrency = sglang_cfg.get("max_concurrent_requests")
+        self._max_concurrent_requests = (
+            max(2, self._placement.rollout_dp_size * 2)
+            if configured_concurrency is None
+            else int(configured_concurrency)
         )
         if self._max_concurrent_requests < 1:
             raise ValueError("SGLang max_concurrent_requests must be positive")
@@ -135,6 +141,12 @@ class SGLangEmbodiedWorker(Worker):
 
         if not sglang_cfg.get("launch_server", True):
             raise ValueError("Worker-owned SGLang requires launch_server=true")
+        launch_router = bool(sglang_cfg.get("launch_router", False))
+        if launch_router and not getattr(self.sglang_adapter, "supports_router", True):
+            raise ValueError(
+                f"{type(self.sglang_adapter).__name__} maintains per-server session "
+                "state and does not support rollout.sglang.launch_router=true"
+            )
         from rlinf.scheduler.hardware import AcceleratorUtil
 
         visible_devices = AcceleratorUtil.get_visible_devices(self._accelerator_type)
@@ -146,6 +158,11 @@ class SGLangEmbodiedWorker(Worker):
             )
         server_args = OmegaConf.to_container(sglang_cfg.server, resolve=True)
         server_args["num_gpus"] = num_gpus
+        needs_rlinf_patch = bool(
+            not self.only_eval
+            or self.cfg.runner.get("ckpt_path")
+            or self.enable_offload
+        )
         self._backend = make_backend(
             sglang_cfg.get("backend_type", "server"),
             server_args,
@@ -160,7 +177,8 @@ class SGLangEmbodiedWorker(Worker):
             log_info=self.log_info,
             log_error=self.log_error,
             server_type="embodied",
-            bind_to_node_ip=sglang_cfg.get("launch_router", False),
+            expose_to_router=launch_router,
+            apply_rlinf_patch=needs_rlinf_patch,
         )
         await self._backend.initialize()
         self.http_client = self._backend.http_client
@@ -168,6 +186,8 @@ class SGLangEmbodiedWorker(Worker):
         if not self.only_eval:
             torch.manual_seed(int(self.model_cfg.get("seed", 1140)) + self._rank)
         self._weights_ready = self.only_eval
+        if self.enable_offload and not self.only_eval:
+            await self.offload_model()
 
     def get_server_url(self) -> str:
         """Return this instance's direct URL for router registration."""
@@ -218,7 +238,7 @@ class SGLangEmbodiedWorker(Worker):
             ),
         }
 
-    def predict(
+    async def predict(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "eval"
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """env_obs -> action chunks [N, num_action_chunks, action_dim].
@@ -236,27 +256,27 @@ class SGLangEmbodiedWorker(Worker):
         request_groups = getattr(self.sglang_adapter, "request_groups", None)
         groups = request_groups(env_obs) if request_groups is not None else None
         if groups is None or len(groups) <= 1:
-            return self._request_actions(env_obs, mode)
+            return await self._request_actions(env_obs, mode)
+
+        # Draw per-group seeds/contexts in deterministic env order before
+        # running off-thread encoding and concurrent HTTP requests.
+        prepared = []
+        for group in groups:
+            group_obs = select_env_rows(env_obs, group)
+            request_context = self.sglang_adapter.prepare_request_context(
+                group_obs, mode=mode
+            )
+            prepared.append((group_obs, request_context))
+        client = self._router_client or self.http_client
         if self._max_concurrent_requests == 1:
-            outputs = [
-                self._request_actions(select_env_rows(env_obs, group), mode)
-                for group in groups
-            ]
-        else:
-            # Prepare in env order so random seeds and replay states are stable.
-            requests = [
-                self.sglang_adapter.build_request(
-                    select_env_rows(env_obs, group), mode=mode
+            outputs = []
+            for group_obs, request_context in prepared:
+                payload, state = await self.sglang_adapter.async_build_request(
+                    group_obs, mode=mode, request_context=request_context
                 )
-                for group in groups
-            ]
-            with ThreadPoolExecutor(
-                max_workers=min(self._max_concurrent_requests, len(groups))
-            ) as executor:
-                futures = [
-                    executor.submit(
-                        self.sglang_adapter.send_request,
-                        self._router_client or self.http_client,
+                outputs.append(
+                    await self.sglang_adapter.async_send_request(
+                        client,
                         payload,
                         state,
                         mode=mode,
@@ -264,18 +284,43 @@ class SGLangEmbodiedWorker(Worker):
                         max_retries=self._http_max_retries,
                         retry_backoff_s=self._http_retry_backoff_s,
                     )
-                    for payload, state in requests
-                ]
-                outputs = [future.result() for future in futures]
+                )
+        else:
+            concurrency = min(self._max_concurrent_requests, len(prepared))
+            encode_semaphore = asyncio.Semaphore(concurrency)
+            http_semaphore = asyncio.Semaphore(concurrency)
+
+            async def _run_request(group_obs, request_context):
+                async with encode_semaphore:
+                    payload, state = await self.sglang_adapter.async_build_request(
+                        group_obs, mode=mode, request_context=request_context
+                    )
+                async with http_semaphore:
+                    return await self.sglang_adapter.async_send_request(
+                        client,
+                        payload,
+                        state,
+                        mode=mode,
+                        timeout_s=self._http_timeout_s,
+                        max_retries=self._http_max_retries,
+                        retry_backoff_s=self._http_retry_backoff_s,
+                    )
+
+            outputs = await asyncio.gather(
+                *(
+                    _run_request(group_obs, request_context)
+                    for group_obs, request_context in prepared
+                )
+            )
         order = [index for group in groups for index in group]
         actions = gather_env_rows([actions for actions, _ in outputs], order)
         info = gather_env_rows([info for _, info in outputs], order)
         return actions, info
 
-    def _request_actions(
+    async def _request_actions(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"]
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        return self.sglang_adapter.request_actions(
+        return await self.sglang_adapter.async_request_actions(
             self._router_client or self.http_client,
             env_obs,
             mode=mode,
@@ -284,57 +329,79 @@ class SGLangEmbodiedWorker(Worker):
             retry_backoff_s=self._http_retry_backoff_s,
         )
 
+    async def offload_model(self, tags: Optional[list[str]] = None) -> None:
+        """Offload the embodied SGLang server weights to CPU."""
+        if self._backend is None or self._is_offloaded:
+            return
+        await self._backend.offload(tags=tags)
+        self._is_offloaded = True
+
+    async def reload_model(self, tags: Optional[list[str]] = None) -> None:
+        """Restore offloaded embodied SGLang server weights back to GPU."""
+        if self._backend is None or not self._is_offloaded:
+            return
+        await self._backend.onload(tags=tags)
+        self._is_offloaded = False
+
     async def evaluate(self, input_channel, output_channel):
         """Channel-based embodied eval loop, driven by EmbodiedEvalRunner."""
         from tqdm import tqdm
 
-        for _ in tqdm(
-            range(self.eval_rollout_epoch),
-            desc="Evaluating Rollout Epochs",
-            disable=(self._rank != 0),
-        ):
-            eval_epoch_done = False
-            for _ in range(self.n_eval_chunk_steps):
-                for stage_id in range(self.num_pipeline_stages):
-                    env_output = await self.recv_from(
-                        group_name=self.cfg.env.group_name,
-                        channel=input_channel,
-                        tag="eval_rollout_results",
-                        route_key=stage_id,
-                        async_op=True,
-                        batch_size=self.eval_batch_size,
-                        merge_fn=self._merge_obs_batches,
-                        infer_batch_size_fn=self._infer_env_batch_size,
-                    ).async_wait()
-                    if env_output.get("eval_epoch_done"):
-                        eval_epoch_done = True
-                        break
-                    obs = {
-                        **env_output["obs"],
-                        "_rlinf_stage_id": stage_id,
-                        "_rlinf_reset": env_output.get("reset", False),
-                    }
-                    actions, _ = self.predict(obs, mode="eval")
-                    if isinstance(actions, torch.Tensor):
-                        actions = actions.detach().cpu().contiguous()
-                    self.send_to(
-                        group_name=self.cfg.env.group_name,
-                        channel=output_channel,
-                        data=actions,
-                        tag="eval_rollout_results",
-                        route_key=stage_id,
-                        async_op=True,
-                        batch_size=self.eval_batch_size,
-                    )
+        if self.enable_offload:
+            await self.reload_model()
+        try:
+            for _ in tqdm(
+                range(self.eval_rollout_epoch),
+                desc="Evaluating Rollout Epochs",
+                disable=(self._rank != 0),
+            ):
+                eval_epoch_done = False
+                for _ in range(self.n_eval_chunk_steps):
+                    for stage_id in range(self.num_pipeline_stages):
+                        env_output = await self.recv_from(
+                            group_name=self.cfg.env.group_name,
+                            channel=input_channel,
+                            tag="eval_rollout_results",
+                            route_key=stage_id,
+                            async_op=True,
+                            batch_size=self.eval_batch_size,
+                            merge_fn=self._merge_obs_batches,
+                            infer_batch_size_fn=self._infer_env_batch_size,
+                        ).async_wait()
+                        if env_output.get("eval_epoch_done"):
+                            eval_epoch_done = True
+                            break
+                        obs = {
+                            **env_output["obs"],
+                            "_rlinf_stage_id": stage_id,
+                            "_rlinf_reset": env_output.get("reset", False),
+                        }
+                        actions, _ = await self.predict(obs, mode="eval")
+                        if isinstance(actions, torch.Tensor):
+                            actions = actions.detach().cpu().contiguous()
+                        self.send_to(
+                            group_name=self.cfg.env.group_name,
+                            channel=output_channel,
+                            data=actions,
+                            tag="eval_rollout_results",
+                            route_key=stage_id,
+                            async_op=True,
+                            batch_size=self.eval_batch_size,
+                        )
 
-                if eval_epoch_done:
-                    break
+                    if eval_epoch_done:
+                        break
+        finally:
+            if self.enable_offload and not self.only_eval:
+                await self.offload_model()
 
     @Worker.timer("sync_model_from_actor")
     async def sync_model_from_actor(self) -> None:
         """Trigger direct actor-to-server transfer through the shared control API."""
         if self.only_eval:
             raise RuntimeError("Standalone evaluation has no actor to synchronize")
+        if self.enable_offload:
+            await self.reload_model()
         self._weights_ready = False
         result = await self._backend.sync_weights()
         self.version = int(result["version"])
@@ -345,7 +412,7 @@ class SGLangEmbodiedWorker(Worker):
         self._weights_ready = False
         self.sglang_server_url = None
         if self._backend is not None:
-            self._backend.shutdown()
+            await self._backend.async_shutdown()
             self._backend = None
         self.http_client = None
         if self._router_client is not None:
@@ -379,7 +446,7 @@ class SGLangEmbodiedWorker(Worker):
             infer_batch_size_fn=lambda item: self._infer_env_batch_size(item.obs),
         ).async_wait()
 
-    def _publish_env_parts(
+    async def _publish_env_parts(
         self, policy_input: PolicyInput, actor_channel: Channel
     ) -> None:
         """Complete the environment halves of previously executed chunks."""
@@ -398,7 +465,7 @@ class SGLangEmbodiedWorker(Worker):
                     raise ValueError(
                         "Terminal inference requires a post-action observation"
                     )
-                _, result = self.predict(next_obs, mode="train")
+                _, result = await self.predict(next_obs, mode="train")
                 final_values = result.get("prev_values")
             actor_channel.put(
                 part.complete(
@@ -427,8 +494,9 @@ class SGLangEmbodiedWorker(Worker):
                 if policy_input.is_last:
                     raise ValueError("Received a final input in the policy stream")
                 output = None
+                external_actions = None
                 if policy_input.requires_inference:
-                    actions, result = self.predict(policy_input.obs, mode="train")
+                    actions, result = await self.predict(policy_input.obs, mode="train")
                     logprobs = (
                         result["prev_logprobs"] if self.collect_prev_infos else None
                     )
@@ -444,38 +512,38 @@ class SGLangEmbodiedWorker(Worker):
                         if logprobs is not None
                         else None,
                     )
+                    # CPU storage prevents a same-device env from aliasing CUDA buffers.
+                    actions = actions.detach().cpu().contiguous()
+                    self.send_to(
+                        group_name=self.cfg.env.group_name,
+                        channel=output_channel,
+                        data=actions,
+                        tag="policy",
+                        route_key=stage_id,
+                        async_op=True,
+                        batch_size=self.train_batch_size,
+                        split_fn=self._split_actions,
+                    )
                 else:
-                    actions = policy_input.external_actions
-                # CPU storage prevents a same-device env from aliasing CUDA buffers.
-                actions = actions.detach().cpu().contiguous()
-                self.send_to(
-                    group_name=self.cfg.env.group_name,
-                    channel=output_channel,
-                    data=actions,
-                    tag="policy",
-                    route_key=stage_id,
-                    async_op=True,
-                    batch_size=self.train_batch_size,
-                    split_fn=self._split_actions,
-                )
+                    external_actions = (
+                        policy_input.external_actions.detach().cpu().contiguous()
+                    )
                 actor_channel.put(
                     PolicyPart(
                         sources=policy_input.sources,
                         obs=policy_input.obs if self.collect_transitions else {},
                         output=output,
-                        external_actions=actions
-                        if not policy_input.requires_inference
-                        else None,
+                        external_actions=external_actions,
                     ),
                     async_op=True,
                 )
-                self._publish_env_parts(policy_input, actor_channel)
+                await self._publish_env_parts(policy_input, actor_channel)
 
         for stage_id in range(self.num_pipeline_stages):
             policy_input = await self._receive_policy_input(input_channel, stage_id)
             if not policy_input.is_last:
                 raise ValueError("Expected a final policy input at epoch end")
-            self._publish_env_parts(policy_input, actor_channel)
+            await self._publish_env_parts(policy_input, actor_channel)
 
     @Worker.timer("rollout/generate")
     async def generate(
@@ -487,5 +555,13 @@ class SGLangEmbodiedWorker(Worker):
         """Run the synchronous training rollout requested by EmbodiedRunner."""
         if self.only_eval:
             raise RuntimeError("Training rollout requires runner.only_eval=false")
-        for _ in range(self.rollout_epoch):
-            await self.generate_one_epoch(input_channel, output_channel, actor_channel)
+        if self.enable_offload:
+            await self.reload_model()
+        try:
+            for _ in range(self.rollout_epoch):
+                await self.generate_one_epoch(
+                    input_channel, output_channel, actor_channel
+                )
+        finally:
+            if self.enable_offload:
+                await self.offload_model()

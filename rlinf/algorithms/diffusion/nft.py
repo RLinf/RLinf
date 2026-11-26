@@ -22,6 +22,7 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig, ListConfig
 
+from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import masked_mean
 
 
@@ -65,20 +66,27 @@ def init_nft_ema_state(
     ``update_names`` includes trainable parameters and persistent buffers.
     ``use_fp32=False`` preserves the model dtype for EMA accumulation.
     """
-    update_names = set(update_names)
+    update_names = {
+        name.replace("_checkpoint_wrapped_module.", "").replace("_orig_mod.", "")
+        for name in update_names
+    }
     result = {}
+    matched = 0
     for name, value in state.items():
         if torch.is_tensor(value):
             dtype = value.dtype
-            if (
-                use_fp32
-                and name in update_names
-                and dtype in (torch.float16, torch.bfloat16)
-            ):
-                dtype = torch.float32
+            if name in update_names:
+                matched += 1
+                if use_fp32 and dtype in (torch.float16, torch.bfloat16):
+                    dtype = torch.float32
             result[name] = value.detach().to(dtype=dtype, copy=True)
         else:
             result[name] = value
+    if use_fp32 and update_names and matched == 0:
+        get_logger().warning(
+            "init_nft_ema_state matched zero keys from update_names; "
+            "all EMA weights retained their original dtype."
+        )
     return result
 
 

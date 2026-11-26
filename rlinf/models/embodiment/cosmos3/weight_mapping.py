@@ -39,7 +39,13 @@ _ROOT_NAMES = (
 )
 
 
+def strip_wrapper_prefixes(name: str) -> str:
+    """Remove activation-checkpointing and torch.compile parameter prefixes."""
+    return name.replace("_checkpoint_wrapped_module.", "").replace("_orig_mod.", "")
+
+
 def native_to_diffusers_key(name: str) -> str:
+    name = strip_wrapper_prefixes(name)
     if name.startswith("language_model."):
         name = name.removeprefix("language_model.").removeprefix("model.")
         for native, exported in _ATTENTION_NAMES:
@@ -53,7 +59,7 @@ def native_to_diffusers_key(name: str) -> str:
 
 def actor_to_sglang_key(name: str) -> str | None:
     """Select the online transformer and map its native actor key for serving."""
-    name = name.replace("_checkpoint_wrapped_module.", "").replace("_orig_mod.", "")
+    name = strip_wrapper_prefixes(name)
     if not name.startswith("omni.net."):
         return None
     return native_to_diffusers_key(name.removeprefix("omni.net."))

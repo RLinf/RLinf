@@ -20,7 +20,7 @@ import typing
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from rlinf.data.schema.reasoning_requests import SeqGroupInfo
 from rlinf.scheduler.worker.worker import Worker
@@ -331,11 +331,10 @@ def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
     elif rollout_backend == "sglang":
         serving_mode = cfg.rollout.sglang.get("serving_mode", None)
         if serving_mode == "embodied":
-            from rlinf.workers.rollout.sglang.sglang_embodied_worker import (
-                SGLangEmbodiedWorker,
+            raise ValueError(
+                "sglang serving_mode='embodied' uses SGLangEmbodiedWorker via "
+                "get_embodied_rollout_worker(cfg), not get_rollout_backend_worker(cfg)."
             )
-
-            return SGLangEmbodiedWorker
         elif serving_mode == "worker_http":
             from rlinf.workers.rollout.sglang.sglang_agent_worker import (
                 SGLangAgentWorkerWithHTTPServer,
@@ -430,25 +429,19 @@ def launch_embodied_sglang_router(
     ):
         return None
 
-    from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
+    from rlinf.workers.rollout.sglang import launch_router_for_workers
 
-    server_urls = rollout_group.get_server_url().wait()
-    router_server_args = OmegaConf.create(
-        OmegaConf.to_container(cfg.rollout.sglang, resolve=True)
-    )
-    router_server_args.launch_server = False
-    _, router_group = launch_sglang_router_and_server(
-        cfg,
-        cluster,
-        rollout_hardware_ranks=None,
-        router_server_args=router_server_args,
+    sglang_cfg = cfg.rollout.sglang
+    router_group, router_url = launch_router_for_workers(
+        config=cfg,
+        cluster=cluster,
+        worker_group=rollout_group,
+        router_cfg=sglang_cfg.router,
+        router_group_name=sglang_cfg.get("router_group_name", "SGLangRouterGroup"),
+        router_node_group=sglang_cfg.get("router_node_group"),
     )
     try:
-        for url in server_urls:
-            router_group.register_server(url).wait()
-        rollout_group.set_sglang_router_url(
-            router_group.get_router_url().wait()[0]
-        ).wait()
+        rollout_group.set_sglang_router_url(router_url).wait()
     except BaseException:
         router_group.stop().wait()
         raise

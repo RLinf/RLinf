@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,6 +15,9 @@
 """RLinf embodied control and weight reception for SGLang Diffusion servers."""
 
 import asyncio
+import gc
+import itertools
+from collections.abc import Mapping
 
 import torch
 from fastapi import HTTPException
@@ -27,9 +30,14 @@ from rlinf.hybrid_engines.sglang.common.io_struct import (
     TaskMethodInput,
     TaskMethodOutput,
 )
+from rlinf.hybrid_engines.sglang.common.peer_whitelist import (
+    EMBODIED_WHITELISTED_PATHS,
+    PeerWhitelistMiddleware,
+)
 from rlinf.hybrid_engines.sglang.common.weight_target import receive_hf_weights
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.scheduler import Worker
+from rlinf.utils.pinned_offload import pinned_offload_context
 
 
 class Scheduler(_Scheduler):
@@ -40,6 +48,8 @@ class Scheduler(_Scheduler):
         self._rlinf_worker = None
         self._weights_ready = True
         self._sync_failed = False
+        self._offloaded_modules: dict[str, torch.device] = {}
+        self._is_offloaded = False
         self.weight_syncer = None
         self.request_handlers.update(
             {
@@ -62,7 +72,11 @@ class Scheduler(_Scheduler):
         model_instance_id=None,
     ) -> None:
         """Initialize evaluation weights or register the actor weight receiver."""
-        only_eval = config.runner.get("only_eval", False)
+        only_eval = bool(
+            weight_reload is None
+            or config.runner.get("only_eval", False)
+            or config.runner.get("task_type") == "embodied_eval"
+        )
         checkpoint = config.runner.get("ckpt_path")
         if hasattr(self, "weight_target") or hasattr(self, "_loaded_checkpoint"):
             if (
@@ -166,6 +180,89 @@ class Scheduler(_Scheduler):
         if not success:
             raise RuntimeError(message)
 
+    def _resolve_pipeline_modules(
+        self, tags: list[str] | None = None
+    ) -> list[tuple[str, torch.nn.Module]]:
+        modules = getattr(self.worker.pipeline, "modules", None)
+        if not isinstance(modules, Mapping):
+            return []
+        if tags is None or "weights" in tags:
+            return [
+                (name, module)
+                for name, module in modules.items()
+                if isinstance(module, torch.nn.Module)
+            ]
+        selected: list[tuple[str, torch.nn.Module]] = []
+        available = [
+            name for name, mod in modules.items() if isinstance(mod, torch.nn.Module)
+        ]
+        for tag in tags:
+            module = modules.get(tag)
+            if not isinstance(module, torch.nn.Module):
+                raise ValueError(
+                    f"Unknown embodied offload tag {tag!r}; expected one of {available}"
+                )
+            selected.append((tag, module))
+        return selected
+
+    def release_memory_occupation(
+        self, tags: list[str] | None = None
+    ) -> dict[str, list[str]]:
+        """Offload serving pipeline modules to pinned CPU memory."""
+        moved = False
+        with pinned_offload_context():
+            for name, module in self._resolve_pipeline_modules(tags):
+                if name in self._offloaded_modules:
+                    continue
+                device = next(
+                    (
+                        tensor.device
+                        for tensor in itertools.chain(
+                            module.parameters(), module.buffers()
+                        )
+                        if tensor.device.type != "cpu"
+                    ),
+                    None,
+                )
+                if device is None:
+                    continue
+                self._offloaded_modules[name] = device
+                module.to("cpu")
+                moved = True
+        if moved:
+            Worker.torch_platform.current_stream().synchronize()
+            gc.collect()
+            Worker.torch_platform.empty_cache()
+        self._is_offloaded = bool(self._offloaded_modules)
+        return {"offloaded": sorted(self._offloaded_modules)}
+
+    def resume_memory_occupation(
+        self, tags: list[str] | None = None
+    ) -> dict[str, list[str]]:
+        """Restore offloaded serving pipeline modules back to their accelerators."""
+        if not self._offloaded_modules:
+            self._is_offloaded = False
+            return {"resumed": [], "offloaded": []}
+        if tags is None or "weights" in tags:
+            target_names = list(self._offloaded_modules)
+        else:
+            target_names = [tag for tag in tags if tag in self._offloaded_modules]
+        modules = getattr(self.worker.pipeline, "modules", {})
+        resumed: list[str] = []
+        for name in target_names:
+            device = self._offloaded_modules.pop(name)
+            module = modules.get(name) if isinstance(modules, Mapping) else None
+            if isinstance(module, torch.nn.Module):
+                module.to(device)
+                resumed.append(name)
+        if resumed:
+            Worker.torch_platform.current_stream().synchronize()
+        self._is_offloaded = bool(self._offloaded_modules)
+        return {
+            "resumed": sorted(resumed),
+            "offloaded": sorted(self._offloaded_modules),
+        }
+
     def sync_hf_weight(self, requests: list[SyncHFWeightInput]) -> OutputBatch:
         if self._rlinf_worker is None:
             raise RuntimeError(
@@ -182,6 +279,8 @@ class Scheduler(_Scheduler):
         version = None
         error = None
         try:
+            if self._is_offloaded:
+                self.resume_memory_occupation()
             if self.weight_syncer is not None:
                 version = asyncio.run(self._sync_patch_weights())
             else:
@@ -254,7 +353,8 @@ class _SchedulerManager:
         return results[0].output
 
     async def run_task_method(self, obj, request):
-        return await self._forward(obj)
+        output = await self._forward(obj)
+        return output.result if isinstance(output, TaskMethodOutput) else output
 
     async def sync_hf_weight(self, obj, request):
         return await self._forward(obj)
@@ -271,6 +371,9 @@ def create_app(server_args, *, control_token: str):
     )
 
     app = native_create_app(server_args)
+    app.add_middleware(
+        PeerWhitelistMiddleware, allowed_paths=EMBODIED_WHITELISTED_PATHS
+    )
     add_rlinf_routes(app, control_token=control_token, manager=_SchedulerManager())
     return app
 

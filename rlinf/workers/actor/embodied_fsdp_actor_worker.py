@@ -26,7 +26,7 @@ import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.expert import build_expert_model_config
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.algorithms.utils import compute_entropy_loss, safe_normalize
-from rlinf.config import SupportedModel
+from rlinf.config import SupportedModel, torch_dtype_from_precision
 from rlinf.data.schema.embodied_trajectory import RolloutGeometry
 from rlinf.data.schema.embodied_types import Trajectory, batch_format
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
@@ -227,6 +227,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return model
 
+    def get_rollout_sync_version(self) -> int:
+        return self.version
+
     def get_rollout_state_dict(self) -> dict:
         return self.get_model_state_dict(cpu_offload=False, full_state_dict=False)
 
@@ -253,12 +256,23 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             if self.weight_syncer is not None:
                 await self._sync_sglang_patch_weights(serving_state, adapter_cls)
             else:
+                precision = self.cfg.actor.get("sync_precision") or OmegaConf.select(
+                    self.cfg,
+                    "actor.fsdp_config.mixed_precision.param_dtype",
+                    default=None,
+                )
+                rollout_dtype = (
+                    torch_dtype_from_precision(precision)
+                    if precision is not None
+                    else None
+                )
                 self.send_hf_weights(
                     serving_state,
                     self._rollout_group_name,
                     self._sglang_weight_targets,
+                    dtype=rollout_dtype,
                     cpu_offload=True,
-                    version=self.version,
+                    version=self.get_rollout_sync_version(),
                 )
         elif self.rollout_backend in ("huggingface", "phyai"):
 
@@ -293,12 +307,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     is_sender=self._is_weight_sender,
                 )
 
-            version = (
-                self.get_rollout_sync_version()
-                if hasattr(self, "get_rollout_sync_version")
-                else self.version
+            await self.weight_syncer.sync(
+                state_dict, send_func, version=self.get_rollout_sync_version()
             )
-            await self.weight_syncer.sync(state_dict, send_func, version=version)
         else:
             raise ValueError(
                 "Embodied weight synchronization supports 'sglang', 'huggingface', "
@@ -311,6 +322,19 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "weight should be offloaded in sync_model_to_rollout"
             )
             self.offload_param_and_grad(True)
+
+    def _prepare_sglang_patch_state(
+        self, serving_state: dict[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
+        prepared = {}
+        for key in self._sglang_patch_keys:
+            tensor = serving_state[key]
+            if self._sglang_patch_shapes.get(key) == () and tensor.shape == (1,):
+                if hasattr(tensor, "full_tensor"):
+                    tensor = tensor.full_tensor()
+                tensor = tensor.reshape(())
+            prepared[key] = tensor
+        return prepared
 
     async def _sync_sglang_patch_weights(
         self, state_dict: dict[str, torch.Tensor], adapter_cls: type
@@ -345,7 +369,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 options=self._sync_weight_comm_options,
             ).async_wait()
             self._sglang_patch_keys = metadata["ordered_keys"]
-            serving_state = {key: serving_state[key] for key in self._sglang_patch_keys}
+            self._sglang_patch_shapes = metadata.get("original_shapes", {})
+            serving_state = self._prepare_sglang_patch_state(serving_state)
             names = list(
                 dict.fromkeys(
                     key
@@ -363,13 +388,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 is_sender=self._is_weight_sender,
             )
         else:
-            serving_state = {key: serving_state[key] for key in self._sglang_patch_keys}
-        version = (
-            self.get_rollout_sync_version()
-            if hasattr(self, "get_rollout_sync_version")
-            else self.version
+            serving_state = self._prepare_sglang_patch_state(serving_state)
+        await self.weight_syncer.sync(
+            serving_state, send, version=self.get_rollout_sync_version()
         )
-        await self.weight_syncer.sync(serving_state, send, version=version)
 
     @Worker.timer("actor/recv_traj")
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:

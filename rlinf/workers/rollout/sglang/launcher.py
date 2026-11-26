@@ -16,6 +16,10 @@
 
 Entrypoints:
 
+* :func:`attach_workers_to_router` — register an existing worker group's
+  servers on an existing ``SGLangRouterWorker`` group and return its URL.
+* :func:`launch_router_for_workers` — launch a ``SGLangRouterWorker`` for an
+  existing worker group whose workers own their own servers.
 * :func:`launch_sglang_router_and_server` — returns the worker-group
   handles.
 * :func:`launch_sglang_api` — same launch, but also resolves the
@@ -51,6 +55,76 @@ from rlinf.scheduler.placement import PlacementStrategy
 
 from .router_worker import SGLangRouterWorker
 from .server_worker import SGLangServerWorker
+
+
+def attach_workers_to_router(
+    router_group,
+    worker_group,
+    *,
+    init_router: bool = False,
+) -> str:
+    """Register every server owned by ``worker_group`` onto ``router_group``.
+
+    Args:
+        router_group: Launched ``SGLangRouterWorker`` group.
+        worker_group: Worker group exposing ``get_server_url()``.
+        init_router: Call ``router_group.init_router().wait()`` first when True.
+
+    Returns:
+        The router's HTTP base URL.
+    """
+    if init_router:
+        router_group.init_router().wait()
+    server_urls = [
+        url for url in worker_group.get_server_url().wait() if url is not None
+    ]
+    if not server_urls:
+        raise ValueError(
+            "Expected at least one worker server URL to register with the router, "
+            "got none"
+        )
+    for url in server_urls:
+        router_group.register_server(url).wait()
+    return router_group.get_router_url().wait()[0]
+
+
+def launch_router_for_workers(
+    config: DictConfig,
+    cluster: Cluster,
+    worker_group,
+    router_cfg: DictConfig,
+    *,
+    router_group_name: str = "SGLangRouterGroup",
+    router_node_rank: int = 0,
+    router_node_group: str | Sequence[str] | None = None,
+    placement_strategy: PlacementStrategy | None = None,
+) -> tuple["object", str]:
+    """Launch a ``SGLangRouterWorker`` and attach a worker group's servers to it.
+
+    Returns:
+        ``(router_group, router_url)``. Rolls back ``router_group`` if
+        initialization or server registration fails.
+    """
+    router_ps = placement_strategy or NodePlacementStrategy(
+        node_ranks=[router_node_rank],
+        node_group_label=router_node_group,
+    )
+    router_group = SGLangRouterWorker.create_group(
+        config=config,
+        router_cfg=router_cfg,
+    ).launch(
+        cluster=cluster,
+        name=router_group_name,
+        placement_strategy=router_ps,
+    )
+    try:
+        router_url = attach_workers_to_router(
+            router_group, worker_group, init_router=True
+        )
+    except BaseException:
+        router_group.stop().wait()
+        raise
+    return router_group, router_url
 
 
 def launch_sglang_router_and_server(
@@ -177,9 +251,7 @@ def launch_sglang_router_and_server(
     # driver (serialized) so the order of attached workers is stable —
     # if you want concurrent registration, call from N workers instead.
     if server_group is not None and router_group is not None:
-        server_urls = server_group.get_server_url().wait()
-        for url in server_urls:
-            router_group.register_server(url).wait()
+        attach_workers_to_router(router_group, server_group)
 
     return server_group, router_group
 

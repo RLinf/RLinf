@@ -208,24 +208,22 @@ def main(cfg) -> None:
         reward=reward_group,
     )
 
-    rollout_router_group = None
-    try:
-        runner.init_workers()
-        rollout_router_group = launch_embodied_sglang_router(
-            cfg, cluster, rollout_group
-        )
-        runner.run()
-    finally:
-        if rollout_router_group is not None:
-            rollout_router_group.stop().wait()
-        if cfg.rollout.get("rollout_backend") == "sglang":
-            rollout_group.stop().wait()
-        if router_group is not None:
-            router_group.stop().wait()
-        if server_group is not None:
-            server_group.stop().wait()
-        if reward_group is not None:
-            reward_group.stop().wait()
+    runner.init_workers()
+    rollout_router_group = launch_embodied_sglang_router(
+        cfg, cluster, rollout_group
+    )
+    runner.run()
+
+    if rollout_router_group is not None:
+        rollout_router_group.stop().wait()
+    if cfg.rollout.get("rollout_backend") == "sglang":
+        rollout_group.stop().wait()
+    if reward_group is not None:
+        reward_group.stop().wait()
+    if router_group is not None:
+        router_group.stop().wait()
+    if server_group is not None:
+        server_group.stop().wait()
 
 
 if __name__ == "__main__":

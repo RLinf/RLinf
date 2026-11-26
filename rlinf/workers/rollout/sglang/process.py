@@ -150,15 +150,25 @@ def _run_sglang_server(
             server_args.scheduler_ports = server_args_kwargs["scheduler_ports"]
             server_args.scheduler_port = server_args.scheduler_ports[0]
             set_global_server_args(server_args)
-            from rlinf.hybrid_engines.sglang.common import embodied_scheduler
+            try:
+                if apply_rlinf_patch:
+                    from rlinf.hybrid_engines.sglang.common import embodied_scheduler
 
-            dispatch_launch(
-                server_args,
-                run_scheduler_process_func=embodied_scheduler.run_scheduler_process,
-                app_factory=partial(
-                    embodied_scheduler.create_app, control_token=control_token
-                ),
-            )
+                    dispatch_launch(
+                        server_args,
+                        run_scheduler_process_func=embodied_scheduler.run_scheduler_process,
+                        app_factory=partial(
+                            embodied_scheduler.create_app, control_token=control_token
+                        ),
+                    )
+                else:
+                    dispatch_launch(server_args)
+            except Exception as e:  # pragma: no cover — surface to parent
+                try:
+                    ready_pipe.send(repr(e))
+                except Exception:
+                    pass
+                raise
         else:
             if apply_rlinf_patch:
                 # Must precede the launch_server import below: the Patcher
@@ -265,8 +275,6 @@ class SGLangServerProcess:
 
     ``server_type`` is an RLinf selector: ``srt`` launches SGLang's LLM
     runtime, and ``embodied`` launches SGLang Diffusion for embodied policies.
-    ``bind_to_node_ip`` overrides both bind and advertised addresses with
-    the Ray node IP so a remote router can reach the server.
     """
 
     def __init__(
@@ -283,8 +291,6 @@ class SGLangServerProcess:
         extra_env: Optional[dict[str, str]] = None,
         log_info: Callable[[str], None] = lambda msg: None,
         log_error: Callable[[str], None] = lambda msg: None,
-        *,
-        bind_to_node_ip: bool = False,
     ):
         if server_type not in ("srt", "embodied"):
             raise ValueError(
@@ -302,8 +308,11 @@ class SGLangServerProcess:
                 "dist_init_addr (the entry node's rendezvous host:port) is "
                 "required when nnodes > 1."
             )
-        if apply_rlinf_patch and server_type == "srt":
-            _assert_sglang_supports_rlinf_patch()
+        if apply_rlinf_patch:
+            if server_type == "srt":
+                _assert_sglang_supports_rlinf_patch()
+            elif server_type == "embodied":
+                _assert_embodied_sglang_supports_rlinf_patch()
         self._server_args_kwargs = dict(server_args_kwargs)
         self._acquire_free_port = acquire_free_port
         self._server_type = server_type
@@ -312,7 +321,6 @@ class SGLangServerProcess:
         self._dist_init_addr = dist_init_addr
         self._bind_host = bind_host
         self._advertise_host = advertise_host
-        self._bind_to_node_ip = bind_to_node_ip
         self._apply_rlinf_patch = apply_rlinf_patch
         self._extra_env = dict(extra_env) if extra_env else None
         self._control_token = secrets.token_urlsafe(32)
@@ -345,12 +353,10 @@ class SGLangServerProcess:
 
         from . import sglang_version
 
-        if self._bind_to_node_ip or self._advertise_host is None:
+        if self._advertise_host is None:
             import ray.util
 
             self._advertise_host = ray.util.get_node_ip_address()
-            if self._bind_to_node_ip:
-                self._bind_host = self._advertise_host
 
         # Every node needs an HTTP port (non-entry nodes bind a dummy
         # /health); a local dist port only on single node, cross-node uses
@@ -496,16 +502,14 @@ class SGLangServerProcess:
         return f"http://{host}:{self._server_port}"
 
     def get_control_url(self) -> str:
-        """The local control URL: loopback for SRT, the bound IP for Diffusion.
+        """The local control URL: always loopback for direct worker control.
 
-        SRT's peer whitelist requires loopback even when advertising the node IP.
-        Diffusion can bind only to the node IP and authenticates with a token.
+        Even when the server binds ``0.0.0.0`` and advertises its node IP for a
+        router, direct control clients use ``127.0.0.1`` so the peer-address
+        whitelist can reject off-host ``/rlinf/*`` control requests.
         """
         assert self._server_port is not None, "start() has not been called."
-        host = self._bind_host if self._server_type == "embodied" else "127.0.0.1"
-        if host == "0.0.0.0":
-            host = "127.0.0.1"
-        return f"http://{host}:{self._server_port}"
+        return f"http://127.0.0.1:{self._server_port}"
 
     def is_healthy(self) -> bool:
         if self._server_proc is None or not self._server_proc.is_alive():
@@ -545,6 +549,33 @@ class SGLangServerProcess:
             proc.join(timeout=5)
         self._server_proc = None
         self._server_port = None
+        if self._ready_pipe is not None:
+            try:
+                self._ready_pipe.close()
+            except Exception:
+                pass
+            self._ready_pipe = None
+
+
+def _assert_embodied_sglang_supports_rlinf_patch() -> None:
+    """Refuse ``apply_rlinf_patch`` on embodied SGLang lacking launch hooks."""
+    try:
+        from sglang.multimodal_gen.runtime.launch_server import dispatch_launch
+    except ImportError as e:
+        raise RuntimeError(
+            "Embodied RLinf patch requires SGLang multimodal_gen launch_server."
+        ) from e
+    params = inspect.signature(dispatch_launch).parameters
+    missing = [
+        name
+        for name in ("run_scheduler_process_func", "app_factory")
+        if name not in params
+    ]
+    if missing:
+        raise RuntimeError(
+            "apply_rlinf_patch for embodied servers requires dispatch_launch to "
+            f"accept {', '.join(missing)}; install the modified SGLang checkout."
+        )
 
 
 def _assert_sglang_supports_rlinf_patch() -> None:

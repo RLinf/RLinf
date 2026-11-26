@@ -69,16 +69,14 @@ def main(cfg) -> None:
         env=env_group,
     )
 
-    router_group = None
-    try:
-        runner.init_workers()
-        router_group = launch_embodied_sglang_router(cfg, cluster, rollout_group)
-        runner.run()
-    finally:
-        if router_group is not None:
-            router_group.stop().wait()
-        if cfg.rollout.get("rollout_backend") == "sglang":
-            rollout_group.stop().wait()
+    runner.init_workers()
+    router_group = launch_embodied_sglang_router(cfg, cluster, rollout_group)
+    runner.run()
+
+    if router_group is not None:
+        router_group.stop().wait()
+    if cfg.rollout.get("rollout_backend") == "sglang":
+        rollout_group.stop().wait()
 
 
 if __name__ == "__main__":
