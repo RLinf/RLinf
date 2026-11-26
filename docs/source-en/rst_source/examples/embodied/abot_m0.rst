@@ -1,5 +1,5 @@
-RL on ABot-M0
-==============
+ABot-M0 RL
+==========
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/ABot-M0.png
    :align: center
@@ -42,7 +42,7 @@ Fine-tune ABot-M0 on LIBERO-10 / LIBERO-Plus with PPO (actor-critic).
 
       1 node · GPUs
 
-| **You'll do:** install → download the ABot-M0 checkpoint + backbones → set ``model_path`` → evaluate → launch ``run_embodiment.sh`` → watch ``env/success_once``.
+| **You'll do:** install → download the ABot-M0 checkpoint + backbones → set ``model_path`` → launch ``run_embodiment.sh`` → watch ``env/success_once``.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · an ABot-M0 LIBERO checkpoint and its backbone weights (steps below).
 
 ABot-M0 is the VLA policy: the RLinf wrapper keeps pretrained perception
@@ -90,286 +90,158 @@ Observation and Action
    * - Prompt
      - Natural-language instruction associated with each LIBERO task.
 
-Installation
-------------
-
-Install ABot-M0, VGGT, and the LIBERO runtime in the same Python environment as RLinf.
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
+The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGGT_PATH`` first to reuse local checkouts.
 
-.. code:: bash
+.. tab-set::
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+   .. tab-item:: LIBERO
+      :sync: libero
 
-   # Inside the container, switch to the ABot-M0 virtual environment:
-   source switch_env abot_m0
+      **1. Install**
 
-**Option 2: Custom environment** — install bundle ``--env maniskill_libero``. The
-installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` / ``VGGT_PATH``
-first to reuse local checkouts:
+      .. code-block:: bash
 
-.. code:: bash
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero && source .venv/bin/activate
 
-   # Optional: use local source checkouts instead of installer-managed clones.
-   # export ABOT_PATH=<path_to_ABot-Manipulation>
-   # export VGGT_PATH=<path_to_vggt>
+      **2. Download**
 
-   # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
-   source .venv/bin/activate
+      Download the 10k-step LIBERO RL baseline (~40% initial LIBERO success rate) and the Qwen3-VL backbone:
 
-For LIBERO-Plus experiments, install the additional ``LIBERO-plus`` runtime in
-the same environment:
+      .. code-block:: bash
 
-.. code:: bash
+         hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
+         hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action
 
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-   bash requirements/install.sh embodied --model abot_m0 --env liberoplus
-   source .venv/bin/activate
+      Update ``qwenvl.base_vlm`` in the downloaded checkpoint's ``config.yaml`` to your local ``Qwen3-VL-4B-Instruct-Action`` path:
 
-Download the LIBERO-Plus Assets
--------------------------------
+      .. code-block:: yaml
 
-LIBERO-Plus requires hundreds of new objects, textures, and other assets to
-function correctly. Download the ``assets.zip`` archive from the Hugging Face
-dataset ``Sylvest/LIBERO-plus`` and extract it into the installed
-``liberoplus.liberoplus`` package directory:
+         qwenvl:
+           base_vlm: /path/to/Qwen3-VL-4B-Instruct-Action
 
-.. code-block:: bash
+      **3. Launch**
 
-   # Resolve the installed liberoplus package directory.
-   # Note: importing liberoplus may emit config-init logs, so use tail -n 1 to keep only the final path.
-   export LIBERO_PLUS_PACKAGE_DIR=$(python -c "import pathlib; import liberoplus.liberoplus as l_plus; print(pathlib.Path(l_plus.__file__).resolve().parent)" | tail -n 1)
+      Launch PPO training, passing ``actor.model.model_path`` on the command line (rollout inherits the same path automatically):
 
-   echo "LIBERO_PLUS_PACKAGE_DIR=${LIBERO_PLUS_PACKAGE_DIR}"
+      .. code-block:: bash
 
-   # Optional mirror for environments that cannot access Hugging Face directly.
-   # export HF_ENDPOINT=https://hf-mirror.com
+         bash examples/embodiment/run_embodiment.sh libero_10_ppo_abot_m0 \
+           actor.model.model_path=./ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
 
-   # Download the assets archive from the Hugging Face dataset repo.
-   hf download --repo-type dataset Sylvest/LIBERO-plus assets.zip \
-       --local-dir "${LIBERO_PLUS_PACKAGE_DIR}"
+      .. dropdown:: Advanced configuration (optional)
 
-   # assets.zip contains a long original path prefix, so extract only the assets/ subtree.
-   python - <<'PY'
-   import zipfile
-   from pathlib import Path
+         - **Released SFT checkpoint for evaluation**: download ``acvlab/ABot-M0-LIBERO`` instead of the 10k-step RL baseline:
 
-   pkg = Path(__import__("os").environ["LIBERO_PLUS_PACKAGE_DIR"])
-   zip_path = pkg / "assets.zip"
-   out_dir = pkg / "assets"
+           .. code-block:: bash
 
-   with zipfile.ZipFile(zip_path) as z:
-       for info in z.infolist():
-           name = info.filename
+              hf download acvlab/ABot-M0-LIBERO --local-dir ./ABot-M0-LIBERO
 
-           if "/assets/" not in name:
-               continue
+         - **Offline VGGT weights**: for machines without Hugging Face access at runtime, download ``facebook/VGGT-1B`` and export ``VGGT_MODEL_PATH`` (``VGGT_PATH`` selects the source checkout at install time; ``VGGT_MODEL_PATH`` selects the weights at runtime):
 
-           rel = name.split("/assets/", 1)[1]
-           if not rel:
-               continue
+           .. code-block:: bash
 
-           target = out_dir / rel
+              hf download facebook/VGGT-1B --local-dir ./VGGT-1B
+              export VGGT_MODEL_PATH=$PWD/VGGT-1B
 
-           if info.is_dir():
-               target.mkdir(parents=True, exist_ok=True)
-           else:
-               target.parent.mkdir(parents=True, exist_ok=True)
-               with z.open(info) as src, open(target, "wb") as dst:
-                   dst.write(src.read())
+         - **Hydra configuration reference**: see :doc:`Training configuration <../../reference/configuration>`.
 
-   print("Extracted LIBERO-Plus assets to:", out_dir)
-   PY
+   .. tab-item:: LIBERO-Plus
+      :sync: liberoplus
 
-   # Verify the assets directory structure.
-   ls -lh "${LIBERO_PLUS_PACKAGE_DIR}/assets"
+      **1. Install**
 
-After extraction, the directory should look like:
+      .. code-block:: bash
 
-.. code-block:: text
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model abot_m0 --env liberoplus && source .venv/bin/activate
 
-   <installed liberoplus package dir>/
-   └── assets/
-       ├── articulated_objects/
-       ├── new_objects/
-       ├── scenes/
-       ├── stable_hope_objects/
-       ├── stable_scanned_objects/
-       ├── textures/
-       ├── turbosquid_objects/
-       ├── serving_region.xml
-       ├── wall_frames.stl
-       └── wall.xml
+      **2. Download**
 
-See the :ref:`LIBERO-Pro & LIBERO-Plus section <liberopro-plus-benchmark>` of the LIBERO benchmarks page for full LIBERO-Plus details.
+      Download the LIBERO-Plus scene assets, the 10k-step LIBERO RL baseline, and the Qwen3-VL backbone (see the :ref:`LIBERO-Pro & LIBERO-Plus section <liberopro-plus-benchmark>` for asset details):
 
-Download the Model
-------------------
+      .. code-block:: bash
 
-Before training, download the ABot-M0 checkpoint and the required backbone
-weights:
+         export LIBERO_PLUS_PACKAGE_DIR=$(python -c "import pathlib; import liberoplus.liberoplus as l_plus; print(pathlib.Path(l_plus.__file__).resolve().parent)" | tail -n 1)
+         hf download --repo-type dataset Sylvest/LIBERO-plus assets.zip --local-dir "${LIBERO_PLUS_PACKAGE_DIR}"
+         hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
+         hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action
 
-* ``acvlab/ABot-M0-LIBERO`` for standalone evaluation.
-* ``HaoyunOvO/ABot-m0-LIBERO-10k-step`` as the PPO training baseline.
-* ``StarVLA/Qwen3-VL-4B-Instruct-Action`` as the Qwen3-VL backbone.
-* ``facebook/VGGT-1B`` for offline VGGT loading when Hugging Face cannot be
-  reached at runtime.
+      Extract the ``assets/`` subtree from ``assets.zip`` into the installed ``liberoplus.liberoplus`` package directory:
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/acvlab/ABot-M0-LIBERO
-   git clone https://huggingface.co/HaoyunOvO/ABot-m0-LIBERO-10k-step
-   git clone https://huggingface.co/StarVLA/Qwen3-VL-4B-Instruct-Action
-   git clone https://huggingface.co/facebook/VGGT-1B
+         python - <<'PY'
+         import os, zipfile
+         from pathlib import Path
+         pkg = Path(os.environ["LIBERO_PLUS_PACKAGE_DIR"])
+         with zipfile.ZipFile(pkg / "assets.zip") as z:
+             for info in z.infolist():
+                 if "/assets/" in info.filename and (rel := info.filename.split("/assets/", 1)[1]):
+                     target = pkg / "assets" / rel
+                     target.mkdir(parents=True, exist_ok=True) if info.is_dir() else (target.parent.mkdir(parents=True, exist_ok=True), target.write_bytes(z.read(info)))
+         PY
 
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download acvlab/ABot-M0-LIBERO --local-dir ./ABot-M0-LIBERO
-   hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
-   hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action
-   hf download facebook/VGGT-1B --local-dir ./VGGT-1B
+      Update ``qwenvl.base_vlm`` in the downloaded checkpoint's ``config.yaml`` to your local ``Qwen3-VL-4B-Instruct-Action`` path:
 
-For PPO training, the 10k-step ABot-M0 LIBERO checkpoint provides an initial
-LIBERO success rate of approximately 40% and is suitable as the starting point
-for further RL training.
+      .. code-block:: yaml
 
-.. note::
+         qwenvl:
+           base_vlm: ./Qwen3-VL-4B-Instruct-Action
 
-   ABot-M0 checkpoints include ``config.yaml``. After download, update
-   ``qwenvl.base_vlm`` so it points to your local
-   ``Qwen3-VL-4B-Instruct-Action`` path.
+      **3. Launch**
 
-.. code-block:: yaml
+      Select the LIBERO-Plus suite and launch PPO training, passing ``actor.model.model_path`` on the command line (rollout inherits the same path automatically):
 
-   qwenvl:
-     base_vlm: /path/to/Qwen3-VL-4B-Instruct-Action
+      .. code-block:: bash
 
-RLinf's ABot-M0 loader honors ``VGGT_MODEL_PATH``. For offline runs, export the
-directory downloaded above before starting evaluation or training:
+         export LIBERO_TYPE=plus
+         bash examples/embodiment/run_embodiment.sh libero_10_plus_ppo_abot_m0 \
+           actor.model.model_path=./ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
 
-.. code-block:: bash
+      .. dropdown:: Advanced configuration (optional)
 
-   export VGGT_MODEL_PATH=/path/to/VGGT-1B
+         - **Released SFT checkpoint for evaluation**: download ``acvlab/ABot-M0-LIBERO`` instead of the 10k-step RL baseline:
 
-Without this variable, ABot keeps the default ``facebook/VGGT-1B`` Hub ID.
-``VGGT_PATH`` selects the source checkout during installation;
-``VGGT_MODEL_PATH`` selects the weights at runtime.
+           .. code-block:: bash
 
-Configure Further
------------------
+              hf download acvlab/ABot-M0-LIBERO --local-dir ./ABot-M0-LIBERO
 
-For common Hydra sections and path fields, see :doc:`Training configuration <../../reference/configuration>`.
+         - **Offline VGGT weights**: for machines without Hugging Face access at runtime, download ``facebook/VGGT-1B`` and export ``VGGT_MODEL_PATH`` (``VGGT_PATH`` selects the source checkout at install time; ``VGGT_MODEL_PATH`` selects the weights at runtime):
 
-Two configs are provided, one per benchmark:
+           .. code-block:: bash
 
-* LIBERO:    ``examples/embodiment/config/libero_10_ppo_abot_m0.yaml``
-* LIBERO-Plus:  ``examples/embodiment/config/libero_10_plus_ppo_abot_m0.yaml``
+              hf download facebook/VGGT-1B --local-dir ./VGGT-1B
+              export VGGT_MODEL_PATH=$PWD/VGGT-1B
 
-Set both fields to the checkpoint used for evaluation or training:
+         - **Hydra configuration reference**: see :doc:`Training configuration <../../reference/configuration>`.
 
-* ``rollout.model.model_path``
-* ``actor.model.model_path``
+.. dropdown:: Standalone evaluation
 
-For the 10k-step RL baseline, use:
+   Use the unified Evaluation section to verify ABot-M0 checkpoints before training. Start from the :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>` and set ``actor.model.model_path`` to the ABot-M0 checkpoint.
 
-.. code-block:: yaml
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 36 36
 
-   rollout:
-     model:
-       model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
-   actor:
-     model:
-       model_path: /path/to/ABot-m0-LIBERO-10k-step/checkpoints/steps_10000_pytorch_model.pt
+      * - Suite
+        - Config source
+        - What to change
+      * - LIBERO-10
+        - ``libero_10_ppo_abot_m0`` via the Evaluation config fallback
+        - Point ``actor.model.model_path`` at the ABot-M0 checkpoint.
+      * - LIBERO-10+
+        - ``libero_10_plus_ppo_abot_m0`` via the Evaluation config fallback
+        - Set ``LIBERO_TYPE=plus`` and point ``actor.model.model_path`` at the ABot-M0 checkpoint.
 
-Import Sanity Check
--------------------
-
-.. code-block:: bash
-
-   python -c "import rlinf; import ABot; import vggt; print('IMPORT_OK')"
-
-If the command prints ``IMPORT_OK``, the package-level dependency wiring is valid.
-
-Standalone Evaluation
----------------------
-
-Use the unified Evaluation section to verify ABot-M0 checkpoints before training.
-Start from the :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>` and
-set the ABot-M0 checkpoint in both ``actor.model.model_path`` and
-``rollout.model.model_path``.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 36 36
-
-   * - Suite
-     - Config source
-     - What to change
-   * - LIBERO-10
-     - ``libero_10_ppo_abot_m0`` via the Evaluation config fallback
-     - Set ``LIBERO_TYPE=standard`` and point both model paths at the ABot-M0 checkpoint.
-   * - LIBERO-10+
-     - ``libero_10_plus_ppo_abot_m0`` via the Evaluation config fallback
-     - Set ``LIBERO_TYPE=plus`` and point both model paths at the ABot-M0 checkpoint.
-
-For CLI usage, Hydra overrides, logs, and video output, use the
-:doc:`Evaluation CLI reference <../../evaluations/reference/cli>` and
-:doc:`Evaluation results reference <../../evaluations/reference/results>`.
-
-Run It
-------
-
-PPO training uses the same launch flow as evaluation. Select the target suite
-with ``LIBERO_TYPE`` and launch the corresponding config.
-
-Common environment setup:
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-   export REPO_PATH=$(pwd)
-   export EMBODIED_PATH=$(pwd)/examples/embodiment
-   export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-   export MUJOCO_GL=egl
-   export PYOPENGL_PLATFORM=egl
-   export ROBOT_PLATFORM=LIBERO
-
-   ray stop || true
-   ray start --head --port=6379
-
-**LIBERO:**
-
-.. code-block:: bash
-
-   export LIBERO_TYPE=standard
-   bash examples/embodiment/run_embodiment.sh libero_10_ppo_abot_m0
-
-**LIBERO-Plus:**
-
-.. code-block:: bash
-
-   export LIBERO_TYPE=plus
-   bash examples/embodiment/run_embodiment.sh libero_10_plus_ppo_abot_m0
+   For CLI usage, Hydra overrides, logs, and video output, use the :doc:`Evaluation CLI reference <../../evaluations/reference/cli>` and :doc:`Evaluation results reference <../../evaluations/reference/results>`.
 
 Visualization and Results
 -------------------------
 
-Watch ``env/success_once`` for the task success rate. For every logged metric, see
-:doc:`Training metrics <../../reference/metrics>`.
-
-.. code-block:: bash
-
-   tensorboard --logdir <runner.logger.log_path> --port 6006
+Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` and watch ``env/success_once``. Pass ``env.eval.video_cfg.save_video=True`` to record evaluation videos; see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.

@@ -1,84 +1,91 @@
-REINFORCE++ 
-=====================
+REINFORCE++
+===========
 
 1. 引言
----------------
+-------
 
-**REINFORCE++** 是一种轻量级的强化学习后训练方法。  
-它基于经典的 REINFORCE 算法，并借鉴了 PPO 的两个关键思想 —— *逐 token 的 KL 惩罚* 和 *优势归一化* ——  
-同时 **避免了额外的策略裁剪损失**，因为裁剪可能会导致梯度估计出现偏差。  
+**REINFORCE++** 是一种面向 LLM 后训练的无 critic 强化学习方法（`论文 <https://arxiv.org/abs/2501.03262>`__）。它在经典 REINFORCE 的基础上引入逐 token KL 惩罚与全局优势归一化，无需维护独立的价值模型。
 
-核心设计选择包括：  
+核心设计包括：
 
-* **单响应训练** (`group_size = 1`)：每个 prompt 只采样一个答案。  
-* **逐 token KL 惩罚** （默认 *k₂*）：KL 不作为额外损失项加入，而是从标量奖励中扣除。  
-* **全局优势归一化**：在整个 batch 上进行归一化。  
-* **REINFORCE++ 基线** （`use_reinpp_baseline: True`，要求 `group_size > 1`）：使用每个 prompt 内的平均奖励作为基线，*然后* 再进行全局归一化。
+- **单响应或分组采样**：标准 REINFORCE++ 可使用 ``group_size: 1``；开启 ``use_reinpp_baseline: True`` 并设置 ``group_size > 1`` 时，会在全局归一化前先减去每个 prompt 组内的平均奖励作为基线。
+- **奖励内的逐 token KL 惩罚**：当 ``reinpp_kl_beta > 0`` 时，RLinf 按 ``kl_penalty_type`` 指定的估计器（``k1`` / ``kl``、``k2`` / ``mse``、``abs`` 或 ``k3`` / ``low_var_kl``）计算逐 token KL，并从奖励矩阵中扣除 ``reinpp_kl_beta * kld``。
+- **全局优势归一化**：对整个 batch 中的有效 token 做均值和标准差归一化。
 
 2. 目标函数
-----------------------
+-----------
 
-设 :math:`q` 为 prompt，:math:`o_{1:T}` 为生成的 token 序列，:math:`\pi_{\theta}^{\text{RL}}` 为当前策略。  
-在时间步 :math:`t` 的逐 token 优势为：  
-
-.. math::
-
-   A_{q,0,t} \;=\; r(o_{1:T}, q)\;-\;\beta
-   \sum_{i=t}^{T} \operatorname{KL}(i) \tag{8}
-
-其中：  
+设 :math:`q` 为 prompt，:math:`o_{1:T}` 为生成的 token 序列，:math:`\pi_{\theta}^{\mathrm{RL}}` 为当前 policy。时间步 :math:`t` 的逐 token 优势由终局奖励减去从 :math:`t` 到 :math:`T` 的累计 KL 惩罚得到：
 
 .. math::
 
-   \operatorname{KL}(t) \;=\;
+   A_{q,o_t} \;=\; r(o_{1:T}, q) \;-\; \beta \sum_{i=t}^{T} \operatorname{KL}(i),
+
+其中 :math:`\beta` 对应 ``reinpp_kl_beta``，:math:`\operatorname{KL}(t)` 按 ``kl_penalty_type`` 相对冻结参考 policy :math:`\pi^{\mathrm{ref}}` 计算。无偏的 ``k1`` 估计器形式为：
+
+.. math::
+
+   \operatorname{KL}_{k_1}(t) \;=\;
    \log\!\left(
-     \frac{\pi^{\text{RL}}_{\theta_{\text{old}}}(o_t \mid q,\,o_{<t})}
-          {\pi^{\text{SFT}}(o_t \mid q,\,o_{<t})}
-   \right) \tag{9}
+     \frac{\pi^{\mathrm{RL}}_{\theta_{\mathrm{old}}}(o_t \mid q,\,o_{<t})}
+          {\pi^{\mathrm{ref}}(o_t \mid q,\,o_{<t})}
+   \right),
 
-:math:`\pi^{\text{SFT}}` 是冻结的监督微调 (SFT) 参考策略，  
-:math:`\beta` 控制 KL 惩罚的强度。  
-
-为了稳定训练，优势在 **全局 batch 范围内归一化**：  
+仓库中数学推理示例配置使用的 ``k2`` 估计器形式为：
 
 .. math::
 
-   A^{\text{norm}}_{q,o_t} \;=\;
+   \operatorname{KL}_{k_2}(t) \;=\; \frac{1}{2}\left(
+     \log \pi^{\mathrm{RL}}_{\theta_{\mathrm{old}}}(o_t \mid q,\,o_{<t}) -
+     \log \pi^{\mathrm{ref}}(o_t \mid q,\,o_{<t})
+   \right)^2.
+
+为稳定训练，RLinf 在整个 batch 的有效 token 上归一化优势：
+
+.. math::
+
+   A^{\mathrm{norm}}_{q,o_t} \;=\;
    \frac{
      A_{q,o_t} \;-\;
-     \operatorname{mean}\ \bigl(A_{q,o_t}\,\mid\,A_{q,o_t}\in\mathcal{D}_{\text{batch}}\bigr)
+     \operatorname{mean}\!\bigl(A_{q,o_t} \mid A_{q,o_t}\in\mathcal{D}_{\mathrm{batch}}\bigr)
    }{
-     \operatorname{std}\ \bigl(A_{q,o_t}\,\mid\,A_{q,o_t}\in\mathcal{D}_{\text{batch}}\bigr)
-   } \tag{10}
-
-然后使用标准的 REINFORCE 梯度来更新策略：  
-:math:`\nabla_{\theta}\,\log\pi_{\theta}(o_t\!\mid\!q,o_{<t})\,A^{\text{norm}}_{q,o_t}` 。  
+     \operatorname{std}\!\bigl(A_{q,o_t} \mid A_{q,o_t}\in\mathcal{D}_{\mathrm{batch}}\bigr)
+   }.
 
 3. 配置
------------------
+-------
 
-REINFORCE++
+完整运行指南参见 :doc:`数学推理 <../../examples/agentic/math_reasoning/reasoning>` 与可运行配置 ``examples/reasoning/config/math/qwen2.5-1.5b-reinpp-megatron.yaml``。
+
+REINFORCE++：
 
 .. code-block:: yaml
 
    algorithm:
-     adv_type:      "reinpp"       # 使用 REINFORCE++
-     reinpp_kl_beta: 0.001         # REINFORCE++中的KL惩罚系数，与计算loss时使用的kl系数的区分
-     use_reinpp_baseline: False    # 不使用基线
-     group_size:    1              # 每个 prompt 一个响应
+     adv_type: "reinpp"            # 启用 REINFORCE++ 优势计算
+     loss_type: actor
+     loss_agg_func: "token-mean"
+     reinpp_kl_beta: 0.001         # 优势计算内的逐 token KL 惩罚系数
+     kl_penalty_type: k2           # 可选：k1 (kl)、k2 (mse)、abs、k3 (low_var_kl)
+     use_reinpp_baseline: False
+     group_size: 16
+     kl_beta: 0.0                  # actor 损失中的独立 KL 惩罚（REINFORCE++ 通常设为 0.0）
 
    data:
-     rollout_batch_size: 8192
+     rollout_batch_size: 512
 
-REINFORCE++ 基线
+REINFORCE++ 基线模式：
 
 .. code-block:: yaml
 
    algorithm:
-     adv_type:      "reinpp"
-     use_reinpp_baseline: True     # 减去组内平均奖励
-     group_size:    16             # 每个 prompt 多个响应
-     kl_beta:       0.0001
+     adv_type: "reinpp"
+     loss_type: actor
+     reinpp_kl_beta: 0.001
+     kl_penalty_type: k1
+     use_reinpp_baseline: True     # 全局归一化前先减去组内平均奖励
+     group_size: 16
+     kl_beta: 0.0
 
    data:
      rollout_batch_size: 512
@@ -86,6 +93,5 @@ REINFORCE++ 基线
 4. 注意事项
 -----------
 
-- REINFORCE++ 使用的是所谓的 :math:`k_1` KL。  
-- GRPO 算法使用的是 :math:`k_3` 形式，它混合了 on-policy 和参考策略的概率，但该估计是有偏的。  
-- 使用 :math:`k_1` KL 可以保持更新无偏，同时仍能抑制过大的策略偏移。  
+- ``kl_penalty_type`` 决定 ``rlinf/algorithms/advantages.py`` 中 ``compute_reinpp_advantages`` 调用 ``rlinf/algorithms/utils.py`` 里 ``kl_penalty`` 时采用的估计器：``k1``\ （``kl``）为无偏估计；``k2``\ （``mse``）惩罚对数概率偏移的平方，也是 ``examples/reasoning/config/math/qwen2.5-1.5b-reinpp-megatron.yaml`` 的默认选项；``k3``\ （``low_var_kl``）为 Schulman 低方差估计器。
+- 使用 ``algorithm.reinpp_kl_beta`` 在奖励内施加 KL 惩罚时，应将 ``algorithm.kl_beta`` 设为 ``0.0``，避免重复计算 KL 惩罚。

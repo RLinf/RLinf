@@ -29,7 +29,17 @@ class EntropyTemperature(nn.Module):
         alpha_type: str = "softplus",
         device=None,
         dtype=torch.float32,
+        num_temperatures: int = 1,
     ):
+        """Create the temperatures.
+
+        Args:
+            initial_alpha: Starting temperature.
+            alpha_type: ``"softplus"``, ``"exp"`` or ``"fixed_alpha"``.
+            device: Device of the parameters.
+            dtype: Dtype of the parameters.
+            num_temperatures: Temperatures to tune, one per env configuration.
+        """
         super().__init__()
         self.alpha_type = alpha_type
 
@@ -41,8 +51,9 @@ class EntropyTemperature(nn.Module):
         elif alpha_type == "fixed_alpha":
             self.register_buffer(
                 "fixed_alpha",
-                torch.tensor(
-                    [initial_alpha],
+                torch.full(
+                    (num_temperatures,),
+                    initial_alpha,
                     device=device,
                     dtype=dtype,
                 ),
@@ -52,7 +63,11 @@ class EntropyTemperature(nn.Module):
         else:
             raise NotImplementedError(f"Unknown alpha_type: {alpha_type}")
 
-        self.base_alpha = nn.Parameter(torch.tensor(init, device=device, dtype=dtype))
+        # One temperature stays a scalar, the shape single-env checkpoints hold.
+        shape = (num_temperatures,) if num_temperatures > 1 else ()
+        self.base_alpha = nn.Parameter(
+            torch.full(shape, float(init), device=device, dtype=dtype)
+        )
 
     def compute_alpha(self) -> torch.Tensor:
         if self.alpha_type == "exp":
@@ -64,6 +79,28 @@ class EntropyTemperature(nn.Module):
         else:
             raise NotImplementedError
 
+    def temperatures(self) -> torch.Tensor:
+        """Return one temperature per env, shape ``[num_temperatures]``."""
+        return self.compute_alpha().reshape(-1)
+
     @property
     def alpha(self) -> float:
-        return self.compute_alpha().item()
+        """Mean temperature, which is the temperature when there is one."""
+        return self.compute_alpha().mean().item()
+
+    def sample_alpha(self, env_index: torch.Tensor | None) -> torch.Tensor:
+        """Return each sample's temperature, picked by the env it came from.
+
+        Args:
+            env_index: Env of each sample, shape ``[B]``. Index -1 marks a
+                sample of no env, such as a demo sample, which takes the mean
+                temperature, as does every sample when ``env_index`` is None.
+
+        Returns:
+            Temperatures of shape ``[B, 1]``, or a scalar without ``env_index``.
+        """
+        temperatures = self.temperatures()
+        if env_index is None:
+            return temperatures.mean()
+        temperatures = torch.cat([temperatures, temperatures.mean().reshape(1)])
+        return temperatures[env_index.to(temperatures.device)].unsqueeze(-1)

@@ -27,8 +27,9 @@ config) that the ZMQ path already pickles today, so the body is
 it before forwarding to the TokenizerManager.
 
 Security: these routes unpickle the request body — an RCE surface. The
-server must not be reachable from untrusted networks; server-mode rollout
-binds to 127.0.0.1.
+server binds to 127.0.0.1 unless the multi-node rollout data plane needs
+otherwise, and the peer-address whitelist installed alongside these routes
+(`PeerWhitelistMiddleware`) keeps non-local requests off them in that mode.
 
 Note: routes are registered on the in-process ``app`` object, so they
 serve on the default single-tokenizer path (``uvicorn.run(app, ...)``)
@@ -43,6 +44,7 @@ from typing import Any
 from fastapi import Request
 from pydantic import BaseModel
 
+from rlinf.hybrid_engines.sglang.common.peer_whitelist import PeerWhitelistMiddleware
 from rlinf.utils.logging import get_logger
 
 
@@ -87,9 +89,11 @@ async def rlinf_abort_generation(payload: RlinfPayload, request: Request) -> dic
 def add_rlinf_routes(app) -> None:
     """Mount the three /rlinf/* control routes on a sglang FastAPI app.
 
-    Must be called before uvicorn starts serving the app (i.e. before
+    Also installs the peer-address whitelist middleware guarding them. Both
+    must be called before uvicorn starts serving the app (i.e. before
     ``launch_server``).
     """
+    app.add_middleware(PeerWhitelistMiddleware)
     app.add_api_route("/rlinf/run_task_method", rlinf_run_task_method, methods=["POST"])
     app.add_api_route("/rlinf/sync_hf_weight", rlinf_sync_hf_weight, methods=["POST"])
     app.add_api_route(
@@ -97,5 +101,6 @@ def add_rlinf_routes(app) -> None:
     )
     get_logger().info(
         "RLinf control routes mounted: /rlinf/run_task_method, "
-        "/rlinf/sync_hf_weight, /rlinf/abort_generation"
+        "/rlinf/sync_hf_weight, /rlinf/abort_generation "
+        "(peer-address whitelist enabled)"
     )

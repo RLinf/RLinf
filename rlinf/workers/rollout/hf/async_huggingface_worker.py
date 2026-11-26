@@ -70,14 +70,9 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 await self._poll_background_weight_sync()
             await self.wait_if_stale()
 
-            for _ in range(self.rollout_epoch):
-                await self.generate_one_epoch(
-                    input_channel,
-                    output_channel,
-                    actor_channel,
-                )
+            await self.generate_one_step(input_channel, output_channel, actor_channel)
             if self.finished_episodes is not None:
-                self.finished_episodes += self.total_num_train_envs * self.rollout_epoch
+                self.finished_episodes += self.train_trajectories_per_step
             rollout_metrics = {
                 f"time/rollout/{key}": value
                 for key, value in self.pop_execution_times().items()
@@ -94,14 +89,9 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         )
         while True:
             capacity = (
-                (self.staleness_threshold + self.version + 1)
-                * self.total_num_train_envs
-                * self.rollout_epoch
-            )
-            if (
-                self.finished_episodes + self.total_num_train_envs * self.rollout_epoch
-                <= capacity
-            ):
+                self.staleness_threshold + self.version + 1
+            ) * self.train_trajectories_per_step
+            if self.finished_episodes + self.train_trajectories_per_step <= capacity:
                 break
             await asyncio.sleep(0.01)
 
