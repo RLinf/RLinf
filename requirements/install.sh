@@ -3991,7 +3991,7 @@ install_behavior_env() {
 }
 
 install_behavior2026_env() {
-    local source_pin="https://github.com/RLinf/BEHAVIOR-1K.git@5acd19864a3ec51b9ed1dade6d0b1a04b9d63c24"
+    local source_pin="https://github.com/RLinf/BEHAVIOR-1K.git@f1d44b827e74c9afcc2c504fef8f7d4c2463dfdf"
     local repo="${GITHUB_PREFIX}${source_pin%@*}" ref="${source_pin##*@}" behavior_dir
     local shared_checkout="${BEHAVIOR_PATH:-$VENV_DIR/BEHAVIOR-1K}"
     local reuse=0
