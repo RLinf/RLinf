@@ -41,7 +41,7 @@ class VersionedTrajectoryRecord:
     generated_tokens: int
     call_count: int
     cross_version_calls: int
-    reward: float
+    reward: float | None
     token_weighted_version_start_sum: int
 
 
@@ -72,7 +72,8 @@ def compute_staleness_metrics(
             group_completion.get(record.group_index, record.completion_version),
             record.completion_version,
         )
-        group_rewards.setdefault(record.group_index, []).append(record.reward)
+        if record.reward is not None:
+            group_rewards.setdefault(record.group_index, []).append(record.reward)
 
     num_groups = len(group_earliest)
     group_staleness = {
@@ -141,14 +142,13 @@ def compute_staleness_metrics(
             ) / max(len(quartile_records), 1)
             quartile_start += size
 
-    metrics["equal_reward_group_ratio"] = (
-        sum(1 for rewards in group_rewards.values() if len(set(rewards)) == 1)
-        / num_groups
-    )
-    metrics["zero_reward_group_ratio"] = (
-        sum(1 for rewards in group_rewards.values() if all(r == 0 for r in rewards))
-        / num_groups
-    )
+    if group_rewards:
+        metrics["equal_reward_group_ratio"] = sum(
+            1 for rewards in group_rewards.values() if len(set(rewards)) == 1
+        ) / len(group_rewards)
+        metrics["zero_reward_group_ratio"] = sum(
+            1 for rewards in group_rewards.values() if all(r == 0 for r in rewards)
+        ) / len(group_rewards)
 
     return metrics
 

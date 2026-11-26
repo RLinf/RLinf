@@ -132,8 +132,7 @@ Beyond the synchronous recipe, these keys control the asynchronous mode:
        unset (77 with this config).
    * - ``rollout_buffer.max_buffered_groups``
      - ``2 x rollout_batch_size``
-     - Limit on in-flight plus buffered groups. Bounds both buffer memory
-       and how stale training data can get. Must be at least
+     - Maximum number of in-flight and buffered groups. Must be at least
        ``rollout_batch_size`` (config validation rejects smaller values);
        an ``agentloop.max_actor_accept_staleness`` below
        ``ceil(max_buffered_groups / rollout_batch_size)`` triggers a
@@ -147,10 +146,23 @@ Beyond the synchronous recipe, these keys control the asynchronous mode:
      - Groups staler than this are dropped before training; the drop frees
        admission capacity for other prompts, and the dropped prompt itself
        comes around again in a later epoch.
-   * - ``down_sampling.down_sampling_config.reject_equal_reward``
+   * - ``algorithm.down_sampling.down_sampling_config.reject_equal_reward``
      - ``False``
      - Drops groups whose per-trajectory rewards are all equal (no gradient
        signal for a within-group baseline).
+
+To filter groups with identical rewards, enable both switches and set the
+number of training steps. Discarded groups consume additional prompts.
+
+.. code-block:: yaml
+
+   algorithm:
+     down_sampling:
+       do_down_sampling: true
+       down_sampling_config:
+         reject_equal_reward: true
+   runner:
+     max_steps: 100
 
 How to size the two scheduling limits depends on whether generation or
 training is the bottleneck; see :doc:`Asynchronous Agentic RL

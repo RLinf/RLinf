@@ -700,6 +700,71 @@ class TestTeacherClient(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.runner.cleanup()
 
+    async def test_mc_rows_survive_nonstreaming_output_chunks(self):
+        from dataclasses import fields
+        from unittest.mock import Mock
+
+        import pytest
+
+        pytest.importorskip("sglang", minversion="0.5.12.post1")
+        from sglang.srt.managers.io_struct import BatchStrOutput, BatchTokenIDOutput
+        from sglang.srt.managers.tokenizer_manager import ReqState
+
+        from rlinf.hybrid_engines.sglang.common.tokenizer_manager import (
+            TokenizerManager,
+        )
+        from rlinf.workers.teacher.scoring import read_mc_samples
+
+        for output_type in (BatchTokenIDOutput, BatchStrOutput):
+            manager = TokenizerManager.__new__(TokenizerManager)
+            manager.enable_metrics = manager.patch_return_output_ids = False
+            manager.dump_requests_folder = manager.crash_dump_folder = None
+            manager.server_args = SimpleNamespace(
+                batch_notify_size=8,
+                weight_version="0",
+                skip_tokenizer_init=False,
+                incremental_streaming_output=False,
+                speculative_algorithm=None,
+                enable_lora=False,
+                dp_size=1,
+            )
+            timing = Mock(first_token_time=1)
+            timing.trace_ctx.tracing_enable = False
+            state = ReqState(
+                out_list=[],
+                finished=False,
+                event=asyncio.Event(),
+                time_stats=timing,
+                obj=SimpleNamespace(
+                    return_logprob=True,
+                    top_logprobs_num=0,
+                    token_ids_logprob=None,
+                    return_text_in_logprobs=False,
+                    stream=False,
+                ),
+            )
+            manager.rid_to_state = {"query": state}
+            for start, stop in ((0, 50), (50, 51)):
+                ids = list(range(start, stop))
+                out = output_type(**{field.name: None for field in fields(output_type)})
+                out.rids = ["query"]
+                out.finished_reasons = [None if stop == 50 else {"type": "length"}]
+                out.prompt_tokens = [2]
+                out.reasoning_tokens = out.cached_tokens = out.retraction_counts = [0]
+                out.completion_tokens = [stop]
+                out.output_ids = [ids]
+                out.output_strs = ["x" * len(ids)]
+                out.input_token_logprobs_val = out.input_token_logprobs_idx = [[]]
+                out.output_token_logprobs_idx = [ids]
+                out.output_token_logprobs_val = [[-0.5] * len(ids)]
+                out.customized_info = {
+                    "mc_extra_ids": [[[tok + 1] for tok in ids]],
+                    "mc_extra_logprobs": [[[-1.0] for _ in ids]],
+                }
+                await manager._handle_batch_output(out)
+            rows = read_mc_samples(state.out_list[0], mc_k=2)
+            self.assertEqual(rows, [([i, i + 1], [-0.5, -1.0]) for i in range(51)])
+
     async def test_mc_teacher_scores_duplicates_and_preserves_behavior(self):
         from rlinf.algorithms.distillation.config import DistillationPlan
         from rlinf.data.schema.distillation import teacher_targets_to_batch

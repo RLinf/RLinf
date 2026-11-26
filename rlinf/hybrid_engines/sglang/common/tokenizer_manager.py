@@ -104,7 +104,10 @@ class TokenizerManager(_TokenizerManager):
         if obj is None:
             obj = SyncHFWeightInput()
         self.auto_create_handle_loop()
-        await self.sync_hf_weight_communicator(obj)
+        responses = await self.sync_hf_weight_communicator(obj)
+        for response in responses:
+            if response.error is not None:
+                raise RuntimeError(response.error)
 
     async def abort_generation(
         self,
@@ -125,6 +128,24 @@ class TokenizerManager(_TokenizerManager):
 
         # for sglang 0.5.0 and later, we use the original _handle_batch_output
         if not self.patch_return_output_ids:
+            info = getattr(recv_obj, "customized_info", None)
+            if info and "mc_extra_ids" in info:
+                for i, rid in enumerate(recv_obj.rids):
+                    state = self.rid_to_state.get(rid)
+                    if state is None:
+                        continue
+                    streaming = getattr(state.obj, "stream", False)
+                    if streaming and self.server_args.incremental_streaming_output:
+                        continue
+                    # SGLang accumulates ordinary logprobs, but forwards custom fields per chunk.
+                    if not hasattr(state, "rlinf_mc_rows"):
+                        state.rlinf_mc_rows = {
+                            "mc_extra_ids": [],
+                            "mc_extra_logprobs": [],
+                        }
+                    for key, rows in state.rlinf_mc_rows.items():
+                        rows.extend(info[key][i])
+                        info[key][i] = rows.copy() if streaming else rows
             return super()._handle_batch_output(recv_obj)
 
         # sglang renamed Batch*Out -> Batch*Output (moved to io_struct) in 0.5.x;

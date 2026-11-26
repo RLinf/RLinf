@@ -499,6 +499,7 @@ class TestDistillation(unittest.TestCase):
             {"top_k": 10},
             {"repetition_penalty": 1.1},
             {"min_p": 0.1},
+            {"min_new_tokens": 2},
             {"presence_penalty": 0.1},
             {"logit_bias": {"3": 1}},
         ):
@@ -518,6 +519,42 @@ class TestDistillation(unittest.TestCase):
             build_distillation_plan(cfg)
         cfg["rollout"]["sampling_params"] = sampling
         self.assertTrue(build_distillation_plan(cfg).use_policy_gradient)
+
+    def test_async_joint_reward_grpo_uses_reasoning_preset(self):
+        from contextlib import nullcontext
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from omegaconf import OmegaConf
+
+        from rlinf.scheduler import Worker
+        from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
+
+        root = Path(__file__).resolve().parents[2]
+        cfg = OmegaConf.load(
+            root
+            / "examples/reasoning/config/math/qwen3.5-2b-async-opd-mc4-pg-fsdp2-sglang.yaml"
+        )
+        cfg.distillation.distillation_loss.use_task_rewards = True
+        cfg.algorithm.group_size = 2
+        actor = MAFSDPActor.__new__(MAFSDPActor)
+        actor.cfg = cfg
+        actor.distillation_plan = build_distillation_plan(cfg)
+        actor.task_type = cfg.runner.task_type
+        actor.reinpp_kl_beta = 0.0
+        actor.kl_penalty_type = cfg.algorithm.kl_penalty_type
+        actor.worker_timer = nullcontext
+        batch = {
+            "response_mask": torch.ones(2, 3, dtype=torch.bool),
+            "rollout_logprobs": torch.zeros(2, 3),
+            "rewards": torch.tensor([0.0, 1.0]),
+            "input_ids": torch.ones(2, 3, dtype=torch.long),
+            "idx_to_traj": [0, 1],
+        }
+        with patch.object(Worker, "torch_device_type", "cpu"):
+            advantages = actor.compute_advantages_and_returns(batch)["advantages"]
+        self.assertTrue((advantages[0] < 0).all())
+        torch.testing.assert_close(advantages[0], -advantages[1])
 
     def test_megatron_distribution_uses_model_vocabulary(self):
         import sys

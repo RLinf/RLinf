@@ -37,8 +37,8 @@
 #   - rollout_buffer.max_buffered_groups: the theoretical maximum number
 #     of buffered groups. Admission counts in-flight groups toward it
 #     (they enter the buffer on completion), so the buffer size never
-#     exceeds it; it bounds both the buffer memory and how stale training
-#     data can get. Default: 2 x data.rollout_batch_size; must be >=
+#     exceeds it. Use max_actor_accept_staleness to limit version age.
+#     Default: 2 x data.rollout_batch_size; must be >=
 #     data.rollout_batch_size. When generation is the bottleneck, keep it
 #     >= max_inflight_groups + rollout_batch_size, or the buffer cap
 #     crowds out in-flight groups at the end of each step and starves the
@@ -130,7 +130,7 @@ algorithm:
   # GRPO loss params
   loss_type: actor
   loss_agg_func: "token-mean"
-  kl_beta: 0.001 # 0.001
+  kl_beta: 0.0
   kl_penalty_type: low_var_kl
   ratio_clip_eps: 0.2
   entropy_bonus: 0.0

@@ -96,16 +96,28 @@ reward 在 agent loop 内计算（Search-R1 的规则奖励在轨迹和检索文
      - 允许已投放但未返回的组数。留空时按 ``ceil(max_running_requests x instances x 1.2 / group_size)`` 推导（本配置下为 77）。
    * - ``rollout_buffer.max_buffered_groups``
      - ``2 x rollout_batch_size``
-     - 在途加缓冲的组数上限，同时约束缓冲显存和数据最多多旧。必须不小于 ``rollout_batch_size``，config 校验会拒绝更小的值；``agentloop.max_actor_accept_staleness`` 小于 ``ceil(max_buffered_groups / rollout_batch_size)`` 时启动告警。
+     - 在途组与已完成待训练组的总数上限。必须不小于 ``rollout_batch_size``，config 校验会拒绝更小的值；``agentloop.max_actor_accept_staleness`` 小于 ``ceil(max_buffered_groups / rollout_batch_size)`` 时启动告警。
    * - ``rollout_buffer.max_dropped_groups_per_step``
      - ``10 x rollout_batch_size``
      - 两次交付之间丢弃组数的安全上限；超出时运行直接失败。
    * - ``agentloop.max_actor_accept_staleness``
      - 不限
      - 训练前丢弃比它更旧的组；丢弃返还的是准入额度，别的 prompt 会补上来，被丢的 prompt 本身要到下一个 epoch 才会再出现。
-   * - ``down_sampling.down_sampling_config.reject_equal_reward``
+   * - ``algorithm.down_sampling.down_sampling_config.reject_equal_reward``
      - ``False``
      - 丢弃组内各轨迹 reward 全相等的组（组内基线没有梯度信号）。
+
+要过滤组内 reward 全相等的组，同时打开下面两个开关。被丢弃的组也会消耗 prompt，因此需要指定训练步数。
+
+.. code-block:: yaml
+
+   algorithm:
+     down_sampling:
+       do_down_sampling: true
+       down_sampling_config:
+         reject_equal_reward: true
+   runner:
+     max_steps: 100
 
 两个调度上限怎么取，取决于瓶颈在生成还是训练；机制与实测证据见 :doc:`异步 agentic RL </rst_source/guides/async_agentic>`。
 

@@ -115,6 +115,11 @@ class AsyncAgentRunner(AgentRunner):
             self.global_steps,
         )
 
+    @property
+    def _train_dataloader_batch_size(self) -> int:
+        # The buffer releases exactly one training batch per update.
+        return self.cfg.data.rollout_batch_size
+
     def _rollout_target(self, instance_ids: Optional[set[int]]):
         """The rollout group restricted to `instance_ids` (None = all).
 

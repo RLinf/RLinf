@@ -912,8 +912,11 @@ class TestSearchr1DisaggregatedValidation:
 
         placement = MagicMock()
         placement.is_collocated = False
-        with mock.patch.object(
-            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        with (
+            mock.patch.object(cfg_mod, "Cluster"),
+            mock.patch.object(
+                cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+            ),
         ):
             cfg_mod.validate_searchr1_cfg(self._make_cfg("megatron"))
 
@@ -922,8 +925,11 @@ class TestSearchr1DisaggregatedValidation:
 
         placement = MagicMock()
         placement.is_collocated = False
-        with mock.patch.object(
-            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        with (
+            mock.patch.object(cfg_mod, "Cluster"),
+            mock.patch.object(
+                cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+            ),
         ):
             with pytest.raises(ValueError, match="collocated"):
                 cfg_mod.validate_searchr1_cfg(self._make_cfg("fsdp"))
@@ -984,8 +990,11 @@ class TestSearchr1AsyncPauseModeDefaults:
         placement.is_disaggregated = True
         placement.rollout_num_model_instances = 1
         placement.actor_dp_size = 4
-        with mock.patch.object(
-            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        with (
+            mock.patch.object(cfg_mod, "Cluster"),
+            mock.patch.object(
+                cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+            ),
         ):
             return cfg_mod.validate_searchr1_cfg(cfg)
 
@@ -1058,14 +1067,35 @@ class TestSearchr1AsyncBatchDivisibility:
         placement.is_disaggregated = True
         placement.rollout_num_model_instances = 1
         placement.actor_dp_size = actor_dp_size
-        with mock.patch.object(
-            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        with (
+            mock.patch.object(cfg_mod, "Cluster"),
+            mock.patch.object(
+                cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+            ),
         ):
             return cfg_mod.validate_searchr1_cfg(cfg)
 
-    def test_indivisible_batch_size_is_rejected(self):
+    @pytest.mark.parametrize("async_mode", [False, True])
+    def test_indivisible_batch_size_is_rejected(self, async_mode):
         cfg = self._make_cfg(rollout_batch_size=6)
+        cfg.runner.async_mode = async_mode
         with pytest.raises(ValueError, match="divisible"):
+            self._validate(cfg, actor_dp_size=4)
+
+    @pytest.mark.parametrize("coefficient", ["kl_beta", "reinpp_kl_beta"])
+    def test_reference_kl_requires_reference_scores(self, coefficient):
+        cfg = self._make_cfg(rollout_batch_size=8)
+        cfg.algorithm[coefficient] = 0.001
+        with pytest.raises(ValueError, match="reference logprobs"):
+            self._validate(cfg, actor_dp_size=4)
+
+    @pytest.mark.parametrize("async_mode", [False, True])
+    def test_disaggregated_recompute_rejected(self, async_mode):
+        cfg = self._make_cfg(rollout_batch_size=8)
+        cfg.runner.async_mode = async_mode
+        cfg.algorithm.recompute_logprobs = True
+        cfg.rollout.return_logprobs = False
+        with pytest.raises(ValueError, match="recompute_logprobs=False"):
             self._validate(cfg, actor_dp_size=4)
 
     def test_divisible_batch_size_passes(self):
@@ -1125,8 +1155,11 @@ class TestSearchr1AsyncDiscardConfig:
         placement.is_disaggregated = True
         placement.actor_dp_size = actor_dp_size
         placement.rollout_num_model_instances = 1
-        with mock.patch.object(
-            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        with (
+            mock.patch.object(cfg_mod, "Cluster"),
+            mock.patch.object(
+                cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+            ),
         ):
             return cfg_mod.validate_searchr1_cfg(cfg)
 
@@ -2283,8 +2316,11 @@ class TestSearchr1AsyncAdmissionCfg:
         placement.is_disaggregated = True
         placement.actor_dp_size = 4
         placement.rollout_num_model_instances = 2
-        with mock.patch.object(
-            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        with (
+            mock.patch.object(cfg_mod, "Cluster"),
+            mock.patch.object(
+                cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+            ),
         ):
             return cfg_mod.validate_searchr1_cfg(cfg)
 
@@ -2296,8 +2332,11 @@ class TestSearchr1AsyncAdmissionCfg:
         placement.is_collocated = True
         placement.is_disaggregated = False
         placement.placement_mode = PlacementMode.COLLOCATED
-        with mock.patch.object(
-            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        with (
+            mock.patch.object(cfg_mod, "Cluster"),
+            mock.patch.object(
+                cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+            ),
         ):
             with pytest.raises(ValueError, match="disaggregated placement.*COLLOCATED"):
                 cfg_mod.validate_searchr1_cfg(self._make_cfg())

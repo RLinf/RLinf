@@ -57,7 +57,7 @@ algorithm:
     top_p: 1.0
     repetition_penalty: 1.0
     max_new_tokens: 8192
-    min_new_tokens: 1
+    min_new_tokens: 0
   loss_scales: []
   staleness_threshold: 1
 rollout:

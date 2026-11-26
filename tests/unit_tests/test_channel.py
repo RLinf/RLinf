@@ -646,7 +646,43 @@ def get_test_data():
     ]
 
 
-# --- Test Class ---
+def test_cancelled_receive_releases_late_out_of_order_payload():
+    import gc
+    import weakref
+
+    from rlinf.scheduler.collective.async_work import AsyncChannelCommWork
+
+    async def run():
+        # A transport receive can deliver the reply belonging to a different handle.
+        recv_a, recv_b = torch.futures.Future(), torch.futures.Future()
+
+        def transport(future):
+            return SimpleNamespace(
+                wait=future.wait,
+                then=lambda callback: future.then(lambda _: callback()),
+            )
+
+        id_a, id_b = uuid.uuid4().int, uuid.uuid4().int
+        work_a = AsyncChannelCommWork(transport(recv_a), id_a, None)
+        waiting = asyncio.create_task(work_a.async_wait())
+        await asyncio.sleep(0)
+        waiting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+        recv_a.set_result(("next", id_b))
+        work_b = AsyncChannelCommWork(transport(recv_b), id_b, None)
+        assert await work_b.async_wait() == "next"
+        payload = torch.ones(8)
+        ref = weakref.ref(payload)
+        recv_b.set_result((payload, id_a))
+        del payload, work_a, work_b, recv_a, recv_b, waiting
+        await asyncio.sleep(0)
+        gc.collect()
+        assert ref() is None
+
+    asyncio.run(run())
+
+
 class TestChannel:
     """Comprehensive tests for the Channel class."""
 

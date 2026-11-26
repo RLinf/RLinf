@@ -27,7 +27,7 @@ training efficiency becomes the bottleneck.
    * - :doc:`5D Parallelism <../5D>`
      - Configure 5D parallelism for large models.
    * - :doc:`Asynchronous Agentic RL <../async_agentic>`
-     - Overlap multi-turn agent rollout with training; two admission limits bound how stale the training data gets.
+     - Overlap multi-turn agent rollout with training and set limits on outstanding groups and training data age.
 
 .. toctree::
    :hidden:

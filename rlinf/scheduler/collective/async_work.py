@@ -381,21 +381,25 @@ class AsyncChannelCommWork(AsyncWork):
         self._async_comm_work = async_comm_work
         # The async_comm_work's value is not necessarily the data of the get query associated with the query_id
         # Only when the query_id's Future is set is the data available
-        self._query_id = query_id
         self._channel_actor = channel_actor
         with AsyncChannelCommWork.store_lock:
-            if query_id not in AsyncChannelCommWork.channel_data_store:
-                AsyncChannelCommWork.channel_data_store[query_id] = Future()
-            self._data_future = AsyncChannelCommWork.channel_data_store[query_id]
+            self._data_future = self._match_query(query_id)
         self._async_comm_work.then(self._store_channel_data)
 
+    @classmethod
+    def _match_query(cls, query_id: int) -> Future:
+        """Pair one receive handle with one delivery, in either order under store_lock."""
+        future = cls.channel_data_store.pop(query_id, None)
+        if future is None:
+            future = Future()
+            cls.channel_data_store[query_id] = future
+        return future
+
     def _store_channel_data(self):
-        """Store channel data in the channel data store."""
+        """Deliver the reply to its query even if another receive carried it."""
         data, query_id = self._async_comm_work.wait()
         with AsyncChannelCommWork.store_lock:
-            if query_id not in AsyncChannelCommWork.channel_data_store:
-                AsyncChannelCommWork.channel_data_store[query_id] = Future()
-            data_future = AsyncChannelCommWork.channel_data_store[query_id]
+            data_future = self._match_query(query_id)
         data_future.set_result(data)
 
     async def async_wait(self):
@@ -407,8 +411,6 @@ class AsyncChannelCommWork(AsyncWork):
         """
         if not self._data_future.done():
             await _await_torch_future(self._data_future)
-        with AsyncChannelCommWork.store_lock:
-            AsyncChannelCommWork.channel_data_store.pop(self._query_id, None)
         return self._data_future.value()
 
     def wait(self):
@@ -419,8 +421,6 @@ class AsyncChannelCommWork(AsyncWork):
 
         """
         self._data_future.wait()
-        with AsyncChannelCommWork.store_lock:
-            AsyncChannelCommWork.channel_data_store.pop(self._query_id, None)
         return self._data_future.value()
 
     def done(self):

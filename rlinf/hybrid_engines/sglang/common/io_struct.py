@@ -52,4 +52,4 @@ class SyncHFWeightInput:
 
 @dataclass
 class SyncHFWeightOutput:
-    pass
+    error: Optional[str] = None

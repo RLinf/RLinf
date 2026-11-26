@@ -585,6 +585,94 @@ class TestRunnerConstruction:
             assert "disaggregated" in str(e)
 
 
+@pytest.mark.parametrize("mode", ["retract", "in_place"])
+def test_request_dispatched_during_native_pause_uses_published_version(mode):
+    pytest.importorskip("sglang")
+    from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+
+    async def run():
+        worker = SGLangWorker.__new__(SGLangWorker)
+        worker._is_model_instance_entry = True
+        worker._backend = mock.AsyncMock()
+        worker._backend.async_generate.return_value = {
+            "output_ids": [1],
+            "meta_info": {"finish_reason": {"type": "stop"}},
+        }
+        worker._dispatch_gate = asyncio.Event()
+        worker._dispatch_gate.set()
+        worker._sampling_params = {}
+        worker._weight_version = 0
+        worker._return_logprobs = False
+        worker._student_topk_count = 0
+        worker._mc_k = 1
+        out = _QueueChannel()
+        await worker.pause_generation(mode)
+        task = asyncio.create_task(worker.generate_and_send(out, "query", [0]))
+        await asyncio.sleep(0)
+        worker._backend.async_generate.assert_not_awaited()
+        await worker.sync_model_from_actor(version=1)
+        await worker.continue_generation()
+        await asyncio.wait_for(task, timeout=5)
+        result = await out.get().async_wait()
+        assert (result["version_start"], result["version_end"]) == (1, 1)
+
+    asyncio.run(run())
+
+
+def test_distillation_pg_rejects_per_request_min_new_tokens():
+    pytest.importorskip("sglang")
+    from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+
+    async def run():
+        worker = SGLangWorker.__new__(SGLangWorker)
+        worker._is_model_instance_entry = True
+        worker._distillation_pg = True
+        worker._sampling_params = {"min_new_tokens": 0}
+        worker._backend = mock.AsyncMock()
+        worker.log_error = mock.Mock()
+        out = _QueueChannel()
+        await worker.generate_and_send(out, "query", [0], {"min_new_tokens": 2})
+        result = await out.get().async_wait()
+        assert "min_new_tokens=0" in result["error"]
+        worker._backend.async_generate.assert_not_awaited()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("flush_result", [False, None])
+def test_retract_sync_requires_cache_flush_on_every_replica(flush_result):
+    pytest.importorskip("sglang")
+    from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightOutput
+    from rlinf.hybrid_engines.sglang.common.sgl_scheduler import Scheduler
+    from rlinf.hybrid_engines.sglang.common.tokenizer_manager import TokenizerManager
+    from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler.running_batch = SimpleNamespace(is_empty=lambda: True, reqs=[])
+    scheduler.chunked_req = None
+    scheduler.enable_overlap = False
+    waiting = [object()]
+    scheduler.waiting_queue = waiting
+    scheduler.flush_cache = lambda: flush_result
+    error = scheduler._handle_cache_after_sync("retract")
+    assert scheduler.waiting_queue is waiting
+    manager = TokenizerManager.__new__(TokenizerManager)
+    manager.auto_create_handle_loop = lambda: None
+    manager.sync_hf_weight_communicator = mock.AsyncMock(
+        return_value=[SyncHFWeightOutput(), SyncHFWeightOutput(error=error)]
+    )
+    worker = SGLangWorker.__new__(SGLangWorker)
+    worker._is_model_instance_entry = True
+    worker._pause_mode = "retract"
+    worker._weight_version = 0
+    worker._backend = SimpleNamespace(
+        sync_weights=lambda pause_mode: manager.sync_hf_weight()
+    )
+    with pytest.raises(RuntimeError, match="retract.*flush"):
+        asyncio.run(worker.sync_model_from_actor(version=1))
+    assert worker._weight_version == 0
+
+
 class TestSyncWeightsInstanceSubset:
     """Weight syncs currently cover every rollout instance."""
 

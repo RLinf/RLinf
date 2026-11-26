@@ -163,6 +163,12 @@ class ReasoningRunner:
 
         self.metric_logger = MetricLogger(cfg)
 
+    @property
+    def _train_dataloader_batch_size(self) -> int:
+        return self.cfg.data.rollout_batch_size * self.cfg.algorithm.get(
+            "max_num_gen_batches", 1
+        )
+
     def _build_dataloader(self, train_dataset, val_dataset, collate_fn=None):
         """
         Creates the train and validation dataloaders.
@@ -187,8 +193,7 @@ class ReasoningRunner:
 
         self.train_dataloader = StatefulDataLoader(
             dataset=self.train_dataset,
-            batch_size=self.cfg.data.rollout_batch_size
-            * self.cfg.algorithm.get("max_num_gen_batches", 1),
+            batch_size=self._train_dataloader_batch_size,
             num_workers=num_workers,
             drop_last=True,
             collate_fn=collate_fn,

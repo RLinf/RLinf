@@ -710,7 +710,7 @@ class MAFSDPActor(FSDPActor):
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
-                    advantage_mode=self.cfg.algorithm.advantage_mode,
+                    advantage_mode=self.cfg.algorithm.get("advantage_mode", "turn"),
                     rewards=batch["rewards"].to(Worker.torch_device_type),
                     loss_mask=mask.to(Worker.torch_device_type),
                     num_sequence=len(batch["input_ids"]),

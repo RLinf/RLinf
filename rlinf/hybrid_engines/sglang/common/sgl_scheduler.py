@@ -313,11 +313,12 @@ class Scheduler(_Scheduler):
                 )
             self.weight_norm_dict = None
 
-        self._handle_cache_after_sync(recv_req.pause_mode)
-        return SyncHFWeightOutput()
+        return SyncHFWeightOutput(
+            error=self._handle_cache_after_sync(recv_req.pause_mode)
+        )
 
-    def _handle_cache_after_sync(self, pause_mode: Optional[str]):
-        """Handle prefix tree / KV caches at the end of `sync_hf_weight`.
+    def _handle_cache_after_sync(self, pause_mode: Optional[str]) -> Optional[str]:
+        """Return an error if the cache cannot safely acknowledge the new weights.
 
         Not paused (synchronous training) or "drain": the engine is fully
         idle, a normal flush must succeed. "in_place": in-flight requests
@@ -328,7 +329,7 @@ class Scheduler(_Scheduler):
         if pause_mode in (None, "drain"):
             success = self.flush_cache()
             if success is False:
-                logger.warning(
+                return (
                     f"flush_cache after weight sync did not fully flush "
                     f"(running={len(self.running_batch.reqs)}, "
                     f"waiting={len(self.waiting_queue)}); "
@@ -353,12 +354,11 @@ class Scheduler(_Scheduler):
                 if not preconditions[1]
                 else "overlap result queue not empty"
             )
-            logger.warning(
+            return (
                 f"retract forced flush skipped: {reason}; "
                 f"running={len(self.running_batch.reqs)}, "
                 f"waiting={len(self.waiting_queue)}"
             )
-            return
 
         saved_queue = self.waiting_queue
         self.waiting_queue = []
@@ -369,8 +369,8 @@ class Scheduler(_Scheduler):
             success = self.flush_cache()
         finally:
             self.waiting_queue = saved_queue
-        if success is False:
-            logger.warning(
+        if not success:
+            return (
                 f"retract forced flush after weight sync did not fully flush; "
                 f"running={len(self.running_batch.reqs)}, "
                 f"waiting={len(self.waiting_queue)}"

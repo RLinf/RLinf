@@ -83,8 +83,7 @@ class SGLangWorker(Worker):
         # Pause mode of the current pause, None when not paused. Remembered
         # so continue_generation knows what to resume.
         self._pause_mode: Optional[str] = None
-        # Drain gate for rollout_serverless: closed (cleared) while paused,
-        # so no new generate task is dispatched. Open (set) otherwise.
+        # New calls may enter the engine once the weight sync has resumed it.
         self._dispatch_gate: asyncio.Event = asyncio.Event()
         self._dispatch_gate.set()
         # In-flight generate_and_send tasks of rollout_serverless.
@@ -557,15 +556,14 @@ class SGLangWorker(Worker):
         """
         if not self._is_model_instance_entry:
             return
+        if mode not in ("in_place", "retract", "drain"):
+            raise ValueError(f"Unsupported pause mode: {mode!r}")
+        self._dispatch_gate.clear()
         self._pause_mode = mode
         if mode in ("in_place", "retract"):
             await self._backend.pause_generation(mode)
-        elif mode == "drain":
-            self._dispatch_gate.clear()
-            if self._inflight_generates:
-                await asyncio.wait(self._inflight_generates)
-        else:
-            raise ValueError(f"Unsupported pause mode: {mode!r}")
+        elif self._inflight_generates:
+            await asyncio.wait(self._inflight_generates)
 
     async def continue_generation(self):
         """Resume generation after a pause (see `pause_generation`)."""
@@ -574,14 +572,13 @@ class SGLangWorker(Worker):
         mode = self._pause_mode
         if mode in ("in_place", "retract"):
             await self._backend.continue_generation()
-        elif mode == "drain":
-            self._dispatch_gate.set()
-        else:
+        elif mode != "drain":
             raise RuntimeError(
                 f"continue_generation called without a preceding pause "
                 f"(current pause mode: {mode!r})"
             )
         self._pause_mode = None
+        self._dispatch_gate.set()
 
     async def check_running_state(self):
         if not self._is_model_instance_entry:
@@ -849,6 +846,9 @@ class SGLangWorker(Worker):
                 validate_pg_sampling(final_sampling_params)
                 if final_sampling_params.get("top_k") == 0:
                     final_sampling_params["top_k"] = -1
+            # A task admitted just before a native pause may first run after the gate closed.
+            while self._pause_mode in ("in_place", "retract"):
+                await self._dispatch_gate.wait()
             version_start = self._weight_version
             result = await self._backend.async_generate(
                 input_ids=prompt_ids,
@@ -911,9 +911,7 @@ class SGLangWorker(Worker):
             return
         while True:
             rollout_request = await input_channel.get(async_op=True).async_wait()
-            # Drain gate: while paused in "drain" mode, hold the request here
-            # instead of dispatching it; the sync happens without the engine
-            # having in-flight requests.
+            # Hold at most one queued request here while the engine is paused.
             await self._dispatch_gate.wait()
             task = asyncio.create_task(
                 self.generate_and_send(

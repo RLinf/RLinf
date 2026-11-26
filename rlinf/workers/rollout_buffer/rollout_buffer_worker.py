@@ -143,9 +143,7 @@ class RolloutBuffer:
     def _build_dataloader(self, cfg: DictConfig, train_dataset: Dataset):
         """Create the dataloader behind the buffer.
 
-        Mirrors `ReasoningRunner._build_dataloader` (same sampler, seed,
-        batch size and collate) so the checkpoint states stay
-        interchangeable with the synchronous runner's.
+        One loader batch contains one update's worth of prompt groups.
         """
         from rlinf.data.datasets.reasoning import collate_fn
 
@@ -158,8 +156,7 @@ class RolloutBuffer:
 
         self.dataloader = StatefulDataLoader(
             dataset=train_dataset,
-            batch_size=cfg.data.rollout_batch_size
-            * cfg.algorithm.get("max_num_gen_batches", 1),
+            batch_size=self.rollout_batch_size,
             num_workers=cfg.data.num_workers,
             drop_last=True,
             collate_fn=collate_fn,

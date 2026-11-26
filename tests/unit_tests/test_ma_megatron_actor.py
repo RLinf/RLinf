@@ -87,6 +87,18 @@ class TestExtractVersionedTrajectoryRecords:
         assert second.generated_tokens == 20
         assert second.reward == 2.0
 
+    def test_versioned_training_without_task_rewards(self):
+        from rlinf.utils.metric_utils import compute_staleness_metrics
+
+        result = self._dynamic_result(version_start=[1, 1], version_end=[1, 2])
+        result.rewards = None
+        records = self._make_actor()._extract_versioned_trajectory_records([result])
+        metrics = compute_staleness_metrics(records, version=2)
+        assert metrics["data_staleness/max"] == 1
+        assert metrics["cross_version_call_ratio"] == 0.5
+        assert "equal_reward_group_ratio" not in metrics
+        assert "zero_reward_group_ratio" not in metrics
+
     def test_returns_none_without_versions(self):
         actor = self._make_actor()
         result = self._dynamic_result()

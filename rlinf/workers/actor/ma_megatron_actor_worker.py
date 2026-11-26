@@ -665,7 +665,8 @@ class MAMegatronActor(MegatronActor):
                 generated_tokens[traj_index] += turn_tokens
                 call_counts[traj_index] += 1
                 cross_version_calls[traj_index] += int(version_start != version_end)
-                turn_rewards[traj_index] += rollout_result.rewards[turn_index]
+                if rollout_result.rewards is not None:
+                    turn_rewards[traj_index] += rollout_result.rewards[turn_index]
                 turn_counts[traj_index] += 1
                 token_weighted_version_start_sums[traj_index] += (
                     version_start * turn_tokens
@@ -680,7 +681,9 @@ class MAMegatronActor(MegatronActor):
                         call_count=call_counts[traj_index],
                         cross_version_calls=cross_version_calls[traj_index],
                         reward=turn_rewards[traj_index]
-                        / max(turn_counts[traj_index], 1),
+                        / max(turn_counts[traj_index], 1)
+                        if rollout_result.rewards is not None
+                        else None,
                         token_weighted_version_start_sum=(
                             token_weighted_version_start_sums[traj_index]
                         ),
@@ -809,7 +812,7 @@ class MAMegatronActor(MegatronActor):
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.cfg.runner.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
-                    advantage_mode=self.cfg.algorithm.advantage_mode,
+                    advantage_mode=self.cfg.algorithm.get("advantage_mode", "turn"),
                     rewards=batch["rewards"].cuda(),
                     loss_mask=mask.cuda(),
                     num_sequence=len(batch["input_ids"]),

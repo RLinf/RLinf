@@ -26,7 +26,7 @@
    * - :doc:`5D 并行 <../5D>`
      - 为大模型配置 5D 并行。
    * - :doc:`异步 agentic RL <../async_agentic>`
-     - 让多轮 agent rollout 与训练重叠，用两个准入上限约束训练数据的新旧程度。
+     - 让多轮 agent rollout 与训练重叠，分别设置组数上限和训练数据的版本差上限。
 
 .. toctree::
    :hidden:

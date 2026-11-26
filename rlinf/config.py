@@ -1969,9 +1969,33 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
                 "SearchR1 multi-agent actors support only collocated component "
                 "placement unless actor.training_backend is megatron."
             )
+    if component_placement.is_disaggregated and cfg.algorithm.recompute_logprobs:
+        raise ValueError(
+            "Disaggregated SearchR1 requires algorithm.recompute_logprobs=False "
+            "and rollout.return_logprobs=True. Use collocated placement for reference inference."
+        )
+    if not cfg.algorithm.recompute_logprobs and (
+        cfg.algorithm.get("kl_beta", 0) or cfg.algorithm.get("reinpp_kl_beta", 0)
+    ):
+        raise ValueError(
+            "SearchR1 reference KL requires recomputed reference logprobs. "
+            "Set algorithm.kl_beta and algorithm.reinpp_kl_beta to zero when "
+            "algorithm.recompute_logprobs=False."
+        )
     if cfg.runner.get("async_mode", False) or plan.separate_async:
         return _validate_async_agent_cfg(cfg, component_placement, plan)
+    _validate_agent_group_count(cfg, component_placement)
     return cfg
+
+
+def _validate_agent_group_count(cfg, component_placement):
+    """Each multi-agent actor DP rank reads an equal number of whole prompt groups."""
+    batch_size = cfg.data.get("rollout_batch_size")
+    if batch_size is not None and batch_size % component_placement.actor_dp_size:
+        raise ValueError(
+            f"data.rollout_batch_size ({batch_size}) must be divisible by the "
+            f"actor data-parallel size ({component_placement.actor_dp_size})."
+        )
 
 
 def _validate_async_agent_cfg(cfg, component_placement, plan):
@@ -2023,9 +2047,8 @@ def _validate_async_agent_cfg(cfg, component_placement, plan):
             f"training (found {cfg.algorithm.staleness_threshold}). "
             "Admission is controlled by rollout_buffer."
             "max_inflight_groups and rollout_buffer.max_buffered_groups; "
-            "how stale training data may be is bounded by "
-            "rollout_buffer.max_buffered_groups and agentloop."
-            "max_actor_accept_staleness. Remove the field."
+            "set agentloop.max_actor_accept_staleness to limit the version age "
+            "of training groups. Remove algorithm.staleness_threshold."
         )
     task_name = OmegaConf.select(cfg, "agentloop.task_name", default=None)
     if task_name is None:
@@ -2169,17 +2192,7 @@ def _validate_async_agent_cfg(cfg, component_placement, plan):
             f"rollout.pause_mode must be one of in_place/retract/drain, "
             f"found {cfg.rollout.pause_mode!r}."
         )
-    if cfg.data.get("rollout_batch_size", None) is not None:
-        actor_dp_size = component_placement.actor_dp_size
-        if cfg.data.rollout_batch_size % actor_dp_size != 0:
-            raise ValueError(
-                f"data.rollout_batch_size ({cfg.data.rollout_batch_size}) "
-                f"must be divisible by the actor data-parallel size "
-                f"({actor_dp_size}): each DP rank takes "
-                f"rollout_batch_size // {actor_dp_size} groups per step, "
-                "and a remainder would leave groups behind in "
-                "rollout_channel to be picked up by the next step."
-            )
+    _validate_agent_group_count(cfg, component_placement)
     if cfg.rollout.pause_mode == "in_place":
         logging.warning(
             "rollout.pause_mode=in_place keeps the prefix cache across "

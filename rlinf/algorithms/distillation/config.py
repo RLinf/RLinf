@@ -173,6 +173,7 @@ def validate_pg_sampling(sampling: Mapping) -> None:
         or sampling.get("top_p", 1.0) != 1.0
         or sampling.get("top_k", -1) not in (-1, 0)
         or sampling.get("repetition_penalty", 1.0) != 1.0
+        or sampling.get("min_new_tokens", 0) != 0
         or sampling.get("min_p", 0.0) != 0.0
         or sampling.get("frequency_penalty", 0.0) != 0.0
         or sampling.get("presence_penalty", 0.0) != 0.0
@@ -183,7 +184,7 @@ def validate_pg_sampling(sampling: Mapping) -> None:
     ):
         raise ValueError(
             "Distillation PG requires do_sample=True, temperature=1, top_p=1, "
-            "disabled sampling top_k and unmodified model probabilities"
+            "disabled sampling top_k, min_new_tokens=0 and unmodified model probabilities"
         )
 
 

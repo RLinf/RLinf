@@ -32,6 +32,7 @@ algorithm:
   shuffle_rollout: false
   loss_agg_func: token-mean
   sampling_params:
+    min_new_tokens: 0
     do_sample: true
     temperature: 1.0
     top_p: 1.0

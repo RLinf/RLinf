@@ -6,19 +6,26 @@
 如何开启
 --------
 
-在 agentic 配置上打开异步，只需要一个 runner 开关，外加两条部署要求：actor 和 rollout 必须放在不同的 GPU 上，因为两者同时运行；rollout 必须使用 SGLang server 后端，因为权重同步要通过 server 的 HTTP 接口暂停和恢复生成。以同步的 Search-R1 配置为基础，需要改的是下面几行：
+从同步 Megatron Search-R1 配置迁移时，将 actor 和 SGLang server 放在不同的 GPU 上，让 actor 直接使用 rollout 返回的 logprob，并将参考 KL 系数设为零。下面的示例使用两台各有 8 张 GPU 的机器，请用示例中的 ``cluster.component_placement`` 替换原来的整个放置配置。
 
 .. code-block:: yaml
 
    runner:
      async_mode: True
 
+   algorithm:
+     recompute_logprobs: false
+     kl_beta: 0.0
+     reinpp_kl_beta: 0.0
+
    cluster:
+     num_nodes: 2
      component_placement:
        actor: 0-7             # actor 与 rollout 分开部署
        rollout,reward: 8-15
 
    rollout:
+     return_logprobs: true
      rollout_backend: sglang
      sglang:
        backend_type: server
@@ -42,7 +49,7 @@
      - 给 rollout 引擎多少活
    * - ``rollout_buffer.max_buffered_groups``
      - 2 × ``data.rollout_batch_size``
-     - 训练数据最多多旧
+     - 最多允许多少个已投放的组等待训练
    * - ``agentloop.max_actor_accept_staleness``
      - 不设置（只统计 staleness，不设上限）
      - 训练前丢弃比它更旧的组
@@ -76,12 +83,14 @@
 
 一个 prompt 的路径很短。buffer worker 从 dataloader 读出 prompt，准入上限允许时，通过 ``dataloader_channel`` 投放给 agent loop；agent loop 用 rollout 引擎跑完这个组的所有轨迹，再通过 ``agent_output_channel`` 把整组交回；buffer worker 把完成的组放进缓冲，每一步把最早的 ``rollout_batch_size`` 个组交给 actor。
 
-重叠之所以可控，关键在 buffer worker。dataloader 由它而不是 runner 持有，所以 actor 训练期间它仍能继续投放；它同时统计在途的组和缓冲里的组，所以两边之间积压的数据有上限；它总是先交出最早的组，所以 actor 拿到的数据变旧的速度由上限决定。
+每次更新消耗的 prompt 组数等于 ``data.rollout_batch_size``。连续生成按这个批大小计算每个 epoch 的步数，``algorithm.max_num_gen_batches`` 仅用于同步生成。
+
+重叠之所以可控，关键在 buffer worker。dataloader 由它而不是 runner 持有，所以 actor 训练期间它仍能继续投放；它同时统计在途的组和缓冲里的组，所以两边之间积压的数据有上限。
 
 两个准入上限
 ------------
 
-buffer worker 只在两个上限同时满足时才投放新 prompt。两个上限管的是不同的事：一个决定给引擎多少活，一个决定训练数据最多多旧。只要可能空出额度，准入就会重新检查：收到一个完成的组、丢弃一个组、向 actor 交付一批。
+buffer worker 只在两个上限同时满足时才投放新 prompt。两个上限管的是不同的事：一个决定给引擎多少活，一个限制等待训练的组数。只要可能空出额度，准入就会重新检查：收到一个完成的组、丢弃一个组、向 actor 交付一批。
 
 在途上限：引擎负载
 ~~~~~~~~~~~~~~~~~~
@@ -90,26 +99,26 @@ buffer worker 只在两个上限同时满足时才投放新 prompt。两个上�
 
 只有引擎还有空闲时，调高这个上限才有用。引擎一旦忙满，多投放的组只会在引擎里排队，让数据变旧。在 GLM 参考运行上，把 ``max_inflight_groups`` 从 77 提到 160 后，每个 DP rank 的运行请求数从约 75 升到 128（另有 33–78 个在排队），吞吐没有变化，平均 staleness 却从约 1.3 升到约 2.0：GPU 在约 75 个请求时就已经忙满了。对应的实测图见 :doc:`Search-R1 异步页 </rst_source/examples/agentic/searchr1/async>` 的“两个上限怎么调”一节。
 
-缓冲上限：数据新鲜度
+缓冲容量
 ~~~~~~~~~~~~~~~~~~~~
 
-第二个上限要求在途组数加上缓冲里的组数低于 ``rollout_buffer.max_buffered_groups``，默认为 2 × ``rollout_batch_size``。在途组也要算进去，因为它们迟早会进缓冲：组内轨迹一跑完，就无条件放入缓冲。如果只限制缓冲本身，在途部分就没有约束，一旦训练成为瓶颈，缓冲会越堆越多。我们实测过这种错误配置，缓冲涨到 338 和 369 个组，staleness 达到 8。把在途组算进上限后，缓冲不会超过 ``max_buffered_groups``，staleness 也就有了上界。
+第二个上限要求在途组数加上缓冲里的组数低于 ``rollout_buffer.max_buffered_groups``，默认为 2 × ``rollout_batch_size``。在途组也要算进去，因为它们迟早会进缓冲：组内轨迹一跑完，就无条件放入缓冲。如果只限制缓冲本身，在途部分就没有约束，一旦训练成为瓶颈，缓冲会越堆越多。我们实测过这种错误配置，缓冲涨到 338 和 369 个组，staleness 达到 8。把在途组算进上限后，每个组在完成时都有缓冲名额。
 
 这个上限怎么取，要看瓶颈在哪一边。生成是瓶颈时，actor 一直在等数据，缓冲随进随出，这时 ``max_buffered_groups`` 至少要取 ``max_inflight_groups + rollout_batch_size``；取得更小，每步末尾缓冲里的组会占掉在途的额度，引擎反而吃不饱。训练是瓶颈时，靠缓冲让生成一直有活干，这时至少要取 2 × ``rollout_batch_size``，下一批才能在本批训练时开始生成。如果只取 1 倍，下一批要等本批交付之后才能开始投放，每一步都要等整批（包括最慢的组）生成完。在缩小规模的 Qwen2.5-1.5B 配置上（``rollout_batch_size`` 为 64）实测，1×B 的步时中位数约 11 s，2×B 为 3.94 s；后者付出的代价是 staleness 从约 1 升到均值峰值 2.09。
 
 判断哪个上限在起作用
 ~~~~~~~~~~~~~~~~~~~~
 
-瓶颈在哪一边通常不用自己推算。``rollout/buffer/admission_wait_inflight_limit`` 和 ``rollout/buffer/admission_wait_buffer_full`` 分别给出每一步里投放被两个上限挡住的时间占比。``admission_wait_inflight_limit`` 高，说明引擎已经按允许的上限满载，调高上限之前先看 GPU 利用率；``admission_wait_buffer_full`` 高，说明训练是瓶颈，staleness 由缓冲上限控制。
+瓶颈在哪一边通常不用自己推算。``rollout/buffer/admission_wait_inflight_limit`` 和 ``rollout/buffer/admission_wait_buffer_full`` 分别给出每一步里投放被两个上限挡住的时间占比。``admission_wait_inflight_limit`` 高，说明引擎已经按允许的上限满载，调高上限之前先看 GPU 利用率；``admission_wait_buffer_full`` 高，说明 actor 消耗组的速度低于 rollout 生成组的速度。
 
 Staleness
 ---------
 
-默认情况下，staleness 只统计、不设上限：``agentloop.max_actor_accept_staleness`` 不设置，数据有多旧由上面的缓冲上限决定。训练是瓶颈时，缓冲里最早的组大约已经等了 ``max_buffered_groups / rollout_batch_size`` 步。
+训练是瓶颈时，``max_buffered_groups / rollout_batch_size`` 可以估算队列深度相当于多少个训练步。慢组等待工具返回时，其他组可以先完成并释放名额，actor 在此期间可能已经更新了许多次。默认配置允许这些慢组进入训练。
 
 ``rollout/data_staleness/*`` 这组指标记录的就是这个值。对每一步训练的每个组，staleness 等于本步开始时 actor 的权重版本减去该组最早的生成版本，指标给出均值、最大值和各取值的占比。它可以拆成两部分：``rollout/version_span/mean`` 是组在生成过程中跨过的版本数，``rollout/queue_steps/mean`` 是组生成完之后在缓冲里等待的版本数。
 
-需要硬性上限时，设置 ``agentloop.max_actor_accept_staleness``。比上限更旧的组会在训练前被丢弃，丢弃会归还准入额度，于是会有别的 prompt 补投进来；被丢弃的 prompt 要到之后的 epoch 才会再次出现。丢弃的代价是这些组已经花掉的生成算力，所以上限要高于缓冲上限本身带来的 staleness（即上面说的 ``max_buffered_groups / rollout_batch_size`` 步）。如果设得更低，每一批里最早的组都会被丢掉，而不只是偶尔出现的过旧的组，配置校验时也会给出警告。
+需要硬性上限时，设置 ``agentloop.max_actor_accept_staleness``。比上限更旧的组会在训练前被丢弃，丢弃会归还准入额度，于是会有别的 prompt 补投进来；被丢弃的 prompt 要到之后的 epoch 才会再次出现。可参考实际观测到的版本差设置上限。上限低于通常的排队步数时，每一步都可能丢弃已生成的组。
 
 生成期间的权重同步
 ------------------
@@ -130,4 +139,4 @@ Staleness
 限制
 ----
 
-异步 agentic RL 目前只支持它所基于的组合：Megatron actor、多轮 agent loop、SGLang server 后端，以及 actor 与 rollout 分离部署的 placement。训练时不做 off-policy 修正，rollout 返回的 logprob 直接作为 PPO 的 old logprob，因此要靠前面介绍的 staleness 上界，让训练数据与当前 policy 保持接近。
+异步 agentic RL 目前只支持它所基于的组合：Megatron actor、多轮 agent loop、SGLang server 后端，以及 actor 与 rollout 分离部署的 placement。训练时不做 off-policy 修正，rollout 返回的 logprob 直接作为 PPO 的 old logprob，可以通过设置版本差上限，让 actor 只接受近期生成的数据。

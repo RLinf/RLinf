@@ -12,24 +12,30 @@ needs changing and you want to know which one and why.
 Turning It On
 -------------
 
-Asynchronous training is a runner switch on top of an agentic configuration,
-plus two requirements on how the job is deployed. The actor and the rollout
-must sit on separate GPUs, because both run at the same time, and the rollout
-must use the SGLang server backend, because the weight sync pauses and resumes
-generation through the server's HTTP routes. Starting from a synchronous
-Search-R1 configuration, these are the lines that change:
+To migrate a synchronous Megatron Search-R1 run, place the actor and the SGLang
+server on separate GPUs. The actor trains with the logprobs returned by rollout.
+Set both reference KL coefficients to zero if your configuration uses them.
+Replace the existing ``cluster.component_placement`` mapping with the one below.
+This example uses two nodes with eight GPUs each.
 
 .. code-block:: yaml
 
    runner:
      async_mode: True
 
+   algorithm:
+     recompute_logprobs: false
+     kl_beta: 0.0
+     reinpp_kl_beta: 0.0
+
    cluster:
+     num_nodes: 2
      component_placement:
        actor: 0-7             # actor and rollout on separate GPUs
        rollout,reward: 8-15
 
    rollout:
+     return_logprobs: true
      rollout_backend: sglang
      sglang:
        backend_type: server
@@ -57,7 +63,7 @@ likely to touch; the rest of the page explains when.
      - How much work the rollout engines get
    * - ``rollout_buffer.max_buffered_groups``
      - 2 × ``data.rollout_batch_size``
-     - How old the training data can get
+     - How many issued groups can be waiting for training
    * - ``agentloop.max_actor_accept_staleness``
      - unset (staleness is measured, not capped)
      - Drops groups older than this before training
@@ -119,23 +125,21 @@ through the ``dataloader_channel``. The agent loop runs the group's
 trajectories against the rollout engines and returns the finished group
 through the ``agent_output_channel``. The buffer worker holds finished groups
 in its buffer and, at every step, hands the oldest ``rollout_batch_size`` of
-them to the actor.
+them to the actor. Each update consumes one ``data.rollout_batch_size`` of
+prompt groups. Continuous rollout counts epochs in these training batches
+regardless of the synchronous generation setting ``algorithm.max_num_gen_batches``.
 
 The buffer worker is what keeps this overlap under control. Because it, not
 the runner, owns the dataloader, it can keep issuing prompts while the actor
 trains. Because it counts both the groups in flight and the groups in its
-buffer, it bounds how much data piles up between the two sides. And because it
-hands off the oldest groups first, the data the actor sees ages at a rate the
-limits determine.
+buffer, it bounds how many groups can accumulate before training.
 
 The Two Limits
 --------------
 
-The buffer worker issues a new prompt only while both limits hold. They
-answer different questions: one sets how much work the engines get, the other
-how old the training data may become. Admission re-checks them whenever
-capacity may have freed up: when a finished group arrives, when a group is
-dropped, and when a batch is handed to the actor.
+Before issuing a prompt, the buffer worker checks both the number of groups
+still generating and the total number awaiting training. It checks again when
+a group finishes, a group is dropped, or the actor takes a batch.
 
 The In-Flight Limit: Engine Load
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -156,8 +160,8 @@ mean staleness from about 1.3 to about 2.0: the GPUs were already busy at 75
 requests. The plots are on the :doc:`Search-R1 async page
 </rst_source/examples/agentic/searchr1/async>` under "Tuning the Limits".
 
-The Buffer Limit: Data Age
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+The Buffer Limit
+~~~~~~~~~~~~~~~~
 
 The second limit keeps the in-flight groups *plus* the groups already in the
 buffer below ``rollout_buffer.max_buffered_groups``, 2 × ``rollout_batch_size``
@@ -166,8 +170,8 @@ group later: once its trajectories finish, it enters the buffer
 unconditionally. A cap on the buffer alone would leave the in-flight part
 unbounded, and when training is the bottleneck the buffer would keep growing.
 That misconfiguration was measured once, with the buffer reaching 338 and 369
-groups and the staleness reaching 8. Counting in-flight groups keeps the buffer
-within ``max_buffered_groups``, and that is what bounds the staleness.
+groups and the staleness reaching 8. Counting in-flight groups reserves a slot
+for each group that will eventually enter the buffer.
 
 How to size it depends on which side of the loop is the bottleneck. When
 generation is the bottleneck, the actor is always waiting and the buffer
@@ -192,16 +196,16 @@ You rarely need to work out the bottleneck by hand.
 during which admission was blocked by each limit. A high
 ``admission_wait_inflight_limit`` means the engines are as loaded as you
 allowed; check GPU utilization before raising the limit. A high
-``admission_wait_buffer_full`` means training is the bottleneck and the buffer
-limit is what bounds the staleness.
+``admission_wait_buffer_full`` means the actor is consuming groups more slowly
+than rollout can supply them.
 
 Staleness
 ---------
 
-By default staleness is measured, not capped. ``agentloop.max_actor_accept_staleness``
-is unset, and the bound comes from the buffer limit above: when training is the
-bottleneck, the oldest buffered group has waited about
-``max_buffered_groups / rollout_batch_size`` steps.
+When the actor is the bottleneck, ``max_buffered_groups / rollout_batch_size``
+estimates queue depth in training steps. A group waiting on a slow tool can
+span many more updates as faster groups finish and free their slots. By
+default the actor accepts such groups at any age.
 
 The ``rollout/data_staleness/*`` metrics report it. For each group trained in a
 step, staleness is the actor's weight version at the start of the step minus
@@ -214,11 +218,8 @@ buffer after finishing.
 Set ``agentloop.max_actor_accept_staleness`` when you need a hard cap. Groups
 older than the cap are dropped before training, and the drop frees admission
 capacity, so another prompt is issued in their place; the dropped prompt comes
-back in a later epoch. The cost is the generation already spent on the dropped
-group, so put the cap above what the buffer limit produces on its own (the
-``max_buffered_groups / rollout_batch_size`` steps above). A cap below that
-drops the oldest groups of every batch instead of the rare outliers, and the
-configuration check warns about it.
+back in a later epoch. Check the observed ages before setting the cap. A cap
+below the typical queue depth can discard groups on every step.
 
 Weight Sync During Generation
 -----------------------------
@@ -261,5 +262,4 @@ Asynchronous agentic RL runs only on the combination it was built for: a
 Megatron actor, the multi-turn agent loop, the SGLang server backend, and a
 disaggregated placement of actor and rollout. There is no off-policy
 correction: the rollout logprob is used directly as the PPO old logprob, so
-the staleness bounds described above are what keeps the training data close to
-the current policy.
+set an explicit age limit if the actor should accept only recent data.

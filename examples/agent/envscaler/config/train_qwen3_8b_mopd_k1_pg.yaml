@@ -5,6 +5,10 @@ defaults:
 runner:
   experiment_name: qwen3-8b-envscaler-dapo-mopd-k1-pg
 
+algorithm:
+  sampling_params:
+    min_new_tokens: 0
+
 rollout:
   return_logprobs: true
 

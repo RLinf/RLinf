@@ -217,6 +217,27 @@ def _task_state(buffer: RolloutBuffer, task_name=None) -> dict:
     return buffer._task(task_name)
 
 
+def test_async_epoch_counts_prompt_groups():
+    pytest.importorskip("megatron.core")
+    from rlinf.runners.async_agent_runner import AsyncAgentRunner
+
+    cfg = _cfg(rollout_batch_size=2)
+    cfg.runner.max_epochs = 1
+    cfg.runner.max_steps = -1
+    cfg.algorithm.max_num_gen_batches = 3
+    cfg.data.val_rollout_batch_size = None
+    dataset = _ToyDataset(8)
+    runner = AsyncAgentRunner.__new__(AsyncAgentRunner)
+    runner.cfg = cfg
+    runner._build_dataloader(dataset, None)
+    runner._set_max_steps()
+    buffer = RolloutBuffer(cfg, dataset)
+    assert runner.max_steps == 4
+    assert [
+        idx for batch in buffer.dataloader for idx in batch["idx"].tolist()
+    ] == list(range(8))
+
+
 class TestAdmissionByCapacity:
     """The two admission conditions of the rollout buffer."""
 
