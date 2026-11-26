@@ -468,7 +468,7 @@ actor
    * - ``actor.model.use_cpu_initialization``
      - Initialize weights on CPU to reduce GPU spikes.
    * - ``actor.model.lm_head_chunk_size``
-     - Compute LM-head logits in chunks of this many tokens to reduce peak GPU memory (e.g., ``256``; ``0`` disables; Megatron dynamic batch, ``algorithm.entropy_bonus: 0``).
+     - Compute LM-head logits in chunks of this many tokens to reduce peak GPU memory (e.g., ``256``; ``0`` disables; Megatron multi-turn agent tasks only).
 
 **Optimizer**
 

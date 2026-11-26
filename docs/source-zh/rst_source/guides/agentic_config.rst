@@ -459,7 +459,7 @@ actor
    * - ``actor.model.use_cpu_initialization``
      - 在 CPU 上初始化权重以降低显存峰值。
    * - ``actor.model.lm_head_chunk_size``
-     - 按指定 token 数分块计算 LM head logits 以降低显存峰值（例如 ``256``，``0`` 表示关闭；仅限 Megatron 动态 batch 且 ``algorithm.entropy_bonus: 0``）。
+     - 按指定 token 数分块计算 LM head logits 以降低显存峰值（例如 ``256``，``0`` 表示关闭；仅限 Megatron 多轮 Agent 任务）。
 
 **优化器**
 
