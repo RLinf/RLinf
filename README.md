@@ -43,7 +43,7 @@ bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin
 bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 ```
 
-That launches ManiSkill3 PPO MLP training on one GPU. Next, follow the [Quick Start](https://rlinf.readthedocs.io/en/latest/rst_source/start/vla.html) for OpenVLA / OpenVLA-OFT PPO training, read the [RLinf Walkthrough](https://rlinf.readthedocs.io/en/latest/rst_source/start/walkthrough.html) for a visual tour of the framework and repo layout, try the [5-Minute Evaluation Quick Tour](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/get_started/quick_tour.html), or browse [Embodied Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) and the [Installation Guide](https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html).
+That launches ManiSkill3 PPO MLP training on one GPU. Next, read the [RLinf Walkthrough](https://rlinf.readthedocs.io/en/latest/rst_source/start/walkthrough.html) for a visual tour of the framework and repo layout, or browse the [Embodied Examples](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) and [Agentic Examples](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/index.html).
 
 ## What's NEW!
 
@@ -204,7 +204,7 @@ RLinf updates models with a training engine and runs rollout and evaluation with
 
 ### Models
 
-RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL across motion control, Vision-Language-Action (VLA) models, World Action Models (WAM), and reasoning and agent models. The table below groups them into System 0, System 1, System 2, and other models.
+RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. The table below groups models and training recipes by system, with vision-language-action (VLA) models and world action models (WAM) in System 1.
 
 <table width="100%" style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">

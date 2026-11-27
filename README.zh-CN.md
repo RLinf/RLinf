@@ -42,7 +42,7 @@ bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin
 bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 ```
 
-上述命令会在单张 GPU 上启动 ManiSkill3 PPO MLP 训练。进阶可按 [快速开始](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla.html) 运行 OpenVLA / OpenVLA-OFT，阅读 [快速熟悉 RLinf](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/walkthrough.html) 图解了解框架与仓库结构，体验 [5 分钟评测快速体验](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/get_started/quick_tour.html)，或前往 [具身训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html) 与 [安装](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html) 查看更多配方与选项。
+上述命令会在单张 GPU 上启动 ManiSkill3 PPO MLP 训练。接下来可以阅读 [快速熟悉 RLinf](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/walkthrough.html) 了解框架与仓库结构，或直接浏览 [具身示例](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html) 与 [智能体示例](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/index.html)。
 
 ## 最新动态
 
@@ -204,7 +204,7 @@ RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测�
 
 ### 模型
 
-RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习，覆盖运动控制、视觉-语言-动作模型（VLA）、世界动作模型（WAM）以及推理与智能体模型。下表按 System 0、System 1、System 2 和其他模型分组。
+RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。下表按系统类别整理模型与训练示例，其中 System 1 包含视觉语言动作模型（VLA）和世界动作模型（WAM）。
 
 <table width="100%" style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
