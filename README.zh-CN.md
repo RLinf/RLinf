@@ -42,11 +42,12 @@ bash requirements/install.sh embodied --env maniskill_libero && source .venv/bin
 bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 ```
 
-上述命令会在单张 GPU 上启动 ManiSkill3 PPO MLP 训练。进阶可按 [快速开始](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla.html) 运行 OpenVLA / OpenVLA-OFT，阅读 [快速熟悉 RLinf](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/walkthrough.html) 图解了解框架与仓库结构，体验 [5 分钟评测快速体验](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/get_started/quick_tour.html)，或前往 [具身训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html) 与 [安装](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html) 查看更多配方与选项。
+上述命令会在单张 GPU 上启动 ManiSkill3 PPO MLP 训练。接下来可以阅读 [快速熟悉 RLinf](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/walkthrough.html) 了解框架与仓库结构，或直接浏览 [具身示例](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html) 与 [智能体示例](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/index.html)。
 
 ## 最新动态
 
 - [2026/11] 🔥 RLinf 支持用 RPent 规划器多轮数据对 Qwen3.8-27B 做全量或 LoRA 微调，并支持导出 HuggingFace 权重与合并 LoRA adapter。文档：[Qwen-VL 监督微调](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html)。
+- [2026/11] 🔥 RLinf 支持 SuperMimic，在 MuJoCo Warp 中用可微世界模型训练 Unitree G1 全身动作跟踪 policy，并集成多卡 FSDP2、CUDAGraph 与 bf16 混合精度优化。在 NVIDIA A800 上，相较官方单卡实现（0.515 秒/更新），RLinf 单卡吞吐提升至 **1.34 倍**（0.383 秒/更新），4 卡提升至 **2.27 倍**（0.227 秒/更新，约 23 分钟完成 6000 次更新）；在 40 条 LAFAN1 片段上性能与论文对齐，归一化回报达 **0.856**（论文为 0.82）且 **0** 摔倒。文档：[SuperMimic](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/supermimic.html)。
 - [2026/11] 🔥 RLinf 新增 FlexRLT，可直接用冻结 VLA 的特征训练小型 actor 和 critic，并分别选择特征表示、网络、AC/TD3 算法及 STEAM 门控。文档：[FlexRLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/flexrlt.html)。
 - [2026/11] 🔥 RLinf 支持在 [DexJoCo](https://github.com/brave-eai/dexjoco) 灵巧操作基准上用 SFT 和 PPO 训练 CNN 和 π₀.₅ policy。PPO 将 π₀.₅ 在 `water_plant` 上的成功率从 SFT 后的 78.1% 提升至 98.4%。文档：[基于 DexJoCo 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html)。
 - [2026/11] 🔥 RLinf 支持奖励反馈学习（ReFL），使用 ImageReward 微调 SD3.5 Medium。文档：[ReFL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/refl.html)。
@@ -55,11 +56,11 @@ bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 - [2026/11] 🔥 RLinf 新增真机机器人容错接口与自动恢复机制，率先在 Robbyant R2 上支持零阻塞健康诊断、分级故障恢复与急停安全锁存、无跳变运动恢复，以及强化学习采样中断时的自动 episode 截断。文档：[机器人接口](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/robotics.html)。
 - [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) 接入 RLinf 作为分布式 rollout 与训练运行时，并集成了[示范协同训练（Co-Training）](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/co_training.html)用于 VLA 强化学习后训练。
 - [2026/11] 🎉 [RLinf 官网](https://rlinf.org/zh/)上线了！欢迎阅读[博客](https://rlinf.org/zh/blog/)并查看[社区活动](https://rlinf.org/zh/events/)。
-- [2026/11] 🔥 RLinf 接入 MuJoCo Warp，支持五个经典运动控制任务的 GPU 批量仿真及 MLP + PPO 示例。文档：[MuJoCo Warp](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html)。
 
 <details>
 <summary><b>更多更新</b></summary>
 
+- [2026/11] 🔥 RLinf 接入 MuJoCo Warp，支持五个经典运动控制任务的 GPU 批量仿真及 MLP + PPO 示例。文档：[MuJoCo Warp](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html)。
 - [2026/11] 🔥 RLinf 支持 LeKiwi 三轮全向移动底盘，提供分部件调试工具，并注册了真机驱动环境。文档：[LeKiwi](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html)。
 - [2026/11] 🔥 RLinf 支持双臂 ARX X5 搭配 Pico 遥操作的数据采集。文档：[ARX X5](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/arx5.html)。
 - [2026/11] 🔥 RLinf 为异步 agentic RL 提供 session server：轨迹留在 rollout 节点上，不再集中到 node 0；请求经 SGLang router 路由；agent 可以直接使用 OpenAI chat completions 接口。文档：[Session Server](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/session_server.html)。
@@ -240,6 +241,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robolab.html">RoboLab（仅评估）</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/g1_mimic.html">G1 动作跟踪（MuJoCo Warp）</a> ✅</li>
           <li>更多…</li>
         </ul>
       </td>
@@ -313,6 +315,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/opd.html">OPD</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/diffusion_art.html">DiffusionART</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/refl.html">ReFL</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/supermimic.html">SuperMimic</a> ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>
