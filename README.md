@@ -204,7 +204,7 @@ RLinf updates models with a training engine and runs rollout and evaluation with
 
 ### Models
 
-RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. The table below groups models and training recipes into System 0, System 1, System 2, and other model components.
+RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. The table below groups models and training recipes by system, with vision-language-action (VLA) models and world action models (WAM) in System 1.
 
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
@@ -259,20 +259,20 @@ RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. T
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-7B</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/moonlight.html">Moonlight-16B</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/agentlightning_calc_x.html">Qwen2.5-1.5B (AgentLightning Calc-X)</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/rstar2.html">Qwen2.5-7B (rStar2)</a> ✅</li>
             </ul>
           </li>
           <li><b>Search RL</b>
             <ul style="margin-left: 0; padding-left: 16px;">
-              <li><b>Search-R1 / rStar2</b>
+              <li><b>Search-R1</b>
                 <ul style="margin-left: 0; padding-left: 16px;">
-                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/qwen2.5.html">Qwen2.5-3B</a> ✅</li>
-                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/rstar2.html">Qwen2.5-7B (rStar2)</a> ✅</li>
-                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/glm4.7_flash.html">GLM-4.7-Flash</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/index.html#searchr1-setup">Qwen2.5-3B</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/index.html#searchr1-glm">GLM-4.7-Flash</a> ✅</li>
                 </ul>
               </li>
               <li><b>WideSeek-R1</b>
                 <ul style="margin-left: 0; padding-left: 16px;">
-                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/wideseek_r1/train.html">Qwen3-4B</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/wideseek_r1/index.html#wideseek-r1-setup">Qwen3-4B</a> ✅</li>
                 </ul>
               </li>
             </ul>
