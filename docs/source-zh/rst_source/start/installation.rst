@@ -98,7 +98,7 @@
    * - ``--model``\ （:doc:`VLA <../examples/vla_wam_index>`）
      - ``abot_m0``、``dexbotic``、``evo1``、``gr00t``、``gr00t_n1d6``、``gr00t_n1d7``、``lingbotvla``、``lingbotvlav2``、``molmoact2``、``openpi``、``openvla``、``openvla-oft``、``pi0_fast``、``psi0``、``starvla``
    * - ``--model``\ （:doc:`WAM / VLM / 生成 <../examples/vla_wam_index>`）
-     - ``cosmos3``、``diffusion``、``dreamzero``、``fastwam``、``qwen3_vl``、``sglang``
+     - ``cosmos3``、``diffusion``、``dreamzero``、``fastwam``、``openwam``、``qwen3_vl``、``sglang``
    * - ``--env``\ （:doc:`仿真器 <../examples/simulators_index>`）
      - ``behavior``、``calvin``、``d4rl``、``embodichain``、``frankasim``、``genesis``、``geniesim``、``habitat``、``isaaclab``、``libero``、``liberoplus``、``liberopro``、``maniskill_libero``、``metaworld``、``mujoco_warp``、``polaris``、``robocasa``、``robocasa365``、``robodojo``、``robolab``、``robotwin``、``roboverse``、``simple``、``supermimic``
    * - ``--env``\ （:doc:`世界模型 <../examples/world_model_index>`）

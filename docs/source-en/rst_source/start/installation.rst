@@ -98,7 +98,7 @@ Pass any of the values below to ``--model``, ``--env``, ``--engine``, or ``--pla
    * - ``--model`` (:doc:`VLA <../examples/vla_wam_index>`)
      - ``abot_m0``, ``dexbotic``, ``evo1``, ``gr00t``, ``gr00t_n1d6``, ``gr00t_n1d7``, ``lingbotvla``, ``lingbotvlav2``, ``molmoact2``, ``openpi``, ``openvla``, ``openvla-oft``, ``pi0_fast``, ``psi0``, ``starvla``
    * - ``--model`` (:doc:`WAM / VLM / Gen <../examples/vla_wam_index>`)
-     - ``cosmos3``, ``diffusion``, ``dreamzero``, ``fastwam``, ``qwen3_vl``, ``sglang``
+     - ``cosmos3``, ``diffusion``, ``dreamzero``, ``fastwam``, ``openwam``, ``qwen3_vl``, ``sglang``
    * - ``--env`` (:doc:`Simulators <../examples/simulators_index>`)
      - ``behavior``, ``calvin``, ``d4rl``, ``embodichain``, ``frankasim``, ``genesis``, ``geniesim``, ``habitat``, ``isaaclab``, ``libero``, ``liberoplus``, ``liberopro``, ``maniskill_libero``, ``metaworld``, ``mujoco_warp``, ``polaris``, ``robocasa``, ``robocasa365``, ``robodojo``, ``robolab``, ``robotwin``, ``roboverse``, ``simple``, ``supermimic``
    * - ``--env`` (:doc:`World Models <../examples/world_model_index>`)

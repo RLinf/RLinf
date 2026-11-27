@@ -36,41 +36,6 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
 .. tab-set::
 
-   .. tab-item:: OpenWAM
-
-      **1. 安装并下载 RoboTwin 资产**
-
-      .. code-block:: bash
-
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openwam --env robotwin && source .venv/bin/activate
-         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
-
-      **2. 下载模型**
-
-      .. code-block:: bash
-
-         hf download OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full --local-dir ./OpenWAM-Alpha-Sim-RoboTwin-Full
-
-      **3. 评测**
-
-      .. code-block:: bash
-
-         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
-         bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openwam_eval \
-           rollout.model.model_path=./OpenWAM-Alpha-Sim-RoboTwin-Full \
-           env.eval.assets_path="${ROBOTWIN_PATH}"
-
-      评测 ``click_bell`` 时使用 ``robotwin_click_bell_openwam_eval``\。增大 ``env.eval.rollout_epoch`` 可评测更多轨迹，这两个预设会在回合间依次使用内置的 success seed。
-
-      .. dropdown:: 其他 OpenWAM 任务与模型
-
-         运行 ``python toolkits/openwam/gen_robotwin_eval_recipes.py --all``\，生成全部 46 个支持任务的配置。内置种子文件已覆盖的任务使用其中的 success seed，其余任务随机生成 reset 种子。
-
-         保留预设中的 ``aloha-agilex`` 机器人、头部与腕部相机、\ ``absolute_eef20`` 动作表示及 unseen 指令。每次预测执行 32 个动作，回合预算向上取整到动作块的倍数。
-
-         公开的 `Clean2Random checkpoint <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random>`_ 和 `联合自注意力研究 checkpoint <https://huggingface.co/OpenWAM/robotwin_dual_system_joint_self_attention>`_ 也可按此流程评测。RoboTwin SFT 尚未验证；LIBERO 训练见 :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>`\。
-
    .. tab-item:: OpenVLA-OFT（place_empty_cup）
 
       **1. 安装并下载 RoboTwin 资产**
@@ -213,9 +178,44 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
       默认使用 2 张 GPU（``rollout: 0``、``env: 1``）。LingbotVLA 1.0 与 2.0 均安装 ``lingbotvla`` 包，须分别使用独立的虚拟环境（详见 :doc:`../../examples/embodied/lingbotvlav2`）。
 
+   .. tab-item:: OpenWAM（adjust_bottle）
+
+      **1. 安装并下载 RoboTwin 资产**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openwam --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
+
+      **2. 下载模型**
+
+      .. code-block:: bash
+
+         hf download OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full --local-dir ./OpenWAM-Alpha-Sim-RoboTwin-Full
+
+      **3. 启动评测**
+
+      .. code-block:: bash
+
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openwam_eval \
+           rollout.model.model_path=./OpenWAM-Alpha-Sim-RoboTwin-Full \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
+
+      默认使用 2 张 GPU、2 个环境，每个 ``env.eval.rollout_epoch`` 产生 2 条轨迹。评测 ``click_bell`` 时使用 ``robotwin_click_bell_openwam_eval``\。增大 ``env.eval.rollout_epoch`` 可评测更多轨迹，这两个预设会在回合间依次使用内置的 success seed。
+
+      .. dropdown:: 其他 OpenWAM 任务与模型
+
+         运行 ``python toolkits/openwam/gen_robotwin_eval_recipes.py --all``\，生成全部 46 个支持任务的配置。内置种子文件已覆盖的任务使用其中的 success seed，其余任务随机生成 reset 种子。
+
+         保留预设中的 ``aloha-agilex`` 机器人、头部与腕部相机、\ ``absolute_eef20`` 动作表示及 unseen 指令。每次预测执行 32 个动作，单回合步数上限向上取整到动作块的倍数。
+
+         公开的 `Clean2Random checkpoint <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random>`_ 和 `联合自注意力实验 checkpoint <https://huggingface.co/OpenWAM/robotwin_dual_system_joint_self_attention>`_ 也可按此流程评测。RoboTwin SFT 尚未验证；LIBERO 训练见 :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>`\。
+
 .. note::
 
-   **显存与全种子覆盖：** 默认配置使用 ``total_num_envs: 128`` 与 ``use_fixed_reset_state_ids: True``，每轮约覆盖 150–320 条任务种子中的 128 条。内存或显存受限时可调小 ``env.eval.total_num_envs``\ （或开启 ``env.enable_offload: True`` 与 ``rollout.enable_offload: True``）；如需覆盖全部种子，将 ``use_fixed_reset_state_ids`` 设为 ``False`` 并配合 ``auto_reset: True`` 与更大的 ``max_steps_per_rollout_epoch``\ （详见 :ref:`评测配置详解 <robotwin-eval-config>`）。
+   **显存与全种子覆盖：**\ OpenWAM 的默认规模见上方标签页。使用 ``total_num_envs: 128`` 与 ``use_fixed_reset_state_ids: True`` 的配置，每轮约覆盖 150–320 条任务种子中的 128 条。内存或显存受限时可调小 ``env.eval.total_num_envs``\。卸载到 CPU 和覆盖全部种子的方法见 :ref:`评测配置详解 <robotwin-eval-config>`\。
 
 在 AMD ROCm 上安装需加 ``--platform amd``，并在任务配置中设 ``planner_backend: mplib``\ （详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`）。``run_eval.sh`` 会将 ``ROBOTWIN_PATH`` 加入 ``PYTHONPATH``，``env.eval.assets_path`` 指向 ``assets/`` 的父目录。RLinf 默认使用 ``0.01 m`` 相机近裁剪面，避免 SAPIEN 3.0.1 在腕部视角裁掉夹爪手指（可通过 ``env.eval.camera_near`` 修改，设为 ``null`` 沿用 RoboTwin 默认 ``0.1 m``）。
 
@@ -252,6 +252,13 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
         - ``click_bell``
         - LingbotVLA 2.0
 
+      * - ``robotwin_adjust_bottle_openwam_eval.yaml``
+        - ``adjust_bottle``
+        - OpenWAM
+      * - ``robotwin_click_bell_openwam_eval.yaml``
+        - ``click_bell``
+        - OpenWAM
+
    若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 仅对 ``examples/embodiment/config/`` 中已定义 ``rollout.model``\ （含 ``model_type`` 与 ``num_action_chunks``）的评测就绪配置生效。内置 ``eval_seeds.json`` 覆盖 **22 个任务**，若要评测纯训练配置请按 :doc:`../reference/configuration` 改写为评测 YAML。
 
 .. _robotwin-eval-config:
@@ -262,7 +269,7 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
    启动时全局打乱种子并按 worker 无重叠切分。
 
-   默认配置（\ ``total_num_envs: 128``\、\ ``rollout_epoch: 1``\、\ ``use_fixed_reset_state_ids: True``\）每轮评测约 128 条轨迹；设置 ``use_fixed_reset_state_ids: False`` 可在 ``auto_reset`` 时自动切换后续种子。
+   使用 ``total_num_envs: 128``\、\ ``rollout_epoch: 1`` 和 ``use_fixed_reset_state_ids: True`` 时，每轮评测约 128 条轨迹；设置 ``use_fixed_reset_state_ids: False`` 可在 ``auto_reset`` 时自动切换后续种子。
 
    **示例任务种子数与步数上限**
 
@@ -374,6 +381,6 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
    * - GPU 显存不足
      - 在 YAML 中开启 ``env.enable_offload: True`` 与 ``rollout.enable_offload: True``，或调小 ``env.eval.total_num_envs``。
    * - 种子覆盖不完整
-     - 默认 128 并行 + ``use_fixed_reset_state_ids: True`` 只覆盖部分种子，详见 :ref:`评测配置详解 <robotwin-eval-config>`。
+     - 128 个并行环境配合 ``use_fixed_reset_state_ids: True`` 只覆盖部分种子，详见 :ref:`评测配置详解 <robotwin-eval-config>`。
    * - EGL 渲染报错
      - ``run_eval.sh`` 默认使用 EGL 渲染；机器不支持 EGL 时执行 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa``。
