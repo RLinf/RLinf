@@ -242,6 +242,7 @@ def _make_worker(
     worker._data_iter = None
     worker._rollout_channel = None
     worker._pending_fetch = None
+    worker._release_waiter = None
     return worker
 
 

@@ -36,6 +36,7 @@ from rlinf.config import sampling_batch_size
 from rlinf.data.schema.reasoning_requests import build_rollout_requests_from_batch
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.runners.agent_runner import AgentRunner
+from rlinf.runners.async_agent_runner import AsyncAgentRunner
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.runner_utils import check_progress
@@ -660,3 +661,83 @@ class RPentGRPORunner(AgentRunner):
 
         self._stop_rollouts()
         self.metric_logger.finish()
+
+
+class RPentAsyncGRPORunner(AsyncAgentRunner):
+    """Collocated or disaggregated asynchronous GRPO runner for RPent."""
+
+    def __init__(
+        self,
+        *,
+        simulators: dict[str, SimulatorSpec] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.simulators = simulators or {}
+        super().__init__(**kwargs)
+
+    def _validate_sim_pool_capacity(self) -> None:
+        rpent = (self.cfg.get("tools") or {}).get("rpent") or {}
+        ep_limit = rpent.get("episodes_per_worker")
+        validate_sim_pool_capacity(
+            simulators=self.simulators,
+            default_endpoint=rpent.get("remote_toolkit_endpoint"),
+            sampling_groups=int(self.cfg.rollout_buffer.max_inflight_groups),
+            group_size=int(self.cfg.algorithm.group_size),
+            num_agent_workers=len(
+                self.component_placement.get_hardware_ranks("agentloop")
+            ),
+            episodes_per_worker=int(ep_limit) if ep_limit is not None else None,
+        )
+
+    def _on_step_logged(
+        self,
+        *,
+        time_metrics: dict,
+        agent_metrics: dict,
+        rollout_metrics: dict,
+        actor_training_metrics: list[dict],
+    ) -> None:
+        last_train = actor_training_metrics[-1] if actor_training_metrics else {}
+        loss = last_train.get(
+            "actor/final_loss", last_train.get("actor/total_loss", float("nan"))
+        )
+        stale_mean = rollout_metrics.get(
+            "rollout/data_staleness/mean", float("nan")
+        )
+        stale_max = rollout_metrics.get("rollout/data_staleness/max", float("nan"))
+        logger.info(
+            "Async Step %d/%d | success_rate=%.2f%% | turns=%.1f | rows=%.1f | "
+            "wait_data=%.1fs | pause=%.1fs | offload=%.1fs | train=%.1fs | "
+            "sync=%.1fs | step=%.1fs | staleness=%.2f/%.0f | loss=%.4f",
+            self.global_steps,
+            self.max_steps,
+            100.0 * agent_metrics.get("rpent/success_rate", 0.0),
+            agent_metrics.get("rpent/turns", 0.0),
+            agent_metrics.get("rpent/rows", 0.0),
+            time_metrics.get("wait_data", 0.0),
+            time_metrics.get("rollout/pause", 0.0),
+            time_metrics.get("rollout/offload", 0.0),
+            time_metrics.get("training", 0.0),
+            time_metrics.get("sync_weights", 0.0),
+            time_metrics.get("step", 0.0),
+            stale_mean,
+            stale_max,
+            loss,
+        )
+        audit_dir = Path(self.cfg.runner.logger.log_path) / "sampling"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        audit = {
+            "mode": "async",
+            "step": self.global_steps,
+            "time_metrics": time_metrics,
+            "agent_metrics": agent_metrics,
+            "rollout_metrics": rollout_metrics,
+            "train_metrics": last_train,
+        }
+        (audit_dir / f"async-step-{self.global_steps}.json").write_text(
+            json.dumps(audit, indent=2, default=str) + "\n"
+        )
+
+    def run(self) -> None:
+        self._validate_sim_pool_capacity()
+        super().run()

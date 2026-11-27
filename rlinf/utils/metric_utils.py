@@ -43,6 +43,7 @@ class VersionedTrajectoryRecord:
     cross_version_calls: int
     reward: float
     token_weighted_version_start_sum: int
+    sampled_token_version_sum: int | None = None
 
 
 def compute_staleness_metrics(
@@ -112,10 +113,16 @@ def compute_staleness_metrics(
     # for contrast with the earliest-version based staleness above; with no
     # generated tokens it is undefined and left out, like the token ratios.
     if total_generated_tokens > 0:
-        token_weighted_version = (
-            sum(record.token_weighted_version_start_sum for record in records)
-            / total_generated_tokens
-        )
+        if all(record.sampled_token_version_sum is not None for record in records):
+            token_weighted_version = (
+                sum(record.sampled_token_version_sum for record in records)
+                / total_generated_tokens
+            )
+        else:
+            token_weighted_version = (
+                sum(record.token_weighted_version_start_sum for record in records)
+                / total_generated_tokens
+            )
         metrics["data_staleness/token_mean"] = version - token_weighted_version
     metrics["version_span/mean"] = sum(version_spans) / num_groups
     metrics["version_span/max"] = max(version_spans)

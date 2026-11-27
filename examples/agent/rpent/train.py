@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Launch synchronous GRPO training for RPent embodied manipulation."""
+"""Launch synchronous or collocated asynchronous GRPO training for RPent."""
 
 from pathlib import Path
 
@@ -27,11 +27,12 @@ from rlinf.agents.rpent import (
 from rlinf.config import validate_cfg
 from rlinf.data.datasets.reasoning import create_reasoning_datasets
 from rlinf.models.tokenization.hf import hf_tokenizer
-from rlinf.runners.rpent_runner import RPentGRPORunner
-from rlinf.scheduler import Cluster
+from rlinf.runners.rpent_runner import RPentAsyncGRPORunner, RPentGRPORunner
+from rlinf.scheduler import Cluster, NodePlacementStrategy
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
+from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
 
 
 def _env_vars(section) -> dict[str, str] | None:
@@ -86,19 +87,40 @@ def main(cfg) -> None:
         env_vars=_env_vars(cfg.actor),
     )
 
-    runner = RPentGRPORunner(
-        simulators=simulators,
-        cfg=cfg,
-        placement=placement,
-        train_dataset=train_ds,
-        val_dataset=val_ds,
-        rollout=rollout,
-        inference=None,
-        actor=actor,
-        reward=None,
-        agent_loop=agent_loop,
-        critic=None,
-    )
+    if cfg.runner.get("async_mode", False):
+        rollout_buffer = RolloutBufferWorker.create_group(cfg, train_ds).launch(
+            cluster,
+            name="RolloutBuffer",
+            placement_strategy=NodePlacementStrategy([0]),
+            env_vars=_env_vars(cfg.agentloop),
+        )
+        runner = RPentAsyncGRPORunner(
+            simulators=simulators,
+            cfg=cfg,
+            placement=placement,
+            train_dataset=train_ds,
+            val_dataset=val_ds,
+            rollout=rollout,
+            inference=None,
+            actor=actor,
+            reward=None,
+            agent_loop=agent_loop,
+            rollout_buffer=rollout_buffer,
+        )
+    else:
+        runner = RPentGRPORunner(
+            simulators=simulators,
+            cfg=cfg,
+            placement=placement,
+            train_dataset=train_ds,
+            val_dataset=val_ds,
+            rollout=rollout,
+            inference=None,
+            actor=actor,
+            reward=None,
+            agent_loop=agent_loop,
+            critic=None,
+        )
     runner.init_workers()
     runner.run()
 

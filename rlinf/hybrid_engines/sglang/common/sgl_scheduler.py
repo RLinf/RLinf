@@ -162,6 +162,7 @@ class Scheduler(_Scheduler):
             # Driver discovery must finish before model setup captures CUDA graphs.
             _ = driver.active
         super().__init__(server_args, *args, **kwargs)
+        self._parked_requests: dict | None = None
         if not hasattr(self, "tp_rank"):
             from sglang.srt.runtime_context import get_parallel
 
@@ -214,6 +215,92 @@ class Scheduler(_Scheduler):
             f"{free_gpu_memory=:.2f} GiB, {total_gpu_memory=:.2f} GiB"
         )
 
+    @staticmethod
+    def _park_multimodal_state(req) -> None:
+        """Keep parked multimodal tensors on CPU and prevent multi-retract M-RoPE growth."""
+        mm = getattr(req, "multimodal_inputs", None)
+        if mm is None:
+            return
+        mrope = getattr(mm, "mrope_positions", None)
+        if isinstance(mrope, torch.Tensor):
+            prompt_len = len(req.origin_input_ids)
+            if mrope.ndim >= 2 and mrope.shape[1] > prompt_len:
+                mrope = mrope[:, :prompt_len]
+            if mrope.is_cuda:
+                mrope = mrope.cpu()
+            mm.mrope_positions = mrope
+        for item in getattr(mm, "mm_items", None) or ():
+            for attr in ("feature", "precomputed_embeddings", "image_grid_thw"):
+                val = getattr(item, attr, None)
+                if isinstance(val, torch.Tensor) and val.is_cuda:
+                    setattr(item, attr, val.cpu())
+        for attr in ("vision_position_ids", "visible_frame_counts"):
+            val = getattr(mm, attr, None)
+            if isinstance(val, torch.Tensor) and val.is_cuda:
+                setattr(mm, attr, val.cpu())
+
+    def _clear_mm_embedding_cache(self) -> None:
+        if getattr(getattr(self, "model_config", None), "is_multimodal", False):
+            from sglang.srt.managers import mm_utils
+
+            if mm_utils.embedding_cache is not None:
+                mm_utils.embedding_cache.clear()
+
+    def _add_request_to_queue(self, req, is_retracted=False):
+        if self._parked_requests is not None:
+            self._park_multimodal_state(req)
+            self._parked_requests[req.rid] = req
+        elif is_retracted:
+            super()._add_request_to_queue(req, is_retracted=True)
+        else:
+            super()._add_request_to_queue(req)
+
+    def _park_requests(self) -> None:
+        """Park unfinished requests and acknowledge an idle engine before offload."""
+        from sglang.srt.managers.io_struct import PauseGenerationReqInput
+
+        if self._parked_requests is not None:
+            return
+        pre_chunked_req = getattr(self, "chunked_req", None)
+        self._parked_requests = {}
+        super().pause_generation(PauseGenerationReqInput(mode="retract"))
+        if self.enable_overlap:
+            while self.result_queue:
+                batch, result = self.result_queue.popleft()
+                self.process_batch_result(batch, result)
+        for req in self.waiting_queue:
+            if not req.finished():
+                self._parked_requests[req.rid] = req
+        for chunked in (self.chunked_req, pre_chunked_req):
+            if chunked is not None and not chunked.finished():
+                self._parked_requests[chunked.rid] = chunked
+        for req in self._parked_requests.values():
+            if not req.is_retracted or req.kv_allocated_len:
+                req.reset_for_retract()
+            req.req_pool_idx = None
+            if req.logprob_start_len >= len(req.origin_input_ids):
+                # Retained output logprobs must not be recomputed during re-prefill.
+                req.logprob_start_len = -1
+            self._park_multimodal_state(req)
+        self.waiting_queue.clear()
+        self.running_batch.filter_batch(keep_indices=[])
+        self.last_batch = self.cur_batch = self.chunked_req = None
+        self._chunked_req_scheduled_last_iter = False
+        self._clear_mm_embedding_cache()
+        self._rlinf_worker.torch_platform.synchronize()
+        if not self.flush_cache():
+            raise RuntimeError(
+                "Retraction left active GPU state; refusing memory offload."
+            )
+
+    def _restore_requests(self) -> None:
+        """Restore parked requests after weights, KV memory, and graphs are ready."""
+        if self._parked_requests is not None:
+            requests = list(self._parked_requests.values())
+            self._parked_requests = None
+            for req in requests:
+                self._add_request_to_queue(req, is_retracted=True)
+
     def resolve_memory_tags(self, recv_req):
         """Resolve a release/resume request's tags to a concrete set.
 
@@ -224,6 +311,12 @@ class Scheduler(_Scheduler):
         return set(recv_req.tags)
 
     def release_memory_occupation(self, recv_req: ReleaseMemoryOccupationReqInput):
+        if getattr(self, "_engine_paused", False):
+            if not self.is_fully_idle():
+                self._park_requests()
+            elif self._parked_requests is None:
+                self._parked_requests = {}
+                self._clear_mm_embedding_cache()
         requested_tags = self.resolve_memory_tags(recv_req)
         already_offloaded = {
             tag for tag in requested_tags if self.offloaded_tags.get(tag, False)
@@ -261,6 +354,8 @@ class Scheduler(_Scheduler):
             model = self.tp_worker.worker.model_runner.model
             model.load_state_dict(self.cpu_state_dict)
 
+        if not any(self.offloaded_tags.values()):
+            self._restore_requests()
         return result
 
     @staticmethod

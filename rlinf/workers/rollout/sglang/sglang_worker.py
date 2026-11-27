@@ -326,7 +326,9 @@ class SGLangWorker(Worker):
             enable_dp_lm_head=self._cfg_rollout.sglang.get("enable_dp_lm_head", False),
             moe_dense_tp_size=self._cfg_rollout.sglang.get("moe_dense_tp_size", None),
             mem_fraction_static=self._cfg_rollout.gpu_memory_utilization,
-            enable_memory_saver=use_cudagraph,
+            enable_memory_saver=self._cfg_rollout.sglang.get(
+                "enable_memory_saver", True
+            ),
             enable_weights_cpu_backup=enable_weights_cpu_backup,
             enable_torch_compile=self._cfg_rollout.sglang.use_torch_compile,
             torch_compile_max_bs=min(

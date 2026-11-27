@@ -133,7 +133,7 @@ agentloop:
     PYTHONPATH: ${oc.env:RPENT_LOCAL_CACHE,/tmp/rpent_ppo}/RLinf:${oc.env:RPENT_LOCAL_CACHE,/tmp/rpent_ppo}/RPent:${oc.env:RPENT_LOCAL_CACHE,/tmp/rpent_ppo}/envs/rl-overlay:/opt/venv/reason/Megatron-LM
     PATH: /opt/venv/reason/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     CUDA_HOME: /usr/local/cuda
-    LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64
+    LD_LIBRARY_PATH: /usr/local/cuda/compat:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
     HF_HUB_OFFLINE: "1"
     TRANSFORMERS_OFFLINE: "1"
     NO_PROXY: ${oc.env:NO_PROXY,'127.0.0.1,localhost'}
@@ -158,7 +158,7 @@ rollout:
     model_path: ${oc.env:RPENT_MODEL_PATH,${oc.env:RPENT_LOCAL_CACHE,/tmp/rpent_ppo}/checkpoint-216}
     model_type: qwen3_5
     precision: bf16
-  enforce_eager: false
+  enforce_eager: true
   distributed_executor_backend: mp
   disable_log_stats: false
   detokenize: false
@@ -191,7 +191,8 @@ rollout:
     PYTHONPATH: ${oc.env:RPENT_LOCAL_CACHE,/tmp/rpent_ppo}/RLinf:${oc.env:RPENT_LOCAL_CACHE,/tmp/rpent_ppo}/RPent:${oc.env:RPENT_LOCAL_CACHE,/tmp/rpent_ppo}/envs/rl-overlay:/opt/venv/reason/Megatron-LM
     PATH: /opt/venv/reason/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     CUDA_HOME: /usr/local/cuda
-    LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64
+    LD_LIBRARY_PATH: /usr/local/cuda/compat:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
+    SGLANG_MM_BUFFER_SIZE_MB: "0"
     SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE: rlinf.hybrid_engines.sglang.multimodal
     PYTORCH_ALLOC_CONF: expandable_segments:False
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:False
@@ -309,7 +310,7 @@ actor:
     PYTHONPATH: ${oc.env:RPENT_LOCAL_CACHE,/tmp/rpent_ppo}/RLinf:${oc.env:RPENT_LOCAL_CACHE,/tmp/rpent_ppo}/RPent:${oc.env:RPENT_LOCAL_CACHE,/tmp/rpent_ppo}/envs/rl-overlay:/opt/venv/reason/Megatron-LM
     PATH: /opt/venv/reason/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     CUDA_HOME: /usr/local/cuda
-    LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64
+    LD_LIBRARY_PATH: /usr/local/cuda/compat:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
     PYTORCH_ALLOC_CONF: expandable_segments:False
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:False
     NCCL_SOCKET_IFNAME: eth0

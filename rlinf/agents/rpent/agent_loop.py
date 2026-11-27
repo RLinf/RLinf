@@ -360,6 +360,7 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
                 else:
                     generated["prompt_token_ids"] = prompt_ids
 
+                token_versions = generated.get("weight_versions")
                 if self.cfg.runner.get("synchronous", True):
                     ver = generated.get("version_start")
                     if ver is None or ver != generated.get("version_end"):
@@ -372,8 +373,21 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
                         )
                     weight_version = ver
                     weight_versions = [ver] * len(generated["output_ids"])
+                    turn_version_start = ver
+                    turn_version_end = ver
                 else:
-                    weight_versions = None
+                    weight_versions = (
+                        token_versions
+                        if isinstance(token_versions, list)
+                        and len(token_versions) == len(generated["output_ids"])
+                        else None
+                    )
+                    if weight_versions:
+                        turn_version_start = min(weight_versions)
+                        turn_version_end = max(weight_versions)
+                    else:
+                        turn_version_start = generated.get("version_start")
+                        turn_version_end = generated.get("version_end")
 
                 response_ids = generated["output_ids"]
                 response_text, calls, message = await self._parse_response(
@@ -388,8 +402,8 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
                     response_logprobs=generated.get("logprobs"),
                     response_weight_versions=weight_versions,
                     response_images=multimodal,
-                    version_start=generated.get("version_start"),
-                    version_end=generated.get("version_end"),
+                    version_start=turn_version_start,
+                    version_end=turn_version_end,
                     is_end=generated.get("finish_reason") == "stop",
                     extra_fields={
                         "turn_id": turn_idx,
@@ -519,7 +533,12 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
                     elif truncated:
                         reason = "environment_step_limit"
             finally:
-                await self._close_session(client, endpoint, sid)
+                try:
+                    await asyncio.wait_for(
+                        self._close_session(client, endpoint, sid), timeout=15.0
+                    )
+                except BaseException:
+                    pass
 
         if not turns:
             raise RPentEpisodeError(

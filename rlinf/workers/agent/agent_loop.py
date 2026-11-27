@@ -131,10 +131,14 @@ class AgentLoopWorker(Worker):
     ):
         super().__init__()
         self.cfg = cfg
+        self._rollout_num_instances = placement.rollout_num_model_instances
         if cfg.rollout.get("replica_affinity", False):
             self.rollout_request_key = (
                 self._rank % placement.rollout_num_model_instances
             )
+        self._traj_rollout_key: contextvars.ContextVar[Optional[int]] = (
+            contextvars.ContextVar("rlinf_traj_rollout_key", default=None)
+        )
         self.print_outputs = cfg.agentloop.print_outputs
         if cfg.runner.task_type == "reasoning_eval":
             self.return_logprobs = False
@@ -256,7 +260,10 @@ class AgentLoopWorker(Worker):
         request["channel_key"] = channel_key
         if rollout_name is None:
             input_channel = self.generate_input_channel
-            request_key = self.rollout_request_key
+            traj_key = self._traj_rollout_key.get()
+            request_key = (
+                traj_key if traj_key is not None else self.rollout_request_key
+            )
         else:
             input_channel = self.solid_generate_input_channels[rollout_name]
             request_key = DEFAULT_KEY
@@ -788,13 +795,28 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             return await self._run_session_server_group(
                 input_ids, answer, group_size, group_id, task_name
             )
-        rollout_tasks: list[asyncio.Task[MultiAgentLoopOutput]] = []
-        # grpo group_size
-        for _ in range(group_size):
-            task = asyncio.create_task(
-                self.run_one_query(copy.deepcopy(input_ids), answer=answer)
-            )
-            rollout_tasks.append(task)
+        use_traj_affinity = (
+            self.cfg.rollout.get("replica_affinity", False)
+            and group_id is not None
+            and self._rollout_num_instances > 1
+        )
+
+        async def _run_traj(traj_idx: int) -> MultiAgentLoopOutput:
+            token = None
+            if use_traj_affinity:
+                target_key = (
+                    group_id * group_size + traj_idx
+                ) % self._rollout_num_instances
+                token = self._traj_rollout_key.set(target_key)
+            try:
+                return await self.run_one_query(copy.deepcopy(input_ids), answer=answer)
+            finally:
+                if token is not None:
+                    self._traj_rollout_key.reset(token)
+
+        rollout_tasks: list[asyncio.Task[MultiAgentLoopOutput]] = [
+            asyncio.create_task(_run_traj(traj_idx)) for traj_idx in range(group_size)
+        ]
 
         try:
             task_results = await asyncio.gather(*rollout_tasks)

@@ -431,3 +431,274 @@ def test_rpent_runner_pool_sleep_wake_lifecycle(monkeypatch) -> None:
         "http://127.0.0.1:28561/pool/wake",
         "http://127.0.0.1:28562/pool/wake",
     }
+
+
+def test_sglang_multimodal_double_retraction_and_idle_pause(monkeypatch) -> None:
+    """Verify multi-retract M-RoPE slicing, late-request parking, and idle pause."""
+    pytest.importorskip("sglang")
+    from types import SimpleNamespace
+
+    import torch
+    from sglang.srt.managers.schedule_batch import Req
+    from sglang.srt.sampling.sampling_params import SamplingParams
+
+    from rlinf.hybrid_engines.sglang.common.sgl_scheduler import Scheduler, _Scheduler
+
+    class _Batch:
+        def __init__(self, reqs):
+            self.reqs = reqs
+
+        def filter_batch(self, keep_indices):
+            self.reqs = [self.reqs[i] for i in keep_indices]
+
+    req = Req(
+        "mm-active", "", [1, 2, 3, 4], SamplingParams(max_new_tokens=20), return_logprob=True
+    )
+    req.output_ids = [10, 11]
+    req.output_token_logprobs_val = [-0.2, -0.3]
+    req.logprob_start_len = 4
+    # Simulate an already-extended M-RoPE tensor from a prior retraction (4 + 2 = 6 cols).
+    mm_item = SimpleNamespace(feature=torch.zeros(2, 4), precomputed_embeddings=None, image_grid_thw=None)
+    req.multimodal_inputs = SimpleNamespace(
+        mrope_positions=torch.arange(6).unsqueeze(0).expand(3, -1).clone(),
+        mm_items=[mm_item],
+        vision_position_ids=None,
+        visible_frame_counts=None,
+    )
+    late = Req(
+        "mm-late", "", [5, 6], SamplingParams(max_new_tokens=20), return_logprob=True
+    )
+
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler._parked_requests = None
+    scheduler.waiting_queue = []
+    scheduler.running_batch = _Batch([req])
+    scheduler.last_batch = scheduler.cur_batch = scheduler.chunked_req = None
+    scheduler.enable_overlap = False
+    scheduler._engine_paused = True
+    scheduler.model_config = SimpleNamespace(is_multimodal=False)
+    scheduler.offloaded_tags = dict.fromkeys(
+        ["weights", "kv_cache", "cuda_graph"], False
+    )
+    scheduler.is_weight_offloaded = False
+    scheduler.weight_reload = "sync"
+    scheduler._rlinf_worker = SimpleNamespace(
+        torch_platform=SimpleNamespace(synchronize=lambda: None)
+    )
+
+    def _retract(self, _request):
+        for r in list(self.running_batch.reqs):
+            r.reset_for_retract()
+            self._add_request_to_queue(r)
+        self.running_batch.filter_batch(keep_indices=[])
+
+    monkeypatch.setattr(_Scheduler, "pause_generation", _retract)
+    monkeypatch.setattr(
+        _Scheduler,
+        "flush_cache",
+        lambda self: not self.waiting_queue
+        and not self.running_batch.reqs
+        and self.chunked_req is None,
+    )
+    monkeypatch.setattr(
+        _Scheduler,
+        "_add_request_to_queue",
+        lambda self, r, is_retracted=False: self.waiting_queue.append(r),
+    )
+    monkeypatch.setattr(
+        _Scheduler,
+        "is_fully_idle",
+        lambda self: not self.waiting_queue and not self.running_batch.reqs,
+    )
+    monkeypatch.setattr(
+        _Scheduler,
+        "release_memory_occupation",
+        lambda self, _r: None if self.is_fully_idle() else (_ for _ in ()).throw(AssertionError("not idle")),
+    )
+    monkeypatch.setattr(_Scheduler, "resume_memory_occupation", lambda self, _r: None)
+
+    # Cycle 1: active request parked; M-RoPE sliced back to prompt_len=4; late request parked.
+    scheduler.release_memory_occupation(
+        SimpleNamespace(tags=["weights", "kv_cache", "cuda_graph"])
+    )
+    assert req.multimodal_inputs.mrope_positions.shape == (3, 4)
+    assert req.logprob_start_len == -1
+    scheduler._add_request_to_queue(late)
+    assert set(scheduler._parked_requests) == {"mm-active", "mm-late"}
+
+    scheduler.resume_memory_occupation(SimpleNamespace(tags=["weights"]))
+    assert scheduler.waiting_queue == []
+    scheduler.resume_memory_occupation(
+        SimpleNamespace(tags=["kv_cache", "cuda_graph"])
+    )
+    assert scheduler.waiting_queue == [req, late]
+
+    # Cycle 2: engine is idle at pause time -> late request arriving while offloaded is still parked!
+    scheduler.waiting_queue.clear()
+    scheduler.release_memory_occupation(
+        SimpleNamespace(tags=["weights", "kv_cache", "cuda_graph"])
+    )
+    assert scheduler._parked_requests == {}
+    scheduler._add_request_to_queue(late)
+    assert scheduler.waiting_queue == []
+    assert list(scheduler._parked_requests) == ["mm-late"]
+    scheduler.resume_memory_occupation(
+        SimpleNamespace(tags=["weights", "kv_cache", "cuda_graph"])
+    )
+    assert scheduler.waiting_queue == [late]
+
+
+def test_trajectory_level_replica_affinity_balances_evenly() -> None:
+    """Verify deterministic trajectory affinity distributes 12x8=96 episodes evenly across 8 GPUs."""
+    import asyncio
+    from collections import Counter
+    from types import SimpleNamespace
+
+    from rlinf.workers.agent.agent_loop import (
+        AgentLoopOutput,
+        MultiAgentLoopOutput,
+        MultiAgentLoopWorker,
+    )
+
+    seen_keys: list[int] = []
+    per_traj_keys: list[set[int]] = []
+
+    class _FakeWorker(MultiAgentLoopWorker):
+        def __init__(self):
+            self.cfg = OmegaConf.create({"rollout": {"replica_affinity": True}})
+            self._rollout_num_instances = 8
+            self.rollout_request_key = 0
+            self.session_server_client = None
+            import contextvars
+
+            self._traj_rollout_key = contextvars.ContextVar(
+                "test_traj_key", default=None
+            )
+            self.print_outputs = False
+            self.return_logprobs = False
+            self.extra_keys_turn = None
+            self.extra_keys_traj = None
+
+        async def run_one_query(self, prompt_ids, answer=None):
+            keys = set()
+            for _ in range(3):
+                k = self._traj_rollout_key.get()
+                seen_keys.append(k)
+                keys.add(k)
+                await asyncio.sleep(0)
+            per_traj_keys.append(keys)
+            return MultiAgentLoopOutput(
+                single_turn_outputs=[
+                    AgentLoopOutput(prompt_ids=[1], response_ids=[2], reward_score=1.0)
+                ]
+            )
+
+    class _DummyChan:
+        def put(self, item, async_op=True):
+            return SimpleNamespace(async_wait=lambda: asyncio.sleep(0))
+
+    async def _run():
+        w = _FakeWorker()
+        out = _DummyChan()
+        await asyncio.gather(
+            *(
+                w.run_agentloop_rollout_group(
+                    [1], "ans", group_size=8, output_channel=out, group_id=gid
+                )
+                for gid in range(12)
+            )
+        )
+
+    asyncio.run(_run())
+    # Each of 96 trajectories stayed pinned to a single GPU across all 3 turns.
+    assert len(per_traj_keys) == 96
+    assert all(len(s) == 1 for s in per_traj_keys)
+    # Across 8 GPUs, every GPU received exactly 12 trajectories x 3 turns = 36 requests.
+    counts = Counter(seen_keys)
+    assert dict(counts) == dict.fromkeys(range(8), 36)
+
+
+def test_rpent_a100_sync_and_async_configs_resolve_and_validate(monkeypatch) -> None:
+    """Verify both A100 LIBERO benchmark configs resolve and pass collocated async validation."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from hydra import compose, initialize_config_dir
+
+    import rlinf.config as cfg_mod
+
+    cfg_dir = Path(__file__).parents[2] / "examples/agent/rpent/config"
+    with initialize_config_dir(config_dir=str(cfg_dir), version_base="1.1"):
+        sync_cfg = compose(config_name="train_qwen3.5_4b_rpent_grpo_a100_libero_sync")
+        async_cfg = compose(config_name="train_qwen3.5_4b_rpent_grpo_a100_libero_async")
+
+    assert sync_cfg.runner.synchronous is True
+    assert sync_cfg.runner.async_mode is False
+    assert sync_cfg.data.rollout_batch_size == 4
+    assert sync_cfg.data.sampling_batch_size == 6
+    assert sync_cfg.algorithm.recompute_logprobs is False
+    assert sync_cfg.algorithm.importance_sampling_fix is False
+
+    assert async_cfg.runner.synchronous is False
+    assert async_cfg.runner.async_mode is True
+    assert async_cfg.rollout.pause_mode == "retract"
+    assert async_cfg.rollout_buffer.max_inflight_groups == 6
+    assert async_cfg.rollout_buffer.max_buffered_groups == 12
+    assert async_cfg.agentloop.max_actor_accept_staleness == 3
+
+    fake_placement = SimpleNamespace(
+        is_collocated=True,
+        is_disaggregated=False,
+        placement_mode=SimpleNamespace(name="COLLOCATED"),
+        rollout_num_model_instances=4,
+        actor_dp_size=2,
+    )
+    monkeypatch.setattr(cfg_mod, "Cluster", lambda *a, **k: None)
+    monkeypatch.setattr(
+        cfg_mod, "ModelParallelComponentPlacement", lambda *a, **k: fake_placement
+    )
+    monkeypatch.setattr(cfg_mod, "version", lambda _name: "0.5.12.post1")
+    cfg_mod.validate_rpent_async_cfg(async_cfg)
+
+    # Reject non-retract pause_mode in collocated async mode
+    bad_cfg = OmegaConf.create(OmegaConf.to_container(async_cfg, resolve=False))
+    bad_cfg.rollout.pause_mode = "in_place"
+    with pytest.raises(ValueError, match="pause_mode=retract"):
+        cfg_mod.validate_rpent_async_cfg(bad_cfg)
+
+
+def test_versioned_trajectory_records_and_staleness_metrics():
+    """Verify MAMegatronActor._extract_versioned_trajectory_records matches VersionedTrajectoryRecord."""
+    from types import SimpleNamespace
+
+    from rlinf.utils.metric_utils import (
+        VersionedTrajectoryRecord,
+        compute_staleness_metrics,
+    )
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+    actor = MAMegatronActor.__new__(MAMegatronActor)
+    result = SimpleNamespace(
+        version_start=[0, 1],
+        version_end=[1, 1],
+        idx_to_traj=[0, 1],
+        response_lengths=[4, 3],
+        response_mask=[[1, 0, 1, 1], [1, 1, 1]],
+        rewards=[1.0, 0.0],
+        extra_fields_turn={
+            "rollout_weight_versions": [[0, 0, 1, 1], [1, 1, 1]],
+        },
+    )
+    records = actor._extract_versioned_trajectory_records([result])
+    assert records is not None
+    assert len(records) == 2
+    assert isinstance(records[0], VersionedTrajectoryRecord)
+    # Valid tokens for traj 0 are indices 0, 2, 3 -> versions [0, 1, 1] -> sum=2
+    assert records[0].sampled_token_version_sum == 2
+    assert records[1].sampled_token_version_sum == 3
+
+    metrics = compute_staleness_metrics(records, version=2)
+    assert metrics["data_staleness/mean"] == 2.0
+    assert metrics["data_staleness/max"] == 2
+    assert abs(metrics["data_staleness/token_mean"] - (2.0 - 5.0 / 6.0)) < 1e-6
+    assert metrics["cross_version_call_ratio"] == 0.5

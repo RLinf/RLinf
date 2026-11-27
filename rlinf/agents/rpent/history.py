@@ -620,7 +620,12 @@ def merge_prefix_turns(
                         turn.response_weight_versions
                     )
             last.response_images = turn.response_images
-            last.version_end = turn.version_end
+            if last.version_start is not None and turn.version_start is not None:
+                last.version_start = min(last.version_start, turn.version_start)
+            if last.version_end is not None and turn.version_end is not None:
+                last.version_end = max(last.version_end, turn.version_end)
+            elif turn.version_end is not None:
+                last.version_end = turn.version_end
             last.response_text, last.is_end = turn.response_text, turn.is_end
             last.reward_score = turn.reward_score
             last.extra_fields = {
