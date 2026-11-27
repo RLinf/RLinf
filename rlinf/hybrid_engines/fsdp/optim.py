@@ -245,12 +245,13 @@ def build_adamw(
 
 
 class StreamedAdamW:
-    """Host-resident AdamW streamed through GPU staging slots in fixed chunks.
+    """Host-resident FP32 AdamW streamed through GPU staging slots in fixed chunks.
 
     Mirrors PEAR's ``StreamedAdamW`` (``pear/trainer/engine.py``): optimizer
-    moments stay in pinned host memory and are pipelined across H2D / compute /
-    D2H streams in ``CHUNK_BYTES`` chunks so 27B full-parameter updates never
-    spike device memory when offloading is enabled.
+    moments—and FP32 master copies for low-precision parameters—stay in pinned
+    host memory and are pipelined across H2D / compute / D2H streams in
+    ``CHUNK_BYTES`` chunks so 27B updates run in FP32 without spiking GPU
+    memory or hitting BF16/FP32 dtype mismatches in ``_multi_tensor_adam``.
     """
 
     CHUNK_BYTES = 2 << 30
@@ -270,11 +271,14 @@ class StreamedAdamW:
                 )
             for p in group["params"]:
                 if p.requires_grad and p not in optimizer.state:
-                    optimizer.state[p] = {
+                    state: dict[str, Any] = {
                         "step": torch.tensor(0.0, dtype=torch.float32),
                         "exp_avg": self.zeros(p),
                         "exp_avg_sq": self.zeros(p),
                     }
+                    if self.local(p).dtype != torch.float32:
+                        state["fp32_master_param"] = self.master_copy(p)
+                    optimizer.state[p] = state
 
     def is_ready(self) -> bool:
         """Whether every active parameter's optimizer state resides on CPU."""
@@ -287,8 +291,12 @@ class StreamedAdamW:
                     return False
                 if (
                     self.local(state["exp_avg"]).device.type != "cpu"
+                    or self.local(state["exp_avg_sq"]).device.type != "cpu"
                     or state["step"].device.type != "cpu"
                 ):
+                    return False
+                master = state.get("fp32_master_param")
+                if master is not None and self.local(master).device.type != "cpu":
                     return False
         return True
 
@@ -311,9 +319,28 @@ class StreamedAdamW:
         from torch.optim.adam import _multi_tensor_adam
 
         beta1, beta2 = group["betas"]
+        update_params: list[torch.Tensor] = []
+        grads: list[torch.Tensor] = []
+        masters: list[tuple[torch.Tensor, torch.Tensor]] = []
+        for p in params:
+            local_p = self.local(p)
+            local_g = self.local(p.grad)
+            state = self.optimizer.state[p]
+            master = state.get("fp32_master_param")
+            if master is not None:
+                local_master = self.local(master)
+                update_params.append(local_master)
+                masters.append((local_p, local_master))
+            else:
+                update_params.append(local_p)
+            grads.append(
+                local_g
+                if local_g.dtype == torch.float32
+                else local_g.detach().to(dtype=torch.float32)
+            )
         _multi_tensor_adam(
-            [self.local(p) for p in params],
-            [self.local(p.grad) for p in params],
+            update_params,
+            grads,
             [self.local(self.optimizer.state[p]["exp_avg"]) for p in params],
             [self.local(self.optimizer.state[p]["exp_avg_sq"]) for p in params],
             [],
@@ -332,6 +359,8 @@ class StreamedAdamW:
             differentiable=False,
             decoupled_weight_decay=True,
         )
+        for local_p, local_master in masters:
+            local_p.copy_(local_master)
 
     def _step_cuda_group(
         self,
@@ -342,7 +371,7 @@ class StreamedAdamW:
         chunks = self.chunks(params)
         offsets = [self.offsets(chunk) for chunk in chunks]
         compute = torch.cuda.current_stream()
-        capacity = max(total for _, total in offsets)
+        capacity = max((total for _, total in offsets), default=0)
         buffers = [
             torch.empty(capacity, device="cuda", dtype=torch.float32)
             for _ in range(min(self.SLOTS, len(chunks)))
@@ -356,7 +385,9 @@ class StreamedAdamW:
                 if freed[slot] is not None:
                     self.h2d.wait_event(freed[slot])
                 staged = []
-                for p, (offset, n) in zip(chunks[i], offsets[i][0], strict=True):
+                for p, (offset, n, has_master) in zip(
+                    chunks[i], offsets[i][0], strict=True
+                ):
                     state = self.optimizer.state[p]
                     exp_avg = self.local(state["exp_avg"])
                     exp_avg_sq = self.local(state["exp_avg_sq"])
@@ -364,7 +395,14 @@ class StreamedAdamW:
                     v = buffers[slot][offset + n : offset + 2 * n].view_as(exp_avg_sq)
                     m.copy_(exp_avg, non_blocking=True)
                     v.copy_(exp_avg_sq, non_blocking=True)
-                    staged.append((m, v))
+                    master = None
+                    if has_master:
+                        fp32_master = self.local(state["fp32_master_param"])
+                        master = buffers[slot][offset + 2 * n : offset + 3 * n].view_as(
+                            fp32_master
+                        )
+                        master.copy_(fp32_master, non_blocking=True)
+                    staged.append((m, v, master))
                 loaded = torch.cuda.Event()
                 loaded.record(self.h2d)
             return staged, loaded
@@ -376,11 +414,21 @@ class StreamedAdamW:
                 pending.append(load(i + len(buffers) - 1))
             staged, loaded = pending.pop(0)
             compute.wait_event(loaded)
+            update_params = [
+                master if master is not None else self.local(p)
+                for p, (_, _, master) in zip(chunk, staged, strict=True)
+            ]
+            grads = [
+                self.local(p.grad)
+                if self.local(p.grad).dtype == torch.float32
+                else self.local(p.grad).to(dtype=torch.float32)
+                for p in chunk
+            ]
             multi_tensor_adam(
-                [self.local(p) for p in chunk],
-                [self.local(p.grad) for p in chunk],
-                [m for m, _ in staged],
-                [v for _, v in staged],
+                update_params,
+                grads,
+                [m for m, _, _ in staged],
+                [v for _, v, _ in staged],
                 [],
                 [self.optimizer.state[p]["step"] for p in chunk],
                 None,
@@ -397,14 +445,21 @@ class StreamedAdamW:
                 differentiable=False,
                 decoupled_weight_decay=True,
             )
+            for p, (_, _, master) in zip(chunk, staged, strict=True):
+                if master is not None:
+                    self.local(p).copy_(master)
             updated = torch.cuda.Event()
             updated.record(compute)
             with torch.cuda.stream(self.d2h):
                 self.d2h.wait_event(updated)
-                for p, (m, v) in zip(chunk, staged, strict=True):
+                for p, (m, v, master) in zip(chunk, staged, strict=True):
                     state = self.optimizer.state[p]
                     self.local(state["exp_avg"]).copy_(m, non_blocking=True)
                     self.local(state["exp_avg_sq"]).copy_(v, non_blocking=True)
+                    if master is not None:
+                        self.local(state["fp32_master_param"]).copy_(
+                            master, non_blocking=True
+                        )
                 written = torch.cuda.Event()
                 written.record(self.d2h)
             freed[i % len(buffers)] = written
@@ -417,8 +472,10 @@ class StreamedAdamW:
         current: list[torch.Tensor] = []
         size = 0
         for p in params:
+            state = self.optimizer.state[p]
+            tensors_count = 3 if "fp32_master_param" in state else 2
             current.append(p)
-            size += 2 * self.local(self.optimizer.state[p]["exp_avg"]).numel() * 4
+            size += tensors_count * self.local(state["exp_avg"]).numel() * 4
             if size >= self.CHUNK_BYTES:
                 chunks.append(current)
                 current, size = [], 0
@@ -426,13 +483,17 @@ class StreamedAdamW:
             chunks.append(current)
         return chunks
 
-    def offsets(self, chunk: list[torch.Tensor]) -> tuple[list[tuple[int, int]], int]:
-        offsets: list[tuple[int, int]] = []
+    def offsets(
+        self, chunk: list[torch.Tensor]
+    ) -> tuple[list[tuple[int, int, bool]], int]:
+        offsets: list[tuple[int, int, bool]] = []
         total = 0
         for p in chunk:
-            n = self.local(self.optimizer.state[p]["exp_avg"]).numel()
-            offsets.append((total, n))
-            total += 2 * n
+            state = self.optimizer.state[p]
+            n = self.local(state["exp_avg"]).numel()
+            has_master = "fp32_master_param" in state
+            offsets.append((total, n, has_master))
+            total += (3 if has_master else 2) * n
         return offsets, total
 
     @classmethod
@@ -446,6 +507,20 @@ class StreamedAdamW:
             DTensor(zeros, param._spec, requires_grad=False)
             if isinstance(param, DTensor)
             else zeros
+        )
+
+    @classmethod
+    def master_copy(cls, param: torch.Tensor) -> torch.Tensor:
+        from torch.distributed.tensor import DTensor
+
+        local = cls.local(param)
+        master = local.detach().to(device="cpu", dtype=torch.float32).clone()
+        if torch.cuda.is_available():
+            master = master.pin_memory()
+        return (
+            DTensor(master, param._spec, requires_grad=False)
+            if isinstance(param, DTensor)
+            else master
         )
 
     @staticmethod

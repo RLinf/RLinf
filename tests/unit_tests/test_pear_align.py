@@ -901,6 +901,37 @@ def test_install_fp32_residual_stream_keeps_residual_fp32_and_norms_bf16():
     assert out.dtype == torch.float32
 
 
+def test_streamed_adamw_updates_bf16_and_fp32_params_in_fp32():
+    from rlinf.hybrid_engines.fsdp.optim import StreamedAdamW
+
+    p_bf16 = torch.nn.Parameter(torch.ones(8, dtype=torch.bfloat16))
+    p_fp32 = torch.nn.Parameter(torch.ones(8, dtype=torch.float32))
+    p_ref = torch.nn.Parameter(torch.ones(8, dtype=torch.float32))
+    opt = torch.optim.AdamW(
+        [p_bf16, p_fp32], lr=1e-4, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.01
+    )
+    ref_opt = torch.optim.AdamW(
+        [p_ref], lr=1e-4, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.01
+    )
+    streamed = StreamedAdamW(opt, chunk_bytes=128)
+    assert "fp32_master_param" in opt.state[p_bf16]
+    assert "fp32_master_param" not in opt.state[p_fp32]
+
+    for _ in range(3):
+        p_bf16.grad = torch.full_like(p_bf16, 0.5)
+        p_fp32.grad = torch.full_like(p_fp32, 0.5)
+        p_ref.grad = torch.full_like(p_ref, 0.5)
+        assert streamed.is_ready()
+        streamed.step()
+        ref_opt.step()
+
+    torch.testing.assert_close(p_fp32.detach(), p_ref.detach())
+    torch.testing.assert_close(
+        opt.state[p_bf16]["fp32_master_param"].detach(), p_ref.detach()
+    )
+    torch.testing.assert_close(p_bf16.detach(), p_ref.detach().to(torch.bfloat16))
+
+
 def test_validate_session_server_score_centering_guards():
     from rlinf.config import validate_session_server_cfg
 

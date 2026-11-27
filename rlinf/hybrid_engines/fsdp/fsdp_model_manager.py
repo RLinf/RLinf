@@ -83,7 +83,9 @@ class FSDPModelManager:
         self._cfg = cfg
         self._logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
-        if self._cfg.get("optim", {}).get("use_fp32_master_params", False):
+        if self._cfg.get("optim", {}).get(
+            "use_fp32_master_params", False
+        ) or self._cfg.get("optim", {}).get("streamed_adamw", False):
             self._logger.info(
                 "[FSDP] Using AdamW with FP32 optimizer state and master weights "
                 "while preserving model parameter dtypes."

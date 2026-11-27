@@ -222,6 +222,8 @@ actor:
     adam_eps: 1.0e-8
     weight_decay: 0.01
     clip_grad: 1.0
+    streamed_adamw: True
+    streamed_adamw_chunk_bytes: 536870912
   fsdp_config:
     strategy: "fsdp2"
     sharding_strategy: "full_shard"
