@@ -1,6 +1,6 @@
 # RPent Multi-Turn Embodied GRPO Training
 
-This example trains a 4B Vision-Language-Action reasoning model (Qwen3.5-4B) with synchronous multi-turn GRPO and oversampling across multiple manipulation simulators (LIBERO and RoboTwin, with extensible registry support for RoboCasa and RoboDojo) served by [RPent](https://github.com/RLinf/RPent).
+This example trains a 4B Vision-Language-Action reasoning model (Qwen3.5-4B) with synchronous multi-turn GRPO and oversampling across multiple manipulation simulators (LIBERO and RoboTwin, with extensible registry support for RoboCasa, RoboDojo and MetaWorld) served by [RPent](https://github.com/RLinf/RPent).
 
 ## Architecture
 
@@ -58,6 +58,34 @@ python examples/agent/rpent/prepare_tasks.py \
   --libero-out /path/to/data/libero/train.jsonl \
   --robotwin-out /path/to/data/robotwin/train.jsonl
 ```
+
+In the MetaWorld Python 3.11 environment, with both repositories on `PYTHONPATH`, prepare the MT50, ML45 train and ML45 held-out pools for native index 49 under `${RPENT_ROOT}/data/metaworld`:
+
+```bash
+python examples/agent/rpent/prepare_tasks.py \
+  --metaworld \
+  --seeds 49 \
+  --output-dir "${RPENT_ROOT:-/path/to/rpent_ppo}/data/metaworld"
+```
+
+To mix MetaWorld into the 8-GPU GRPO config (`train_qwen3.5_4b_rpent_grpo.yaml`, which sets `rollout_batch_size: 2`, `sampling_batch_size: 4`, `group_size: 8` → `16` rollout / `32` sampling episodes total), **replace** the default `env.rpent` block (`libero` + `robotwin`) with the `libero` + `metaworld` block below (do not merge it on top of `robotwin` without adjusting `rollout_episodes` / `sampling_episodes` so they still sum to `16` / `32`), and launch the RPent MetaWorld pool with at least `--workers 16` (matching `sampling_episodes: 16`) so startup capacity validation passes:
+
+```yaml
+env:
+  rpent:
+    libero:
+      endpoint: http://127.0.0.1:28561
+      train_data_paths: ${oc.env:RPENT_ROOT,/path/to/rpent_ppo}/data/libero/train.jsonl
+      rollout_episodes: 8
+      sampling_episodes: 16
+    metaworld:
+      endpoint: http://127.0.0.1:28565
+      train_data_paths: ${oc.env:RPENT_ROOT,/path/to/rpent_ppo}/data/metaworld/ml45-train.jsonl
+      rollout_episodes: 8
+      sampling_episodes: 16
+```
+
+> **MetaWorld runtime notes**: RPent clamps `max_episode_steps` to MetaWorld's native **500-step horizon** regardless of larger requested values. MetaWorld's fixed-wrist Sawyer enforces a strict **4-DoF `move_to` schema (`xyz`-only)** — passing `orientation_rpy` triggers a validation retry with MetaWorld's 4-DoF hint, while observations still report the calibrated live `pose.orientation_rpy`.
 
 ### 2. Start Simulator & SAM3 Services (GPUs 4–7)
 
@@ -135,6 +163,33 @@ The following issues were hit and resolved during 48-GPU cross-cluster bring-up 
 | **Megatron backward OOM on collocated RL+Sim GPUs** | Peak 32-GPU Megatron (`TP=2, DP=16`) backward reaches `79.2 GiB / 81.5 GiB` on H100; resident collocated sim workers leave insufficient VRAM. | Enable `tools.rpent.sleep_sim_pools_during_training: true` and `sleepable: true` on collocated RPent pools (`h100_1`–`h100_4`) while keeping dedicated `h100`/`a100` pools warm (`sleepable: false`). |
 | **`json.decoder.JSONDecodeError` in SGLang `l2norm_fwd_kernel` after pod crash / disk full** | Interrupted writes leave 0-byte `*.json` files inside `/root/.triton/cache`, causing all SGLang workers on that node to crash during prefill. | Audit `/root/.triton/cache` for 0-byte or invalid JSON files (`find /root/.triton/cache -type f -size 0`) before launch, and sync a verified cache from a healthy peer node. |
 | **Transient SGLang `TCPStore` `EADDRINUSE` during 8-way startup** | Concurrent `tp=1` SGLang workers on the same host can occasionally race on ephemeral ports at startup. | Cleanly retry launch once Ray reports `0.0/32.0 GPU` used and routers report `active_sessions: 0`. |
+
+## RoboLab and RoboTwin smoke run
+
+Use the RPent revision from [the RoboLab integration PR](https://github.com/zhexuanxu/RPent/pull/4). The run uses four training GPUs, two ready RoboLab workers, two ready RoboTwin workers, and a SAM3 endpoint for segmentation. Start with one RoboLab worker per simulator GPU and size each pool from its measured memory use. The training runtime loads a local Qwen3.5-4B SFT checkpoint through `RPENT_MODEL_PATH`.
+
+Set `RPENT_ROOT` to the directory containing both checkouts as `RLinf` and `RPent`. Set `ROBOTWIN_SEED_TABLE` to the RPent seed table and run from the RLinf checkout.
+
+```bash
+python examples/agent/rpent/prepare_tasks.py \
+  --robolab-catalog "$RPENT_ROOT/RPent/robots/robolab/task_catalog.json" \
+  --seeds 0 --output-dir "$RPENT_ROOT/data/robolab"
+
+python examples/agent/rpent/prepare_tasks.py \
+  --robotwin-seeds "$ROBOTWIN_SEED_TABLE" \
+  --output-dir "$RPENT_ROOT/data/robotwin"
+```
+
+The RoboLab command writes 120 rows for seed 0 and records the source revision and catalog and JSONL checksums in `train-manifest.json`. Generate more seeded scenes with explicit seed IDs or ranges such as `--seeds 0-3`.
+
+Start the pools using the simulator setup instructions in RPent. Point `ROBOLAB_POOL_URL` and `ROBOTWIN_POOL_URL` at the pools or their routers. The defaults are local ports 28566 and 28562. For pools sharing training GPUs, use `sleepable` to release their GPU memory for the Megatron update. Reserve memory for both SGLang and simulation during rollout.
+
+```bash
+bash examples/agent/rpent/run_train.sh \
+  --config-name train_qwen3.5_4b_rpent_robolab_smoke
+```
+
+The run collects one group of two episodes per simulator and performs one GRPO optimizer step. The startup capacity check requires two resident worker slots per simulator. RPent returns the native success flag used for reward, and infrastructure failures follow the episode retry policy. The run writes group rewards under `sampling/` and optimizer metrics to TensorBoard.
 
 ## Unit Tests
 

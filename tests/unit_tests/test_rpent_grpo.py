@@ -16,7 +16,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
+import runpy
+import sys
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from omegaconf import OmegaConf
@@ -95,7 +101,8 @@ def test_merge_prefix_turns_respects_chain_and_budget():
     assert len(split) == 2
 
 
-def test_mixed_simulators_and_sampler_quotas():
+@pytest.mark.parametrize("second", ["robotwin", "metaworld"])
+def test_mixed_simulators_and_sampler_quotas(second):
     cfg = OmegaConf.create(
         {
             "algorithm": {"group_size": 8},
@@ -106,7 +113,7 @@ def test_mixed_simulators_and_sampler_quotas():
                         "endpoint": "http://127.0.0.1:28561",
                         "train_data_paths": "/tmp/a.jsonl",
                     },
-                    "robotwin": {
+                    second: {
                         "endpoint": "http://127.0.0.1:28562",
                         "train_data_paths": "/tmp/b.jsonl",
                     },
@@ -115,7 +122,7 @@ def test_mixed_simulators_and_sampler_quotas():
         }
     )
     sims = mixed_simulators(cfg)
-    assert set(sims) == {"libero", "robotwin"}
+    assert set(sims) == {"libero", second}
     assert sims["libero"].rollout_groups == 1
     assert sims["libero"].sampling_groups == 2
 
@@ -155,7 +162,8 @@ def test_aggregate_metrics_and_qwen35_bf16_norm():
     assert torch.equal(got, (t.float() + 1.0).to(torch.bfloat16))
 
 
-def test_validate_sim_pool_capacity():
+@pytest.mark.parametrize("second", ["robotwin", "metaworld"])
+def test_validate_sim_pool_capacity(second):
     from rlinf.agents.rpent.simulators import SimulatorSpec
     from rlinf.runners.rpent_runner import validate_sim_pool_capacity
 
@@ -163,9 +171,7 @@ def test_validate_sim_pool_capacity():
         "libero": SimulatorSpec(
             "libero", "http://127.0.0.1:28561", "/tmp/a.jsonl", 1, 2
         ),
-        "robotwin": SimulatorSpec(
-            "robotwin", "http://127.0.0.1:28562", "/tmp/b.jsonl", 1, 2
-        ),
+        second: SimulatorSpec(second, "http://127.0.0.1:28562", "/tmp/b.jsonl", 1, 2),
     }
 
     # Exact capacity succeeds with uncapped client
@@ -179,7 +185,7 @@ def test_validate_sim_pool_capacity():
         fetch_health=lambda ep: {"ok": True, "workers_total": 16, "workers_idle": 16},
     )
     assert statuses["libero"]["workers_total"] == 16
-    assert statuses["robotwin"]["required"] == 16
+    assert statuses[second]["required"] == 16
 
     # Undersized simulator pool fails fast
     with pytest.raises(RuntimeError, match="workers_total=10"):
@@ -215,7 +221,6 @@ def test_validate_sim_pool_capacity():
 
 
 def test_zero_base64_conversation_history_and_local_staging():
-    from pathlib import Path
 
     from rlinf.agents.rpent.agent_loop import (
         _BINARY_EXECUTE_MEDIA_TYPE,
@@ -702,3 +707,300 @@ def test_versioned_trajectory_records_and_staleness_metrics():
     assert metrics["data_staleness/max"] == 2
     assert abs(metrics["data_staleness/token_mean"] - (2.0 - 5.0 / 6.0)) < 1e-6
     assert metrics["cross_version_call_ratio"] == 0.5
+
+
+def test_metaworld_task_pools(tmp_path, monkeypatch):
+    prepare_tasks = (
+        Path(__file__).resolve().parents[2] / "examples/agent/rpent/prepare_tasks.py"
+    )
+    write_metaworld_tasks = runpy.run_path(str(prepare_tasks))["write_metaworld_tasks"]
+
+    def initial_scene(name, index, benchmark):
+        return SimpleNamespace(close=lambda: None), {
+            "task_index": index,
+            "rand_vec_sha256": name,
+        }
+
+    monkeypatch.setitem(
+        sys.modules, "metaworld", SimpleNamespace(MT1=lambda name, seed: name)
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "robots.rl.envs.metaworld",
+        SimpleNamespace(initial_scene=initial_scene),
+    )
+    args = SimpleNamespace(seeds="49", output_dir=tmp_path)
+    write_metaworld_tasks(args)
+    pools = {}
+    for split, count in [("mt50", 50), ("ml45-train", 45), ("ml45-ood", 5)]:
+        payload = (tmp_path / f"{split}.jsonl").read_bytes()
+        rows = [json.loads(line) for line in payload.splitlines()]
+        manifest = json.loads((tmp_path / f"{split}-manifest.json").read_bytes())
+        assert len(rows) == count
+        assert manifest["files"][split] == {
+            "rows": count,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+        pools[split] = {r["query_id"] for r in rows}
+        for row in rows:
+            task = episode_task(row["answer"])
+            assert task["environment"] == "metaworld"
+            assert (
+                task["task_index"]
+                == task["init_state_id"]
+                == task["seed"]
+                == row["initial_state"]["task_index"]
+                == 49
+            )
+    assert pools["ml45-train"].isdisjoint(pools["ml45-ood"])
+    assert pools["ml45-train"] | pools["ml45-ood"] == pools["mt50"]
+    args.seeds = "50"
+    with pytest.raises(ValueError, match="0, 49"):
+        write_metaworld_tasks(args)
+
+
+def test_metaworld_validation_retry():
+    from rlinf.agents.rpent.history import EpisodeConversation
+
+    move = {
+        "type": "object",
+        "properties": {"action": {"const": "move_to"}, "xyz": {"type": "array"}},
+        "required": ["action", "xyz"],
+        "additionalProperties": False,
+    }
+    schema = {
+        "type": "object",
+        "properties": {"actions": {"type": "array", "items": move}},
+    }
+    conv = EpisodeConversation(
+        system_prompt="SYS",
+        user_message="TASK",
+        initial_observation_text="{}",
+        environment="metaworld",
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "execute_actions", "parameters": schema},
+            }
+        ],
+    )
+    action = {"action": "move_to", "xyz": [1, 2, 3], "orientation_rpy": [0, 0, 0]}
+    kind, message, parsed, retry = conv.validate_or_retry(
+        [{"name": "execute_actions", "arguments": {"actions": [action]}}]
+    )
+    assert kind == "tool_arguments" and parsed is None and retry
+    assert "xyz only" in message
+
+
+def test_prepare_robolab_tasks(tmp_path) -> None:
+    import subprocess
+
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(
+        json.dumps(
+            {
+                "source_revision": "bb" * 20,
+                "source_metadata_sha256": "aa" * 32,
+                "task_count": 2,
+                "tasks": {
+                    "StackBlocksTask": {"instruction": "Stack the blocks."},
+                    "BananaInBowlTask": {"instruction": "Put the banana in the bowl."},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = tmp_path / "episodes"
+    command = [
+        sys.executable,
+        str(
+            Path(__file__).resolve().parents[2]
+            / "examples/agent/rpent/prepare_tasks.py"
+        ),
+        "--robolab-catalog",
+        str(catalog),
+        "--output-dir",
+        str(out),
+        "--split",
+        "eval",
+    ]
+    missing_seeds = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert missing_seeds.returncode == 2
+    assert "RoboLab requires explicit --seeds" in missing_seeds.stderr
+    subprocess.run([*command, "--seeds", "2,0-2"], check=True)
+    payload = (out / "eval.jsonl").read_bytes()
+    rows = [json.loads(line) for line in payload.splitlines()]
+    assert [row["query_id"] for row in rows] == [
+        "robolab-BananaInBowlTask-seed0",
+        "robolab-BananaInBowlTask-seed1",
+        "robolab-BananaInBowlTask-seed2",
+        "robolab-StackBlocksTask-seed0",
+        "robolab-StackBlocksTask-seed1",
+        "robolab-StackBlocksTask-seed2",
+    ]
+    assert rows[0]["prompt"] == "Put the banana in the bowl."
+    assert episode_task(rows[-1]["answer"]) == {
+        "environment": "robolab",
+        "task_name": "StackBlocksTask",
+        "seed": 2,
+    }
+    manifest = json.loads((out / "eval-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["source_revision"] == "bb" * 20
+    assert (
+        manifest["catalog_sha256"] == hashlib.sha256(catalog.read_bytes()).hexdigest()
+    )
+    assert manifest["files"]["eval"] == {
+        "rows": 6,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+@pytest.fixture
+def mixed_robolab_cfg(monkeypatch):
+
+    from hydra import compose, initialize_config_dir
+
+    monkeypatch.setenv("ROBOLAB_POOL_URL", "http://robolab.invalid")
+    monkeypatch.setenv("ROBOTWIN_POOL_URL", "http://robotwin.invalid")
+    config_dir = Path(__file__).resolve().parents[2] / "examples/agent/rpent/config"
+    with initialize_config_dir(config_dir=str(config_dir), version_base="1.1"):
+        return compose(config_name="train_qwen3.5_4b_rpent_robolab_smoke")
+
+
+def test_mixed_robolab_smoke_capacity(mixed_robolab_cfg) -> None:
+    from rlinf.runners.rpent_runner import validate_sim_pool_capacity
+
+    simulators = mixed_simulators(mixed_robolab_cfg)
+    assert {name: spec.endpoint for name, spec in simulators.items()} == {
+        "robolab": "http://robolab.invalid",
+        "robotwin": "http://robotwin.invalid",
+    }
+    assert all(
+        spec.rollout_groups == spec.sampling_groups == 1 for spec in simulators.values()
+    )
+    kwargs = {
+        "simulators": simulators,
+        "default_endpoint": None,
+        "sampling_groups": mixed_robolab_cfg.data.sampling_batch_size,
+        "group_size": mixed_robolab_cfg.algorithm.group_size,
+        "num_agent_workers": 4,
+        "episodes_per_worker": None,
+    }
+    statuses = validate_sim_pool_capacity(
+        **kwargs,
+        fetch_health=lambda _: {"workers_total": 2, "workers_idle": 2},
+    )
+    assert {name: status["required"] for name, status in statuses.items()} == {
+        "robolab": 2,
+        "robotwin": 2,
+    }
+    with pytest.raises(RuntimeError, match=r"'robolab'.*workers_total=1"):
+        validate_sim_pool_capacity(
+            **kwargs,
+            fetch_health=lambda endpoint: {
+                "workers_total": 1 if endpoint == "http://robolab.invalid" else 2,
+                "workers_idle": 1,
+            },
+        )
+
+
+@pytest.mark.parametrize("outcome", ["success", "timeout", "infrastructure"])
+def test_robolab_episode_uses_native_outcome(mixed_robolab_cfg, outcome) -> None:
+    import asyncio
+
+    import httpx
+
+    from rlinf.agents.rpent.agent_loop import RPentAgentLoopWorker, RPentEpisodeError
+
+    task = {"environment": "robolab", "task_name": "BananaInBowlTask", "seed": 7}
+    arguments = {"actions": [{"action": "set_gripper", "opening": 0}]}
+    call = {"name": "execute_actions", "arguments": arguments, "id": "call_0_0"}
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "execute_actions",
+            "parameters": {
+                "type": "object",
+                "properties": {"actions": {"type": "array"}},
+                "required": ["actions"],
+            },
+        },
+    }
+    requests = []
+
+    def serve(request):
+        assert request.url.host == "robolab.invalid"
+        requests.append(request.url.path)
+        if request.url.path == "/sessions/open":
+            assert json.loads(request.content)["task"] == task
+            return httpx.Response(
+                200,
+                json={
+                    "session_id": "robolab-episode",
+                    "system_prompt": "Control the robot.",
+                    "user_message": "Put the banana in the bowl.",
+                    "initial_observation": "The gripper is open.",
+                    "tools": [tool],
+                    "environment": "robolab",
+                    "done": False,
+                    "success": False,
+                    "truncated": False,
+                },
+            )
+        if request.url.path == "/sessions/robolab-episode/execute":
+            assert json.loads(request.content) == {
+                "name": "execute_actions",
+                "arguments": arguments,
+            }
+            return httpx.Response(
+                200,
+                json={
+                    "text": "The episode ended.",
+                    "done": True,
+                    "success": outcome == "success",
+                    "truncated": outcome == "timeout",
+                    "infrastructure_error": "simulator disconnected"
+                    if outcome == "infrastructure"
+                    else None,
+                },
+            )
+        assert request.url.path == "/sessions/robolab-episode/close"
+        return httpx.Response(200, json={"closed": True})
+
+    async def sample_planner_turn(**_):
+        return AgentLoopOutput(prompt_ids=[1], response_ids=[2]), [call], {}, "stop", 0
+
+    async def run():
+        worker = object.__new__(RPentAgentLoopWorker)
+        worker.cfg = mixed_robolab_cfg
+        worker.cfg.agentloop.max_infra_retries = 0
+        worker.cfg.agentloop.merge_prefix_turns = False
+        worker._simulators = mixed_simulators(worker.cfg)
+        worker._episode_sem = None
+        worker._compaction = None
+        worker._thinking_enabled = True
+        worker._sample_turn = sample_planner_turn
+        worker.agentic_tokenizer = SimpleNamespace(
+            tokenizer=SimpleNamespace(convert_tokens_to_ids=lambda _: 0)
+        )
+        async with httpx.AsyncClient(transport=httpx.MockTransport(serve)) as client:
+            worker._http = client
+            if outcome == "infrastructure":
+                with pytest.raises(
+                    RPentEpisodeError, match="simulator disconnected"
+                ) as error:
+                    await worker.run_one_query([1], [json.dumps(task)])
+                assert error.value.kind == "tool_transport"
+            else:
+                output = await worker.run_one_query([1], [json.dumps(task)])
+                assert output.single_turn_outputs[0].reward_score == float(
+                    outcome == "success"
+                )
+                assert output.extra_fields["truncated"] == (outcome == "timeout")
+        assert requests == [
+            "/sessions/open",
+            "/sessions/robolab-episode/execute",
+            "/sessions/robolab-episode/close",
+        ]
+
+    asyncio.run(run())
