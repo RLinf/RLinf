@@ -174,62 +174,41 @@ DreamZero 监督微调
 
       .. dropdown:: 加速 CUDA 上的 WAN2.2 5B SFT
 
-         在 CUDA 上用 FSDP2 训练 WAN2.2 5B 时，可以复用文本 embedding、跳过一次未使用的 VAE 编码，并减少反向传播和优化器更新的开销。打开 ``examples/sft/config/libero_sft_dreamzero_5b.yaml``，按上文填好模型、tokenizer、LIBERO 数据和 ``metadata.json`` 路径，再修改下面列出的字段。其余配置沿用原示例。
+         在 CUDA 上使用 FSDP2 微调 WAN2.2 5B 时，先按 **2. 下载模型与数据** 中 **从头训练（WAN2.2 5B 冷启动）** 配好数据集与冷启动路径（或将 ``actor.model.model_path`` 指向已有权重），再向 ``run_vla_sft.sh`` 传入 Hydra 命令行覆盖参数启用加速选项：
 
-         .. code-block:: yaml
+         .. code-block:: bash
 
-            data:
-              sampling_mode: fixed_window  # LIBERO with images stored in Parquet
-            actor:
-              micro_batch_size: 2
-              global_batch_size: 16
-              fsdp_config:
-                strategy: fsdp2
-                gradient_checkpointing: true
-              model:
-                checkpoint_every_n_blocks: 2
-                sft_prompt_cache_size: 64
-                sft_skip_unused_condition_vae: true
-              optim:
-                fused_adamw: true
+            bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b \
+              actor.micro_batch_size=2 \
+              actor.global_batch_size=16 \
+              actor.model.checkpoint_every_n_blocks=2 \
+              actor.model.sft_prompt_cache_size=64 \
+              actor.model.sft_skip_unused_condition_vae=true \
+              actor.optim.fused_adamw=true
 
-         示例中的 batch size 对应 8 张 80 GB GPU。换用其他卡数或调整每卡 micro-batch size 后，确保 global batch size 能被两者的乘积整除。
+         上述 batch size 适用于 8 张 80 GB GPU；换用其他卡数时，保证 ``actor.global_batch_size`` 能被 ``actor.micro_batch_size`` 与 GPU 数量之积整除。首次试跑可追加 ``runner.max_steps=12 runner.save_interval=-1``\ ，快速验证指标且不保存 checkpoint。在 8 张 A800 GPU 上训练 LIBERO 时，完成编译与缓存预热后，稳态 ``time/step`` 从 1.73 秒降至 1.23 秒（约 1.4 倍加速）。
 
          .. list-table::
             :header-rows: 1
-            :widths: 32 18 50
+            :widths: 32 16 52
 
-            * - 配置字段
-              - 示例默认值
-              - 使用场景
+            * - 配置项
+              - 默认值
+              - 作用与用法
             * - ``actor.model.checkpoint_every_n_blocks``
               - ``1``
-              - 启用梯度检查点后，设为 ``2`` 每隔一个 transformer block 做一次检查点。反向传播时重算的 block 更少，但需要保留更多激活值。显存不足时恢复为 ``1``。
+              - 启用梯度检查点后，设为 ``2`` 会每隔一个 transformer block 做一次检查点，用更多显存换取更快的反向传播；显存不足时改回 ``1``。
             * - ``actor.model.sft_prompt_cache_size``
               - ``0``
-              - 每个训练 rank 在 CPU 内存中最多缓存多少条冻结 T5 的 embedding。按 512 个 token、每个 token 4096 维、BF16 计算，64 条 embedding 约占每 rank 256 MiB。各 rank 当前 batch 的 prompt 全部命中后才能复用。T5 权重仍会加载以处理未命中，续训时缓存重新填充。prompt 很少重复的数据集可以保留 ``0``。
+              - 每个训练 rank 在 CPU 内存中缓存冻结 T5 文本特征的条数（64 条约占 256 MiB）。所有 rank 缓存预热后能加快重复 prompt 的数据集训练；prompt 很少重复时保持 ``0``。
             * - ``actor.model.sft_skip_unused_condition_vae``
               - ``false``
-              - WAN 模型为 ``ti2v`` 且 ``concat_first_frame_latent`` 为 false 时，SFT 跳过首帧条件的 VAE 编码。CLIP 和训练视频的编码照常执行。
+              - WAN2.2 模型不拼接首帧潜变量时，SFT 阶段跳过未使用的首帧条件 VAE 编码，CLIP 与训练视频编码保持不变。
             * - ``actor.optim.fused_adamw``
               - ``false``
-              - 在 CUDA FSDP2 上启用原生 fused AdamW。将优化器参数留在 GPU 上，关闭 FSDP CPU offload 和 ``actor.optim.use_fp32_master_params``。PyTorch 需支持在分片张量上运行 fused AdamW。验证使用 PyTorch 2.13.0 和 CUDA 12.9。
+              - 在 CUDA FSDP2 上启用 PyTorch 原生 fused AdamW（须关闭 FSDP CPU offload 与 ``actor.optim.use_fp32_master_params``\ ）。默认 ``install.sh`` 环境安装 PyTorch 2.11.0；如果当前 PyTorch 构建不支持在分片张量上运行 fused AdamW，训练会在启动时报错，此时保持 ``false`` 即可（8 卡 A800 实测环境为 PyTorch 2.13.0 与 CUDA 12.9）。
 
-         首次试跑可将 ``runner.max_steps`` 设为 ``12``，将 ``runner.save_interval`` 设为 ``-1``，先观察训练指标而不保存 checkpoint。修改后在仓库根目录启动。
-
-         .. code-block:: bash
-
-            bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b
-
-         检查 ``train/loss`` 和 ``train/grad_norm`` 是否始终为有限值。测吞吐时，用同一份数据、seed 和 batch size 跑一组保持四项默认值的对照，比较编译和缓存预热结束后的 ``time/step``。在两台独立的 8 卡 A800 节点上对照跑了 12 步 LIBERO SFT，第 4–12 步的中位耗时由 1.731 秒降到 1.225 秒。计入前三步后，两组训练循环分别约为 51 秒和 72 秒。估算长时间训练的吞吐时，使用预热后的数据。
-
-         正式训练前，将训练步数和保存间隔改回所需值。使用 ``runner.resume_dir`` 续训会恢复 checkpoint 中保存的优化器设置。若要从已有模型权重开始一轮新训练，并启用 fused AdamW，按上文设置模型 checkpoint，保留 ``runner.resume_dir`` 为空。
-
-         在配置名后添加 Hydra 参数可覆盖配置。下面的命令将 5B 训练日志写入指定目录。
-
-         .. code-block:: bash
-
-            bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b runner.logger.log_path="$PWD/logs/dreamzero-5b"
+         使用 ``runner.resume_dir`` 续训会沿用 checkpoint 中保存的优化器配置。需要基于已有模型权重重新启用 fused AdamW 时，保留 ``runner.resume_dir`` 为空即可。
 
    .. tab-item:: 华为昇腾 CANN
       :sync: ascend

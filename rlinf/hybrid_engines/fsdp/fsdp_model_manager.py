@@ -626,21 +626,36 @@ class FSDPModelManager:
         )
 
         all_params = [p for group in param_groups for p in group["params"]]
+        has_scalar_params = any(p.dim() == 0 for p in all_params)
+        cuda_available = (
+            Worker.torch_device_type == "cuda" and Worker.torch_platform.is_available()
+        )
+        cpu_offload = bool(self._cfg.fsdp_config.get("cpu_offload", False))
         can_fuse_adamw = (
-            not use_fp32_master_params
-            and Worker.torch_device_type == "cuda"
-            and Worker.torch_platform.is_available()
-            and not any(p.dim() == 0 for p in all_params)
+            not use_fp32_master_params and cuda_available and not has_scalar_params
         )
         fused_adamw = self._cfg.optim.get("fused_adamw", False)
         if fused_adamw and (
-            not can_fuse_adamw
-            or not isinstance(model, FSDPModule)
-            or self._cfg.fsdp_config.get("cpu_offload", False)
+            not can_fuse_adamw or not isinstance(model, FSDPModule) or cpu_offload
         ):
+            failures = []
+            if not cuda_available:
+                failures.append(
+                    f"device_type={Worker.torch_device_type!r} "
+                    f"(available={Worker.torch_platform.is_available()})"
+                )
+            if not isinstance(model, FSDPModule):
+                failures.append(f"expected FSDPModule, got {type(model).__name__}")
+            if use_fp32_master_params:
+                failures.append(f"use_fp32_master_params={use_fp32_master_params!r}")
+            if cpu_offload:
+                failures.append(f"cpu_offload={cpu_offload!r}")
+            if has_scalar_params:
+                failures.append("scalar (0-d) parameters present")
             raise ValueError(
                 "actor.optim.fused_adamw requires CUDA FSDP2, native AdamW, "
-                "non-scalar parameters, and fsdp_config.cpu_offload=false."
+                "non-scalar parameters, and fsdp_config.cpu_offload=false; "
+                f"failed: {'; '.join(failures)}."
             )
         # Keep the existing automatic choice for NO_SHARD configurations.
         use_fused_adamw = fused_adamw or (

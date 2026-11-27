@@ -2233,6 +2233,486 @@ def test_dreamzero_sft_prompt_cache_masks_at_the_current_batch_length():
 
 
 @pytest.fixture
+def dreamzero_groot_stubs(monkeypatch):
+    """Register minimal ``groot`` stubs so DreamZero modules run on CPU without groot."""
+    from transformers import PretrainedConfig
+
+    from rlinf.utils.patcher import Patcher
+
+    class _ComposedModalityTransform:
+        def set_metadata(self, metadata):
+            return None
+
+        def eval(self):
+            return self
+
+    class _VLAConfig(PretrainedConfig):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+
+    class _BaseWANPolicyHead(torch.nn.Module):
+        super_encode_image_calls = 0
+
+        def __init__(self, config):
+            super().__init__()
+            self.config = config
+            self.model = (
+                config["lora_model"]
+                if isinstance(config, dict) and "lora_model" in config
+                else SimpleNamespace(
+                    model_type="ti2v",
+                    concat_first_frame_latent=False,
+                    checkpoint_every_n_blocks=1,
+                )
+            )
+            self.image_encoder = SimpleNamespace(
+                encode_image=lambda image: image.new_ones((image.shape[0], 2, 4))
+            )
+            self.text_encoder = lambda ids, mask: ids[..., None].float()
+
+        def encode_prompt(self, input_ids, attention_mask):
+            return self.text_encoder(input_ids, attention_mask)
+
+        def encode_image(self, image, num_frames, height, width):
+            self.super_encode_image_calls += 1
+            return (
+                image.new_ones((image.shape[0], 2, 4)),
+                image.new_ones((image.shape[0], 1, 2, 4, 4)),
+                None,
+            )
+
+    class _VLA(torch.nn.Module):
+        def __init__(self, config):
+            super().__init__()
+            self.config = config
+            self.weight = torch.nn.Parameter(torch.zeros(1))
+            head_cfg = config.action_head_cfg
+            target = head_cfg["_target_"]
+            if target.endswith(".DreamZeroSFTHead"):
+                from rlinf.models.embodiment.dreamzero.dreamzero_policy import (
+                    DreamZeroSFTHead,
+                )
+
+                self.action_head = DreamZeroSFTHead(
+                    head_cfg["config"],
+                    prompt_cache_size=head_cfg["prompt_cache_size"],
+                    skip_unused_condition_vae=head_cfg["skip_unused_condition_vae"],
+                )
+            else:
+                self.action_head = _BaseWANPolicyHead(head_cfg["config"])
+
+    class _FakeVideoEncoder(torch.nn.Module):
+        def __init__(self, z_dim: int):
+            super().__init__()
+            self.conv1 = torch.nn.Conv3d(3, z_dim, kernel_size=1)
+
+    class _VideoVAE_(torch.nn.Module):
+        def __init__(self, z_dim: int = 16, dim: int = 64):
+            super().__init__()
+            self.z_dim = z_dim
+            self.encoder = _FakeVideoEncoder(z_dim)
+
+        def encode(self, video, scale):
+            return torch.ones(
+                (
+                    video.shape[0],
+                    self.z_dim,
+                    1,
+                    video.shape[3] // 8,
+                    video.shape[4] // 8,
+                ),
+                dtype=video.dtype,
+                device=video.device,
+            )
+
+        def decode(self, latent, scale):
+            return latent
+
+    def _sinusoidal_embedding_1d(dim: int, position: torch.Tensor) -> torch.Tensor:
+        return torch.zeros(
+            (position.shape[0], dim), dtype=torch.float32, device=position.device
+        )
+
+    class _CausalWanSelfAttention:
+        _process_clean_image_only = staticmethod(lambda *args, **kwargs: None)
+        _process_state_blocks = staticmethod(lambda *args, **kwargs: None)
+        _process_noisy_image_blocks = staticmethod(lambda *args, **kwargs: None)
+        _process_noisy_action_blocks = staticmethod(lambda *args, **kwargs: None)
+
+    class _CausalWanModel:
+        _forward_train = staticmethod(lambda *args, **kwargs: None)
+
+    class _EmbodimentTag:
+        pass
+
+    module_defs: dict[str, dict[str, object]] = {
+        "groot": {},
+        "groot.vla": {},
+        "groot.vla.data": {},
+        "groot.vla.data.transform": {
+            "ComposedModalityTransform": _ComposedModalityTransform
+        },
+        "groot.vla.data.transform.base": {
+            "ComposedModalityTransform": _ComposedModalityTransform
+        },
+        "groot.vla.data.transform.concat": {
+            "ConcatTransform": type("ConcatTransform", (), {})
+        },
+        "groot.vla.data.transform.state_action": {
+            "StateActionToTensor": type("StateActionToTensor", (), {}),
+            "StateActionTransform": type("StateActionTransform", (), {}),
+        },
+        "groot.vla.data.transform.video": {
+            "VideoColorJitter": type("VideoColorJitter", (), {}),
+            "VideoCrop": type("VideoCrop", (), {}),
+            "VideoResize": type("VideoResize", (), {}),
+            "VideoToNumpy": type("VideoToNumpy", (), {}),
+            "VideoToTensor": type("VideoToTensor", (), {}),
+        },
+        "groot.vla.data.dataset": {},
+        "groot.vla.data.dataset.lerobot": {
+            "ModalityConfig": type(
+                "ModalityConfig",
+                (),
+                {"__init__": lambda self, **kw: self.__dict__.update(kw)},
+            )
+        },
+        "groot.vla.data.schema": {"DatasetMetadata": type("DatasetMetadata", (), {})},
+        "groot.vla.data.schema.embodiment_tags": {"EmbodimentTag": _EmbodimentTag},
+        "groot.vla.model": {},
+        "groot.vla.model.dreamzero": {},
+        "groot.vla.model.dreamzero.base_vla": {"VLA": _VLA, "VLAConfig": _VLAConfig},
+        "groot.vla.model.dreamzero.action_head": {},
+        "groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf": {
+            "WANPolicyHead": _BaseWANPolicyHead
+        },
+        "groot.vla.model.dreamzero.modules": {},
+        "groot.vla.model.dreamzero.modules.wan2_1_submodule": {
+            "sinusoidal_embedding_1d": _sinusoidal_embedding_1d
+        },
+        "groot.vla.model.dreamzero.modules.wan_video_vae": {
+            "VideoVAE_": _VideoVAE_,
+            "VideoVAE38_": _VideoVAE_,
+            "WanVideoVAE": type("WanVideoVAE", (), {}),
+            "WanVideoVAE38": type("WanVideoVAE38", (), {}),
+            "WanVideoVAEStateDictConverter": type(
+                "WanVideoVAEStateDictConverter", (), {}
+            ),
+        },
+        "groot.vla.model.dreamzero.modules.wan_video_dit_action_casual_chunk": {
+            "CausalWanSelfAttention": _CausalWanSelfAttention,
+            "CausalWanModel": _CausalWanModel,
+        },
+        "groot.vla.model.dreamzero.transform": {},
+        "groot.vla.model.dreamzero.transform.dreamzero_cotrain": {
+            "DreamTransform": type("DreamTransform", (), {}),
+            "HuggingfaceTokenizer": type("HuggingfaceTokenizer", (), {}),
+            "collate": lambda *args, **kwargs: None,
+        },
+    }
+
+    if importlib.util.find_spec("tianshou") is None:
+        module_defs["tianshou"] = {}
+        module_defs["tianshou.data"] = {"Batch": type("Batch", (), {})}
+
+    prior_rlinf_modules = {
+        name
+        for name in sys.modules
+        if name.startswith("rlinf.models.embodiment.dreamzero")
+        or name.startswith("rlinf.data.datasets.dreamzero")
+    }
+    for mod_name, attrs in module_defs.items():
+        mod = ModuleType(mod_name)
+        for attr, value in attrs.items():
+            setattr(mod, attr, value)
+        monkeypatch.setitem(sys.modules, mod_name, mod)
+
+    try:
+        yield SimpleNamespace(BaseWANPolicyHead=_BaseWANPolicyHead)
+    finally:
+        Patcher.clear()
+        for name in list(sys.modules):
+            if (
+                name.startswith("rlinf.models.embodiment.dreamzero")
+                or name.startswith("rlinf.data.datasets.dreamzero")
+            ) and name not in prior_rlinf_modules:
+                sys.modules.pop(name, None)
+
+
+def _minimal_dreamzero_sft_cfg(**overrides):
+    base = {
+        "model_type": "dreamzero",
+        "model_path": None,
+        "tokenizer_path": "/tmp/tok",
+        "diffusion_model_pretrained_path": "/tmp/dit",
+        "image_encoder_pretrained_path": "/tmp/img",
+        "text_encoder_pretrained_path": "/tmp/txt",
+        "vae_pretrained_path": "/tmp/vae",
+        "embodiment_tag": "libero_sim",
+        "action_horizon": 16,
+        "checkpoint_every_n_blocks": 1,
+        "sft_prompt_cache_size": 0,
+        "sft_skip_unused_condition_vae": False,
+        "action_head_cfg": {
+            "_target_": (
+                "groot.vla.model.dreamzero.action_head."
+                "wan_flow_matching_action_tf.WANPolicyHead"
+            ),
+            "config": {
+                "num_frames": 33,
+                "diffusion_model_cfg": {"max_chunk_size": 4},
+            },
+        },
+    }
+    base.update(overrides)
+    return OmegaConf.create(base)
+
+
+def test_validate_dreamzero_sft_model_cfg_bounds_and_types(dreamzero_groot_stubs):
+    from rlinf.models.embodiment.dreamzero.dreamzero_config import (
+        validate_dreamzero_sft_model_cfg,
+    )
+
+    valid = validate_dreamzero_sft_model_cfg(
+        _minimal_dreamzero_sft_cfg(
+            checkpoint_every_n_blocks=2,
+            sft_prompt_cache_size=64,
+            sft_skip_unused_condition_vae=True,
+        )
+    )
+    assert valid.checkpoint_every_n_blocks == 2
+    assert valid.sft_prompt_cache_size == 64
+    assert valid.sft_skip_unused_condition_vae is True
+
+    for bad_interval in (0, -1, 1.5, True):
+        with pytest.raises(ValueError, match="checkpoint_every_n_blocks"):
+            validate_dreamzero_sft_model_cfg(
+                _minimal_dreamzero_sft_cfg(checkpoint_every_n_blocks=bad_interval)
+            )
+
+    for bad_cache in (-1, 1.5, False):
+        with pytest.raises(ValueError, match="sft_prompt_cache_size"):
+            validate_dreamzero_sft_model_cfg(
+                _minimal_dreamzero_sft_cfg(sft_prompt_cache_size=bad_cache)
+            )
+
+    for bad_skip in ("false", 1):
+        with pytest.raises(ValueError, match="sft_skip_unused_condition_vae"):
+            validate_dreamzero_sft_model_cfg(
+                _minimal_dreamzero_sft_cfg(sft_skip_unused_condition_vae=bad_skip)
+            )
+
+
+def test_dreamzero_forward_train_checkpoint_stride_and_lora_unwrap(
+    dreamzero_groot_stubs, monkeypatch
+):
+    peft = pytest.importorskip("peft")
+
+    from rlinf.models.embodiment.dreamzero import dreamzero_policy
+    from rlinf.models.embodiment.dreamzero.dreamzero_config import DreamZeroConfig
+    from rlinf.models.embodiment.dreamzero.patch.wan_causal_model_forward_train import (
+        _forward_train,
+    )
+
+    class _BaseDiffusion(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = torch.nn.Linear(4, 4)
+
+    base_diffusion = _BaseDiffusion()
+    lora_diffusion = peft.get_peft_model(
+        base_diffusion,
+        peft.LoraConfig(r=2, lora_alpha=4, target_modules=["linear"]),
+    )
+
+    monkeypatch.setattr(
+        dreamzero_policy,
+        "rollout_obs_layout_for_embodiment",
+        lambda tag: SimpleNamespace(binarize_gripper=False),
+    )
+    monkeypatch.setattr(
+        dreamzero_policy,
+        "collect_dreamzero_dataset_keys",
+        lambda transforms, tag: ([], [], ["action.actions"], []),
+    )
+
+    cfg_dict = OmegaConf.to_container(
+        _minimal_dreamzero_sft_cfg(checkpoint_every_n_blocks=2)
+    )
+    cfg_dict["action_head_cfg"]["config"]["lora_model"] = lora_diffusion
+    cfg = DreamZeroConfig(**cfg_dict, data_transforms=object())
+    policy = dreamzero_policy.DreamZeroPolicy(cfg)
+    assert policy.action_head.model.get_base_model().checkpoint_every_n_blocks == 2
+    assert base_diffusion.checkpoint_every_n_blocks == 2
+    assert "checkpoint_every_n_blocks" not in lora_diffusion.__dict__
+
+    # Exercise _forward_train block-interval checkpoint selection.
+    checkpointed_blocks: list[int] = []
+    direct_blocks: list[int] = []
+
+    class _Block(torch.nn.Module):
+        def __init__(self, idx: int):
+            super().__init__()
+            self.idx = idx
+
+        def forward(
+            self,
+            x,
+            e=None,
+            freqs=None,
+            freqs_action=None,
+            freqs_state=None,
+            action_register_length=None,
+            context=None,
+            kv_cache=None,
+            crossattn_cache=None,
+            current_start_frame=0,
+            is_tf=False,
+        ):
+            direct_blocks.append(self.idx)
+            return x, None
+
+    def fake_checkpoint(fn, *args, **kwargs):
+        if isinstance(fn, _Block):
+            checkpointed_blocks.append(fn.idx)
+            return fn(*args)
+        raise AssertionError(f"Expected _Block, got {fn!r}")
+
+    monkeypatch.setattr(torch.utils.checkpoint, "checkpoint", fake_checkpoint)
+
+    class _TinyCausalWan(torch.nn.Module):
+        model_type = "ti2v"
+        concat_first_frame_latent = False
+        freq_dim = 4
+        dim = 4
+        text_len = 2
+        freqs_action = None
+        freqs_state = None
+        gradient_checkpointing = True
+        gradient_checkpointing_use_reentrant = True
+        checkpoint_every_n_blocks = 2
+
+        def __init__(self):
+            super().__init__()
+            self.patch_embedding = lambda x: torch.ones(x.shape[0], 4, 1, 1, 2)
+            self._create_freqs = lambda grid_size, start_frame: None
+            self.time_embedding = lambda t: t
+            self.time_projection = lambda e: torch.zeros(e.shape[0], e.shape[1], 24)
+            self.text_embedding = lambda c: c
+            self.blocks = torch.nn.ModuleList([_Block(i) for i in range(4)])
+            self.head = lambda x, e: x
+            self.unpatchify = lambda x, grid_size: x
+
+    wan = _TinyCausalWan()
+    _forward_train(
+        wan,
+        x=torch.randn(1, 4, 1, 1, 2, requires_grad=True),
+        timestep=torch.ones(1, 1),
+        timestep_action=None,
+        context=torch.zeros(1, 2, 4),
+        seq_len=2,
+    )
+    assert checkpointed_blocks == [0, 2]
+    assert direct_blocks == [0, 1, 2, 3]
+
+
+def test_dreamzero_sft_head_encode_image_gating(dreamzero_groot_stubs):
+    from rlinf.models.embodiment.dreamzero.dreamzero_policy import DreamZeroSFTHead
+
+    head = DreamZeroSFTHead(
+        config={}, prompt_cache_size=0, skip_unused_condition_vae=True
+    )
+    image = torch.randn(2, 3, 4, 4)
+
+    with head.sft_batch([]):
+        clip_ctx, empty_y, none_val = head.encode_image(image, 33, 4, 4)
+    assert clip_ctx.shape == (2, 2, 4)
+    assert empty_y.numel() == 0
+    assert none_val is None
+    assert head.super_encode_image_calls == 0
+
+    # Outside sft_batch -> falls back to upstream encode_image.
+    head.encode_image(image, 33, 4, 4)
+    assert head.super_encode_image_calls == 1
+
+    # Non-ti2v, concat_first_frame_latent=True, or skip disabled -> falls back.
+    head.model.model_type = "i2v"
+    with head.sft_batch([]):
+        head.encode_image(image, 33, 4, 4)
+    assert head.super_encode_image_calls == 2
+
+    head.model.model_type = "ti2v"
+    head.model.concat_first_frame_latent = True
+    with head.sft_batch([]):
+        head.encode_image(image, 33, 4, 4)
+    assert head.super_encode_image_calls == 3
+
+    head.model.concat_first_frame_latent = False
+    head.skip_unused_condition_vae = False
+    with head.sft_batch([]):
+        head.encode_image(image, 33, 4, 4)
+    assert head.super_encode_image_calls == 4
+
+
+def test_dreamzero_wan_video_vae_casts_input_and_preserves_blending_dtype(
+    dreamzero_groot_stubs,
+):
+    from rlinf.models.embodiment.dreamzero.patch.wan_video_vae import WanVideoVAE
+
+    vae = WanVideoVAE(z_dim=4)
+    vae.model = vae.model.to(dtype=torch.bfloat16)
+
+    seen_dtypes: list[torch.dtype] = []
+    orig_encode = vae.model.encode
+
+    def spy_encode(video, scale):
+        seen_dtypes.append(video.dtype)
+        return orig_encode(video, scale)
+
+    vae.model.encode = spy_encode
+
+    videos = torch.randn(2, 3, 1, 16, 16, dtype=torch.float32)
+    tiled_latent = vae.encode(videos, tiled=True, tile_size=(2, 2), tile_stride=(1, 1))
+    assert seen_dtypes and all(dtype == torch.bfloat16 for dtype in seen_dtypes)
+    assert tiled_latent.dtype == torch.float32
+
+    seen_dtypes.clear()
+    single_latent = vae.encode(videos, tiled=False)
+    assert seen_dtypes == [torch.bfloat16]
+    assert single_latent.dtype == torch.bfloat16
+
+
+def test_dreamzero_get_model_restores_upstream_action_head_cfg(
+    dreamzero_groot_stubs, monkeypatch
+):
+    from rlinf.models.embodiment import dreamzero as dreamzero_pkg
+    from rlinf.models.embodiment.dreamzero.dreamzero_policy import DreamZeroSFTHead
+
+    monkeypatch.setattr(
+        dreamzero_pkg, "load_dreamzero_dataset_metadata", lambda cfg: {}
+    )
+    monkeypatch.setattr(
+        dreamzero_pkg,
+        "build_dreamzero_composed_transform",
+        lambda cfg, tok: dreamzero_pkg.ComposedModalityTransform(),
+    )
+
+    cfg = _minimal_dreamzero_sft_cfg(
+        sft_prompt_cache_size=4,
+        sft_skip_unused_condition_vae=True,
+    )
+    model = dreamzero_pkg.get_model(cfg)
+
+    assert isinstance(model.action_head, DreamZeroSFTHead)
+    assert model.config.action_head_cfg["_target_"] == (
+        "groot.vla.model.dreamzero.action_head."
+        "wan_flow_matching_action_tf.WANPolicyHead"
+    )
+    assert "prompt_cache_size" not in model.config.action_head_cfg
+    assert "skip_unused_condition_vae" not in model.config.action_head_cfg
+
+
+@pytest.fixture
 def dreamzero_npu_patches(monkeypatch) -> ModuleType:
     """DreamZero's NPU operators, loaded without the DreamZero (groot) package.
 

@@ -176,93 +176,41 @@ Reference SFT configs under ``examples/sft/config/``:
 
       .. dropdown:: Speed Up WAN2.2 5B SFT on CUDA
 
-         If you train WAN2.2 5B on CUDA with FSDP2, you can reuse text embeddings,
-         skip an unused VAE pass, and reduce the cost of backward and optimizer updates.
-         Start with ``examples/sft/config/libero_sft_dreamzero_5b.yaml``. Set the model,
-         tokenizer, LIBERO data and ``metadata.json`` paths as described above, then
-         edit the following fields in that file. Keep the rest of the recipe.
+         For WAN2.2 5B SFT on CUDA with FSDP2, configure the dataset and cold-start paths from **Cold-start from scratch (WAN2.2 5B)** under **2. Download** (or set ``actor.model.model_path`` to a checkpoint), then pass the speedup options as Hydra CLI overrides to ``run_vla_sft.sh``:
 
-         .. code-block:: yaml
+         .. code-block:: bash
 
-            data:
-              sampling_mode: fixed_window  # LIBERO with images stored in Parquet
-            actor:
-              micro_batch_size: 2
-              global_batch_size: 16
-              fsdp_config:
-                strategy: fsdp2
-                gradient_checkpointing: true
-              model:
-                checkpoint_every_n_blocks: 2
-                sft_prompt_cache_size: 64
-                sft_skip_unused_condition_vae: true
-              optim:
-                fused_adamw: true
+            bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b \
+              actor.micro_batch_size=2 \
+              actor.global_batch_size=16 \
+              actor.model.checkpoint_every_n_blocks=2 \
+              actor.model.sft_prompt_cache_size=64 \
+              actor.model.sft_skip_unused_condition_vae=true \
+              actor.optim.fused_adamw=true
 
-         The batch sizes above are for eight 80 GB GPUs. On a different allocation,
-         keep the global batch size divisible by the number of GPUs times the
-         per-GPU micro-batch size.
+         The batch sizes above target eight 80 GB GPUs; for other GPU counts, keep ``actor.global_batch_size`` divisible by ``actor.micro_batch_size`` times the number of GPUs. Add ``runner.max_steps=12 runner.save_interval=-1`` for a quick check without saving checkpoints. On 8× A800 GPUs on LIBERO, steady-state ``time/step`` (after compilation and cache warmup) dropped from 1.73 s to 1.23 s/step (~1.4× speedup).
 
          .. list-table::
             :header-rows: 1
-            :widths: 32 18 50
+            :widths: 32 16 52
 
             * - Setting
-              - Example default
-              - When to use it
+              - Default
+              - Effect and usage
             * - ``actor.model.checkpoint_every_n_blocks``
               - ``1``
-              - With gradient checkpointing enabled, ``2`` checkpoints every other
-                transformer block. Backward recomputes fewer blocks and retains more
-                activations in GPU memory. Restore ``1`` if you run out of GPU memory.
+              - Under gradient checkpointing, ``2`` checkpoints every second transformer block to trade extra GPU memory for faster backward passes; restore ``1`` if out of memory.
             * - ``actor.model.sft_prompt_cache_size``
               - ``0``
-              - Cache this many frozen T5 embeddings in CPU memory per training rank.
-                At 512 tokens and 4096 features per token in BF16, 64 entries use
-                about 256 MiB per rank for the embeddings.
-                Repeated prompts benefit once all ranks have their current batch in
-                cache. T5 weights stay loaded for misses, and a resumed run fills the
-                cache again. Use ``0`` for datasets with little prompt reuse.
+              - Number of frozen T5 prompt embeddings cached in CPU memory per rank (about 256 MiB for 64 entries). Helps datasets with repeated prompts once all ranks fill their cache; leave ``0`` if prompts rarely repeat.
             * - ``actor.model.sft_skip_unused_condition_vae``
               - ``false``
-              - Skip encoding the first-frame condition in SFT when the WAN model is
-                ``ti2v`` and ``concat_first_frame_latent`` is false. CLIP and training
-                video encoding still run.
+              - Skips the unused first-frame condition VAE pass during WAN2.2 SFT while keeping CLIP and video encoding active.
             * - ``actor.optim.fused_adamw``
               - ``false``
-              - Use native fused AdamW on CUDA FSDP2. Keep optimizer parameters on the
-                GPU, with FSDP CPU offload and ``actor.optim.use_fp32_master_params``
-                disabled. The PyTorch build must support fused AdamW on sharded
-                tensors. The reference run used PyTorch 2.13.0 with CUDA 12.9.
+              - Uses PyTorch fused AdamW on CUDA FSDP2 (keep FSDP CPU offload and ``actor.optim.use_fp32_master_params`` disabled). The default ``install.sh`` build uses PyTorch 2.11.0; if your PyTorch build does not support fused AdamW on sharded tensors, training fails at startup and you should keep ``false`` (the 8× A800 run used PyTorch 2.13.0 with CUDA 12.9).
 
-         For an initial run, set ``runner.max_steps: 12`` and
-         ``runner.save_interval: -1`` to inspect training without saving checkpoints.
-         Launch from the repository root.
-
-         .. code-block:: bash
-
-            bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b
-
-         Check that ``train/loss`` and ``train/grad_norm`` stay finite. To measure
-         throughput, compare ``time/step`` after compilation and cache warmup against a
-         run with the same data, seed and batch sizes and with the four settings at
-         their defaults. A 12-step LIBERO check on two separate eight-A800 nodes measured
-         a median of 1.731 s/step with the defaults and 1.225 s/step with the options
-         above over steps 4–12. Including the first three steps, the training loops took
-         about 51 and 72 seconds respectively. Use the steady-state timing to estimate
-         throughput for longer runs.
-
-         Restore the planned training length and save interval for a full run. If you
-         resume with ``runner.resume_dir``, the checkpoint restores its saved optimizer
-         settings. To start a new optimizer with fused AdamW from existing model
-         weights, use the model checkpoint setup above and leave
-         ``runner.resume_dir`` unset.
-
-         Pass Hydra overrides after the config name to change settings such as the training log directory.
-
-         .. code-block:: bash
-
-            bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b runner.logger.log_path="$PWD/logs/dreamzero-5b"
+         When resuming with ``runner.resume_dir``, RLinf restores the saved optimizer settings from the checkpoint. To start a fresh fused-AdamW optimizer from existing weights, leave ``runner.resume_dir`` unset.
 
    .. tab-item:: Huawei Ascend CANN
       :sync: ascend

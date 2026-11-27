@@ -23,6 +23,10 @@ max_state_dim: 64
 target_video_height: 176
 target_video_width: 320
 
+checkpoint_every_n_blocks: 1
+sft_prompt_cache_size: 0
+sft_skip_unused_condition_vae: False
+
 action_head_cfg:
   _convert_: object
   _target_: groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf.WANPolicyHead

@@ -97,7 +97,10 @@ class DreamZeroPolicy(VLA, BasePolicy):
         self.config = config
         checkpoint_interval = config.checkpoint_every_n_blocks
         if checkpoint_interval != 1:
-            self.action_head.model.checkpoint_every_n_blocks = checkpoint_interval
+            diffusion_model = self.action_head.model
+            if hasattr(diffusion_model, "get_base_model"):
+                diffusion_model = diffusion_model.get_base_model()
+            diffusion_model.checkpoint_every_n_blocks = checkpoint_interval
         embodiment_tag = config.embodiment_tag
         if embodiment_tag is None:
             raise ValueError(
