@@ -206,13 +206,13 @@ RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测�
 
 RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习，覆盖运动控制、视觉-语言-动作模型（VLA）、世界动作模型（WAM）以及推理与智能体模型。下表按 System 0、System 1、System 2 和其他模型分组。
 
-<table style="width: 100%; table-layout: auto; border-collapse: collapse;">
+<table width="100%" style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
     <tr>
-      <th style="min-width: 120px;">System 0<br>运动控制</th>
-      <th style="min-width: 120px;">System 1<br>VLA / WAM</th>
-      <th style="min-width: 120px;">System 2<br>推理与智能体</th>
-      <th style="min-width: 120px;">其他模型</th>
+      <th width="20%" style="width: 20%; min-width: 140px;">System 0<br>运动控制</th>
+      <th width="28%" style="width: 28%; min-width: 180px;">System 1<br>VLA / WAM</th>
+      <th width="32%" style="width: 32%; min-width: 180px;">System 2<br>推理与智能体</th>
+      <th width="20%" style="width: 20%; min-width: 140px;">其他模型</th>
     </tr>
   </thead>
   <tbody valign="top">
@@ -272,14 +272,9 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习，�
               </li>
               <li><b>WideSeek-R1</b>
                 <ul style="margin-left: 0; padding-left: 16px;">
-                  <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/wideseek_r1/index.html#wideseek-r1-setup">Qwen3-4B</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/wideseek_r1/index.html">Qwen3-4B</a> ✅</li>
                 </ul>
               </li>
-            </ul>
-          </li>
-          <li><b>代码强化学习</b>
-            <ul style="margin-left: 0; padding-left: 16px;">
-              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/coding_online_rl.html">Qwen2.5-Coder-1.5B (Online Coder)</a> ✅</li>
             </ul>
           </li>
           <li><b>几何推理强化学习</b>
@@ -287,7 +282,7 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习，�
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/qwen3_vl_geo3k.html">Qwen3-VL</a> ✅</li>
             </ul>
           </li>
-          <li><b>VLM SFT</b>
+          <li><b>VLM 监督微调</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">Qwen2.5-VL</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL</a> ✅</li>
@@ -429,7 +424,7 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习，�
             <ul>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">全量微调</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">LoRA 微调</a> ✅</li>
-              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">VLM SFT</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">VLM 监督微调</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dagger.html">DAgger</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/hg-dagger.html">HG-DAgger</a> ✅</li>
             </ul>
