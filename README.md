@@ -206,13 +206,13 @@ RLinf updates models with a training engine and runs rollout and evaluation with
 
 RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. The table below groups models and training recipes by system, with vision-language-action (VLA) models and world action models (WAM) in System 1.
 
-<table style="width: 100%; table-layout: auto; border-collapse: collapse;">
+<table width="100%" style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
     <tr>
-      <th style="min-width: 120px;">System 0<br>Motion Control</th>
-      <th style="min-width: 120px;">System 1<br>VLA / WAM</th>
-      <th style="min-width: 120px;">System 2<br>Reasoning and Agents</th>
-      <th style="min-width: 120px;">Others</th>
+      <th width="20%" style="width: 20%; min-width: 140px;">System 0<br>Motion Control</th>
+      <th width="28%" style="width: 28%; min-width: 180px;">System 1<br>VLA / WAM</th>
+      <th width="32%" style="width: 32%; min-width: 180px;">System 2<br>Reasoning and Agents</th>
+      <th width="20%" style="width: 20%; min-width: 140px;">Other Models</th>
     </tr>
   </thead>
   <tbody valign="top">
@@ -252,7 +252,7 @@ RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. T
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li><b>Robot-Use-Agent RL</b></li>
+          <li><b>Robot-Use-Agent RL</b> (coming soon)</li>
           <li><b>Math Reasoning RL</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-1.5B</a> ✅</li>
@@ -272,7 +272,7 @@ RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. T
               </li>
               <li><b>WideSeek-R1</b>
                 <ul style="margin-left: 0; padding-left: 16px;">
-                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/wideseek_r1/index.html#wideseek-r1-setup">Qwen3-4B</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/wideseek_r1/index.html">Qwen3-4B</a> ✅</li>
                 </ul>
               </li>
             </ul>
@@ -325,7 +325,7 @@ The components below cover simulators, real-world environments, and training alg
   <thead align="center" valign="bottom">
     <tr>
       <th style="min-width: 120px;">Simulators</th>
-      <th style="min-width: 120px;">Real-world Env</th>
+      <th style="min-width: 120px;">Real-World Envs</th>
       <th style="min-width: 120px;">Algorithms</th>
     </tr>
   </thead>
