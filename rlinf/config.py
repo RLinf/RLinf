@@ -386,7 +386,7 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
     with open_dict(cfg):
         _inherit_rollout_model_path(cfg, actor_cfg)
         cfg.gpu_memory_utilization = cfg.get("gpu_memory_utilization", 0.65)
-        assert cfg.model.model_path is not None, (
+        assert cfg.model.get("model_path") is not None, (
             "rollout.model.model_path must be specified for rollout."
         )
 
@@ -462,6 +462,12 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
                             cfg.sglang[name] = value
 
         else:
+            if qwen_megatron and load_mtp:
+                raise ValueError(
+                    "Qwen3.5 MTP weight synchronization requires "
+                    "rollout_backend='sglang'; got rollout_backend='vllm' "
+                    "with actor.model.load_mtp=True."
+                )
             cfg.vllm = validate_vllm_cfg(cfg.vllm)
 
     return cfg
@@ -522,6 +528,12 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path, hf_config=None):
     if hf_config is None:
         hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
     _resolve_megatron_model_type(cfg.model, hf_config)
+    model_type = cfg.model.get("model_type")
+    text_config = (
+        hf_config.text_config
+        if model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen3_5")
+        else hf_config
+    )
 
     if (
         "Qwen2ForCausalLM" in hf_config.architectures
@@ -530,7 +542,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path, hf_config=None):
     ):
         qkv_bias = True
     else:
-        qkv_bias = getattr(hf_config, "attention_bias", False)
+        qkv_bias = getattr(text_config, "attention_bias", False)
 
     if (
         "Qwen3ForCausalLM" in hf_config.architectures
@@ -544,7 +556,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path, hf_config=None):
         qk_layernorm = getattr(cfg.model, "qk_layernorm", False)
 
     with open_dict(cfg):
-        rs = hf_rope_parameters(hf_config)
+        rs = hf_rope_parameters(text_config)
         rtype = rs.get("rope_type", "")
         if rtype in {"linear", "dynamic", "ntk", "yarn"}:
             f = rs.get("factor")
@@ -554,10 +566,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path, hf_config=None):
             # mrope. "default" means no scaling at all, which transformers 4
             # reported as rope_scaling=None and so left this untouched.
             cfg.model.seq_len_interpolation_factor = None
-        model_type = getattr(cfg.model, "model_type", None)
-        if model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen3_5"):
-            # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
-            hf_config = hf_config.text_config
+        hf_config = text_config
 
         cfg.model.padded_vocab_size = hf_config.vocab_size
         cfg.model.max_position_embeddings = hf_config.max_position_embeddings
@@ -3017,9 +3026,8 @@ def validate_reasoning_eval_cfg(cfg: DictConfig) -> DictConfig:
         assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
             f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
         )
-        cfg.rollout = validate_rollout_cfg(
-            cfg.rollout, cfg.algorithm, cfg.get("actor", None)
-        )
+        _inherit_rollout_model_path(cfg.rollout, cfg.get("actor", None))
+        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
     return cfg
 
 
@@ -3163,17 +3171,22 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         f"task_type must be one of {SUPPORTED_TASK_TYPE}"
     )
     actor_hf_config = None
-    if (
-        OmegaConf.select(cfg, "actor.training_backend") == "megatron"
-        and cfg.runner.task_type != "embodied_eval"
-    ):
+    if OmegaConf.select(
+        cfg, "actor.training_backend"
+    ) == "megatron" and cfg.runner.task_type not in ("embodied_eval", "reasoning_eval"):
         from transformers import AutoConfig
 
         if cfg.runner.task_type == "sft":
-            actor_hf_path = cfg.actor.model.model_path
+            actor_hf_path = OmegaConf.select(cfg, "actor.model.model_path")
+            model_path_key = "actor.model.model_path"
         else:
             _inherit_rollout_model_path(cfg.rollout, cfg.actor)
-            actor_hf_path = cfg.rollout.model.model_path
+            actor_hf_path = OmegaConf.select(cfg, "rollout.model.model_path")
+            model_path_key = "rollout.model.model_path"
+        if actor_hf_path is None:
+            raise ValueError(
+                f"{model_path_key} must be specified for Megatron training; got None."
+            )
         actor_hf_config = AutoConfig.from_pretrained(
             actor_hf_path, trust_remote_code=True
         )

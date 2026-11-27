@@ -441,7 +441,11 @@ def tp_gather_fn_qwen3_5(
         ):
             # With one rollout PP stage, a tied head aliases the DPA embedding.
             full_state_dict[key] = (all_gather_tensor(tensor, 0, tp_group), None)
-        elif not vision and key.endswith("self_attention.linear_qkv.weight"):
+        elif (
+            split_fc1
+            and not vision
+            and key.endswith("self_attention.linear_qkv.weight")
+        ):
             if local_shard and tp_size <= model_config.num_query_groups:
                 full_state_dict[key] = (tensor.clone(), None)
                 continue

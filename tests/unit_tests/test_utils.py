@@ -2185,7 +2185,6 @@ class TestMegatronModelConfig:
                 True,
                 {
                     "speculative_algorithm": "STANDALONE",
-                    "speculative_draft_model_path": "/old/checkpoint",
                 },
                 False,
             ),
@@ -2293,9 +2292,173 @@ class TestMegatronModelConfig:
             validate_rollout_cfg(result, OmegaConf.create({}), actor)
             assert OmegaConf.to_container(result, resolve=True) == normalized
         else:
-            with pytest.raises(AssertionError, match="load_mtp|external draft"):
+            error = (
+                "requires NEXTN or its EAGLE alias"
+                if load_mtp is True
+                and sglang_options.get("speculative_algorithm") == "STANDALONE"
+                else "load_mtp|external draft"
+            )
+            with pytest.raises(AssertionError, match=error):
                 validate_megatron_cfg(actor)
                 validate_rollout_cfg(rollout, OmegaConf.create({}), actor)
+
+    @pytest.mark.placement
+    @pytest.mark.parametrize("backend", ["sglang", "vllm"])
+    @pytest.mark.parametrize("actor_present", [False, True])
+    @pytest.mark.parametrize("rollout_path", ["explicit", "missing", "null"])
+    def test_reasoning_eval_ignores_inherited_actor_training_options(
+        self, actor_present, rollout_path, backend
+    ):
+        from rlinf.config import validate_cfg
+
+        cfg = OmegaConf.create(
+            {
+                "runner": {"task_type": "reasoning_eval", "seq_length": 128},
+                "data": {"max_prompt_length": 32},
+                "cluster": {"num_nodes": 1, "component_placement": {}},
+                "algorithm": {},
+                "rollout": {
+                    "model": {"model_type": "qwen3_5"},
+                    "return_logprobs": True,
+                    "rollout_backend": backend,
+                    "vllm": {},
+                    "sglang": {},
+                },
+            }
+        )
+        if actor_present:
+            cfg.actor = {
+                "training_backend": "megatron",
+                "model": {
+                    "model_type": "qwen2.5",
+                    "model_path": "/inherited/checkpoint",
+                    "load_mtp": True,
+                },
+            }
+        if rollout_path == "explicit":
+            cfg.rollout.model.model_path = "/evaluation/checkpoint"
+        elif rollout_path == "null":
+            cfg.rollout.model.model_path = None
+        if not actor_present and rollout_path != "explicit":
+            with pytest.raises(AssertionError, match="model_path"):
+                validate_cfg(cfg)
+            return
+        original_actor = (
+            OmegaConf.to_container(cfg.get("actor")) if actor_present else None
+        )
+        result = validate_cfg(cfg)
+        assert result.rollout.model.model_path == (
+            "/evaluation/checkpoint"
+            if rollout_path == "explicit"
+            else "/inherited/checkpoint"
+        )
+        assert result.rollout.sync_mtp is False
+        assert "speculative_algorithm" not in result.rollout.sglang
+        if actor_present:
+            assert OmegaConf.to_container(result.actor) == original_actor
+
+    @pytest.mark.placement
+    @pytest.mark.parametrize("task", ["sft", "reasoning"])
+    @pytest.mark.parametrize("explicit_null", [False, True])
+    def test_missing_megatron_model_path_fails_before_hf_loading(
+        self, task, explicit_null, monkeypatch
+    ):
+        from transformers import AutoConfig
+
+        from rlinf.config import validate_cfg
+
+        def unexpected_load(*args, **kwargs):
+            pytest.fail("AutoConfig must not load a missing checkpoint path")
+
+        monkeypatch.setattr(AutoConfig, "from_pretrained", unexpected_load)
+        cfg = OmegaConf.create(
+            {
+                "runner": {"task_type": task},
+                "cluster": {"num_nodes": 1, "component_placement": {}},
+                "actor": {"training_backend": "megatron", "model": {}},
+                "rollout": {"model": {}},
+            }
+        )
+        if explicit_null:
+            cfg.actor.model.model_path = None
+            cfg.rollout.model.model_path = None
+        field = "actor" if task == "sft" else "rollout"
+        with pytest.raises(
+            ValueError, match=field + r"\.model\.model_path must be specified"
+        ):
+            validate_cfg(cfg)
+
+    @pytest.mark.parametrize(
+        "model_type,hf_class,architecture",
+        [
+            ("qwen3_5", "Qwen3_5Config", "Qwen3_5ForConditionalGeneration"),
+            ("qwen3_vl", "Qwen3VLConfig", "Qwen3VLForConditionalGeneration"),
+            ("qwen3_vl_moe", "Qwen3VLMoeConfig", "Qwen3VLMoeForConditionalGeneration"),
+            ("qwen3", "Qwen3Config", "Qwen3ForCausalLM"),
+        ],
+    )
+    @pytest.mark.parametrize("bias", [False, True])
+    @pytest.mark.parametrize(
+        "rope_type,expected", [("default", 7.0), ("linear", 2.0), ("mrope", None)]
+    )
+    def test_language_config_bias_and_rope(
+        self, model_type, hf_class, architecture, bias, rope_type, expected
+    ):
+        import transformers
+
+        from rlinf.config import validate_model_cfg_by_hf_config
+
+        options = (
+            {} if model_type == "qwen3" else {"text_config": {"intermediate_size": 128}}
+        )
+        hf = getattr(transformers, hf_class)(architectures=[architecture], **options)
+        text = hf if model_type == "qwen3" else hf.text_config
+        text.attention_bias = bias
+        text.rope_parameters = {"rope_type": rope_type, "rope_theta": 12345.0}
+        if rope_type == "linear":
+            text.rope_parameters["factor"] = 2.0
+        cfg = OmegaConf.create(
+            {"model": {"model_type": model_type, "seq_len_interpolation_factor": 7.0}}
+        )
+        result = validate_model_cfg_by_hf_config(cfg, "unused", hf_config=hf)
+        assert result.model.add_qkv_bias is bias
+        assert result.model.seq_len_interpolation_factor == expected
+        assert result.model.rotary_base == 12345.0
+        assert result.model.hidden_size == text.hidden_size
+        assert result.model.qk_layernorm is True
+
+    @pytest.mark.parametrize("model_type", ["qwen3_5", "deepseek_v3", "glm4_moe_lite"])
+    @pytest.mark.parametrize("backend", ["sglang", "vllm"])
+    @pytest.mark.parametrize("load_mtp", [False, True])
+    def test_mtp_backend_capability(self, model_type, backend, load_mtp):
+        from rlinf.config import validate_rollout_cfg
+
+        actor = OmegaConf.create(
+            {
+                "training_backend": "megatron",
+                "model": {
+                    "model_type": model_type,
+                    "load_mtp": load_mtp,
+                },
+            }
+        )
+        rollout = OmegaConf.create(
+            {
+                "model": {"model_type": model_type, "model_path": "/unused/checkpoint"},
+                "rollout_backend": backend,
+                "return_logprobs": True,
+                "sglang": {},
+                "vllm": {},
+            }
+        )
+        if model_type == "qwen3_5" and load_mtp and backend == "vllm":
+            with pytest.raises(
+                ValueError, match="MTP weight synchronization requires.*sglang"
+            ):
+                validate_rollout_cfg(rollout, OmegaConf.create({}), actor)
+        else:
+            result = validate_rollout_cfg(rollout, OmegaConf.create({}), actor)
+            assert result.sync_mtp is (model_type == "qwen3_5" and load_mtp)
 
     @pytest.mark.parametrize(
         "model_type,mbridge",

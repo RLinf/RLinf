@@ -277,6 +277,97 @@ def _check_qwen35_local_shards(rank, tp, local, layouts):
         torch.distributed.all_gather = original_gather
 
 
+def _qwen35_mcore_gqa_rank(rank, store_path):
+    from datetime import timedelta
+
+    from megatron.core.model_parallel_config import ModelParallelConfig
+    from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+
+    from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
+    from rlinf.utils.resharding.reshard_config import ReshardConfig
+
+    torch.distributed.init_process_group(
+        "gloo",
+        init_method=store_path,
+        rank=rank,
+        world_size=4,
+        timeout=timedelta(seconds=90),
+    )
+    try:
+        groups = {}
+        for size in (1, 2, 4):
+            for start in range(0, 4, size):
+                members = list(range(start, start + size))
+                group = torch.distributed.new_group(members, backend="gloo")
+                if rank in members:
+                    groups[size] = group
+        full = torch.arange(160, dtype=torch.bfloat16).reshape(40, 4)
+        full[0, 0] = -0.0
+        for source_tp in (1, 2, 4):
+            local = full.chunk(source_tp)[rank % source_tp].contiguous()
+            for target_tp in (1, 2, 4):
+                settings = _qwen35_config(target_tp)
+                settings.model_config.num_query_groups = 2
+                cfg = ReshardConfig(
+                    model_type="qwen3_5",
+                    model_config=settings.model_config,
+                    vision_config=settings.vision_config,
+                    reshard_weights_format="mcore",
+                    reshard_tp_size=target_tp,
+                )
+                layer_cfg = ModelParallelConfig(
+                    tensor_model_parallel_size=target_tp,
+                    use_cpu_initialization=True,
+                    perform_initialization=False,
+                    gradient_accumulation_fusion=False,
+                    params_dtype=torch.bfloat16,
+                )
+                layer = ColumnParallelLinear(
+                    4,
+                    40,
+                    config=layer_cfg,
+                    init_method=lambda tensor: tensor,
+                    bias=False,
+                    tp_group=groups[target_tp],
+                )
+                for prefix in (
+                    "language_model.decoder.layers.3.",
+                    "language_model.mtp.layers.0.mtp_model_layer.",
+                ):
+                    key = prefix + "self_attention.linear_qkv.weight"
+                    for local_copy in (
+                        (False, True) if source_tp == target_tp else (False,)
+                    ):
+                        gathered = cfg.tp_gather_fn(
+                            {key: local},
+                            groups[source_tp],
+                            "attn",
+                            split_fc1=cfg.split_fc1,
+                            tp_gather_is_identity=local_copy,
+                        )
+                        result = MegatronCoreWeightReshard(cfg).narrow_to_target(
+                            gathered, rank % target_tp
+                        )
+                        with torch.no_grad():
+                            layer.weight.fill_(float("nan"))
+                        layer.load_state_dict({"weight": result[key]})
+                        _assert_tensor_bits_equal(
+                            layer.weight, full.chunk(target_tp)[rank % target_tp]
+                        )
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def test_qwen35_mcore_gqa_loads_native_tp_shards_bitwise(tmp_path):
+    pytest.importorskip("megatron.training")
+    torch.multiprocessing.spawn(
+        _qwen35_mcore_gqa_rank,
+        args=((tmp_path / "store").as_uri(),),
+        nprocs=4,
+        join=True,
+    )
+
+
 @pytest.mark.parametrize("source_tp", [1, 2, 4])
 def test_qwen35_local_shards_match_gather_and_skip_communication(source_tp, tmp_path):
     pytest.importorskip("megatron.training")
