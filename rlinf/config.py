@@ -1458,16 +1458,18 @@ def _validate_kl_clip(cfg: DictConfig, target_kl: float) -> None:
             f"Expected a finite positive algorithm.kl_clip_target, got {target_kl!r}."
         )
 
-    algorithm = cfg.algorithm
+    algorithm = cfg.get("algorithm") or {}
+    actor = cfg.get("actor") or {}
+    rollout = cfg.get("rollout") or {}
     if not (
         cfg.runner.task_type == "embodied"
         and not cfg.runner.get("use_training_pipeline", False)
         and not cfg.runner.get("async_mode", False)
-        and cfg.actor.training_backend == "fsdp"
-        and cfg.rollout.get("rollout_backend", "huggingface") == "huggingface"
-        and algorithm.loss_type in {"actor", "actor_critic"}
-        and algorithm.logprob_type == "chunk_level"
-        and algorithm.reward_type == "chunk_level"
+        and actor.get("training_backend") == "fsdp"
+        and rollout.get("rollout_backend", "huggingface") == "huggingface"
+        and algorithm.get("loss_type") in {"actor", "actor_critic"}
+        and algorithm.get("logprob_type") == "chunk_level"
+        and algorithm.get("reward_type") == "chunk_level"
         and not algorithm.get("recompute_logprobs", False)
     ):
         raise ValueError(
@@ -1496,11 +1498,6 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
-    if (
-        not only_eval
-        and (kl_clip_target := algorithm_cfg.get("kl_clip_target")) is not None
-    ):
-        _validate_kl_clip(cfg, kl_clip_target)
     validate_env_policy_fields(cfg, model_cfg)
     for index, adapter in enumerate(model_cfg.get("merged_loras", None) or []):
         assert adapter.get("path"), (
@@ -3094,6 +3091,16 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.runner.task_type in SUPPORTED_TASK_TYPE, (
         f"task_type must be one of {SUPPORTED_TASK_TYPE}"
     )
+    only_eval = cfg.runner.get("only_eval", False) or cfg.runner.task_type in {
+        "embodied_eval",
+        "reasoning_eval",
+    }
+    algorithm_cfg = cfg.get("algorithm", None) or {}
+    if (
+        not only_eval
+        and (kl_clip_target := algorithm_cfg.get("kl_clip_target")) is not None
+    ):
+        _validate_kl_clip(cfg, kl_clip_target)
     if cfg.runner.task_type == "embodied":
         cfg = validate_embodied_cfg(cfg)
     elif cfg.runner.task_type == "embodied_eval":

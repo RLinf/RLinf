@@ -41,6 +41,7 @@ from rlinf.algorithms.utils import (
     apply_importance_sampling_correction,
     compute_entropy_loss,
 )
+from rlinf.config import _validate_kl_clip, validate_cfg
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.utils.distributed import balance_rollout_groups
@@ -899,6 +900,143 @@ def test_kl_clip_metrics_track_effective_clips():
     assert metrics["actor/conditional_kl_mean"] == pytest.approx(0.2)
     assert metrics["actor/kl_clip/tight_frac"] == 1.0
     assert metrics["actor/kl_clip/extra_frac"] == pytest.approx(2 / 5)
+
+
+def _kl_clip_cfg(**overrides):
+    cfg = OmegaConf.create(
+        {
+            "runner": {
+                "task_type": "embodied",
+                "use_training_pipeline": False,
+                "async_mode": False,
+                "only_eval": False,
+                "per_worker_log": False,
+                "logger": {"log_path": "/tmp", "experiment_name": "test"},
+            },
+            "cluster": {"num_nodes": 1},
+            "actor": {"training_backend": "fsdp"},
+            "rollout": {"rollout_backend": "huggingface"},
+            "algorithm": {
+                "kl_clip_target": 0.05,
+                "loss_type": "actor_critic",
+                "logprob_type": "chunk_level",
+                "reward_type": "chunk_level",
+                "recompute_logprobs": False,
+            },
+        }
+    )
+    for key, value in overrides.items():
+        OmegaConf.update(cfg, key, value)
+    return cfg
+
+
+@pytest.mark.parametrize("loss_type", ["actor", "actor_critic"])
+def test_validate_kl_clip_accepts_sync_fsdp_embodied_configs(loss_type):
+    cfg = _kl_clip_cfg(**{"algorithm.loss_type": loss_type})
+    _validate_kl_clip(cfg, cfg.algorithm.kl_clip_target)
+
+
+@pytest.mark.parametrize(
+    "target_kl", [True, False, 0, -0.05, float("inf"), float("nan"), "0.05"]
+)
+def test_validate_kl_clip_rejects_invalid_targets(target_kl):
+    cfg = _kl_clip_cfg()
+    with pytest.raises(ValueError, match="finite positive algorithm.kl_clip_target"):
+        _validate_kl_clip(cfg, target_kl)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"algorithm.recompute_logprobs": True},
+        {"algorithm.logprob_type": "token_level"},
+        {"algorithm.reward_type": "action_level"},
+        {"runner.use_training_pipeline": True},
+        {"runner.async_mode": True},
+        {"actor.training_backend": "megatron"},
+        {"rollout.rollout_backend": "sglang"},
+        {"algorithm.loss_type": "embodied_refl"},
+    ],
+)
+def test_validate_kl_clip_rejects_unsupported_configs(overrides):
+    cfg = _kl_clip_cfg(**overrides)
+    with pytest.raises(ValueError, match="synchronous FSDP PPO or GRPO"):
+        _validate_kl_clip(cfg, cfg.algorithm.kl_clip_target)
+
+
+@pytest.mark.parametrize(
+    "task_type", ["reasoning", "coding_online_rl", "sft", "offline"]
+)
+def test_validate_cfg_kl_clip_rejects_non_embodied_tasks(monkeypatch, task_type):
+    monkeypatch.setattr("rlinf.config.Cluster", lambda *args, **kwargs: None)
+    cfg = _kl_clip_cfg(**{"runner.task_type": task_type})
+    with pytest.raises(ValueError, match="synchronous FSDP PPO or GRPO"):
+        validate_cfg(cfg)
+
+
+def test_kl_clip_transition_kl_handles_std_and_deterministic_branches():
+    # Differing std: 0.5 * ((1/1)^2 + (2/1)^2 - 1 - 2*ln(2)) = 2 - ln(2) per dim
+    old_mean = torch.tensor([[1.0, 1.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]])
+    old_std = torch.tensor([[2.0, 2.0], [0.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+    new_mean = torch.tensor([[0.0, 0.0], [1.0, 2.0], [0.0, 0.0], [0.0, 0.0]])
+    new_std = torch.tensor([[1.0, 1.0], [0.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+
+    kl = transition_kl(
+        {"mean": old_mean, "std": old_std},
+        {"mean": new_mean, "std": new_std},
+    )
+
+    assert kl[0].item() == pytest.approx(2 * (2.0 - math.log(2.0)))
+    assert kl[1].item() == 0.0
+    assert torch.isinf(kl[2])
+    assert torch.isinf(kl[3])
+
+    with pytest.raises(ValueError, match="matching Gaussian transition shapes"):
+        transition_kl(
+            {"mean": torch.zeros(2, 3), "std": torch.ones(2, 3)},
+            {"mean": torch.zeros(2, 4), "std": torch.ones(2, 4)},
+        )
+
+
+def test_kl_clip_boundary_scaling_and_empty_mask():
+    kl_clip = KLClip(target_kl=0.05, device=torch.device("cpu"))
+    ratio = torch.tensor([1.5, 0.5, 1.5])
+    # kl <= target_kl keeps full bounds; kl > 16 * target_kl hits the 0.25 floor
+    kl = torch.tensor([0.02, 0.05, 1.0])
+    loss_mask = torch.tensor([True, True, True])
+
+    clipped, masked_kl, tightened = kl_clip.clip_ratio(
+        ratio, clip_low=0.2, clip_high=0.4, kl=kl, loss_mask=loss_mask
+    )
+
+    torch.testing.assert_close(masked_kl, kl)
+    torch.testing.assert_close(tightened, torch.tensor([False, False, True]))
+    torch.testing.assert_close(clipped, torch.tensor([1.4, 0.8, 1.1]))
+
+    empty_kl_clip = KLClip(target_kl=0.05, device=torch.device("cpu"))
+    logprobs = torch.zeros(2, 1, 1, requires_grad=True)
+    loss, metrics = policy_loss(
+        task_type="embodied",
+        loss_type="actor",
+        logprob_type="chunk_level",
+        reward_type="chunk_level",
+        single_action_dim=1,
+        logprobs=logprobs,
+        old_logprobs=torch.zeros_like(logprobs),
+        advantages=torch.ones(2, 1),
+        loss_mask=torch.zeros(2, 1, dtype=torch.bool),
+        loss_mask_ratio=torch.ones(2, 1),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        ppo_conditional_kl=torch.tensor([0.2, 0.2]),
+        kl_clip=empty_kl_clip,
+    )
+    assert loss.item() == 0.0
+    metrics.update(empty_kl_clip.totals())
+    finalize_kl_clip_metrics(metrics)
+    assert metrics["actor/conditional_kl_mean"] == 0.0
+    assert metrics["actor/kl_clip/tight_frac"] == 0.0
+    assert metrics["actor/kl_clip/extra_frac"] == 0.0
 
 
 def _load_checkpoint_utils():

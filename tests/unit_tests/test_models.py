@@ -7381,3 +7381,132 @@ def test_prefix_eval_config_validates_without_actor(monkeypatch, config_name):
     del cfg.actor
     validate_embodied_cfg(cfg)
     assert isinstance(get_model(cfg.rollout.model), PrefixPolicy)
+
+
+def _tiny_pi0_rl(monkeypatch, **rl_overrides):
+    import rlinf.models.embodiment.openpi.pi0 as pi0_mod
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+    from rlinf.models.embodiment.openpi.tasks.rl import Pi0RL, Pi0RLConfig
+
+    orig_vit = pi0_mod.siglip.SigLIPViT
+
+    def _tiny_vit(*args, **kwargs):
+        kwargs["variant"] = "mu/32"
+        return orig_vit(*args, **kwargs)
+
+    monkeypatch.setattr(pi0_mod.siglip, "SigLIPViT", _tiny_vit)
+    cfg = Pi0Config(
+        dtype="float32",
+        paligemma_variant="dummy",
+        action_expert_variant="dummy",
+        action_dim=4,
+        action_horizon=4,
+        max_token_len=6,
+    )
+    rl_defaults = {
+        "noise_method": "flow_sde",
+        "noise_level": 0.5,
+        "joint_logprob": False,
+        "is_nft": False,
+    }
+    rl_defaults.update(rl_overrides)
+    num_steps = rl_defaults.pop("num_steps", 3)
+    model = Pi0RL(
+        cfg,
+        num_steps=num_steps,
+        action_chunk=2,
+        action_env_dim=3,
+        rl_cfg=Pi0RLConfig(**rl_defaults),
+    )
+    model._input_transform_fn = lambda sample: sample
+    model._output_transform_fn = lambda sample: sample
+    model.eval()
+    return model, cfg
+
+
+def test_pi0_rl_transition_stats_replay_and_step_mismatch(monkeypatch):
+    from rlinf.algorithms.kl_clip import require_transition_stats, transition_kl
+
+    model, cfg = _tiny_pi0_rl(monkeypatch)
+    require_transition_stats(model)
+
+    obs = cfg.fake_obs(batch_size=2)
+    noise = torch.randn(2, cfg.action_horizon, cfg.action_dim)
+    rng = torch.Generator().manual_seed(0)
+    with torch.no_grad():
+        _, rollout_out = model._predict_train(
+            obs,
+            noise=noise,
+            rng=rng,
+            compute_values=False,
+            return_transition_stats=True,
+        )
+
+    rollout_stats = rollout_out["transition_stats"]
+    assert rollout_stats["mean"].shape == (2, 2, 3)
+    assert rollout_stats["std"].shape == (2, 2, 3)
+    assert rollout_stats["mean"].dtype == torch.float32
+    assert rollout_stats["std"].dtype == torch.float32
+
+    forward_inputs = dict(rollout_out["forward_inputs"])
+    forward_inputs["obs_state"] = obs.state
+    for cam in IMAGE_KEYS:
+        forward_inputs[f"obs_image__{cam}"] = obs.images[cam]
+        forward_inputs[f"obs_image_mask__{cam}"] = obs.image_masks[cam]
+
+    with torch.no_grad():
+        replay_out = model.default_forward(
+            forward_inputs, return_transition_stats=True, compute_values=False
+        )
+
+    replay_stats = replay_out["transition_stats"]
+    assert replay_stats["mean"].shape == (2, 2, 3)
+    assert replay_stats["std"].shape == (2, 2, 3)
+    assert replay_stats["mean"].dtype == torch.float32
+    assert replay_stats["std"].dtype == torch.float32
+
+    zero_kl = transition_kl(rollout_stats, replay_stats)
+    torch.testing.assert_close(zero_kl, torch.zeros(2), atol=1e-6, rtol=0)
+
+    with torch.no_grad():
+        model.action_out_proj.weight.add_(0.5)
+        shifted_out = model.default_forward(
+            forward_inputs, return_transition_stats=True, compute_values=False
+        )
+    shifted_kl = transition_kl(rollout_stats, shifted_out["transition_stats"])
+    assert torch.isfinite(shifted_kl).all()
+    assert (shifted_kl > 0).all()
+
+    bad_inputs = dict(forward_inputs)
+    bad_inputs["chains"] = forward_inputs["chains"][:, :-1]
+    with pytest.raises(
+        ValueError, match="Expected 3 denoise steps in actor replay, got 2"
+    ):
+        model.default_forward(
+            bad_inputs, return_transition_stats=True, compute_values=False
+        )
+
+
+@pytest.mark.parametrize(
+    "rl_overrides",
+    [
+        {"noise_method": "flow_ode"},
+        {"joint_logprob": True},
+        {"is_nft": True},
+        {"noise_level": 0.0},
+        {"noise_level": float("inf")},
+        {"num_steps": 0},
+    ],
+)
+def test_pi0_rl_validate_transition_stats_rejects_unsupported(
+    monkeypatch, rl_overrides
+):
+    from rlinf.algorithms.kl_clip import require_transition_stats
+
+    model, _ = _tiny_pi0_rl(monkeypatch, **rl_overrides)
+    with pytest.raises(
+        ValueError, match="OpenPI transition statistics require Flow-SDE"
+    ):
+        require_transition_stats(model)
+    with pytest.raises(ValueError, match="KL clipping requires transition statistics"):
+        require_transition_stats(object())
