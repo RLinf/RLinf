@@ -95,6 +95,45 @@ def test_sglang_server_args_with_installed_vendor(monkeypatch):
         SGLangWorker._build_server_args(worker)
 
 
+def test_sglang_server_args_forwards_parsers(monkeypatch):
+    import dataclasses
+
+    pytest.importorskip("sglang.srt.server_args")
+    from rlinf.workers.rollout.sglang import sglang_worker
+
+    @dataclasses.dataclass
+    class _FakeServerArgs:
+        reasoning_parser: str | None = None
+        tool_call_parser: str | None = None
+        skip_server_warmup: bool = False
+
+        def __init__(self, **kwargs):
+            self.reasoning_parser = kwargs.get("reasoning_parser")
+            self.tool_call_parser = kwargs.get("tool_call_parser")
+            self.skip_server_warmup = kwargs.get("skip_server_warmup", False)
+
+    monkeypatch.setattr(sglang_worker, "ServerArgs", _FakeServerArgs)
+    configured = _sglang_test_worker(
+        {
+            "sglang": {
+                "use_torch_compile": False,
+                "torch_compile_max_bs": 4,
+                "decode_log_interval": 100,
+                "attention_backend": "triton",
+                "tool_call_parser": "qwen3_coder",
+                "reasoning_parser": "qwen3",
+            }
+        }
+    )
+    args = sglang_worker.SGLangWorker._build_server_args(configured)
+    assert args["tool_call_parser"] == "qwen3_coder"
+    assert args["reasoning_parser"] == "qwen3"
+
+    defaults = sglang_worker.SGLangWorker._build_server_args(_sglang_test_worker())
+    assert defaults["tool_call_parser"] is None
+    assert defaults["reasoning_parser"] is None
+
+
 @pytest.mark.parametrize(
     ("env_package", "sglang_ver", "expected_error"),
     [
@@ -575,3 +614,29 @@ def test_patched_scheduler_delegates_to_vendor():
         """
     )
     subprocess.run([sys.executable, "-c", script], check=True, timeout=120)
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("sglang") is None, reason="requires SGLang"
+)
+def test_tokenizer_manager_handles_aborted_none_versions_in_mixed_batch(monkeypatch):
+    from rlinf.hybrid_engines.sglang.common.tokenizer_manager import TokenizerManager
+
+    seen = []
+    monkeypatch.setattr(
+        TokenizerManager.__mro__[1],
+        "_handle_batch_output",
+        lambda self, obj: seen.append(obj),
+    )
+    tm = object.__new__(TokenizerManager)
+    tm.patch_return_output_ids = False
+    active_state = SimpleNamespace(rlinf_token_versions=[1])
+    tm.rid_to_state = {"ok": active_state, "aborted": None}
+    recv_obj = SimpleNamespace(
+        rids=["aborted", "ok"],
+        customized_info={"rollout_weight_versions": [None, [2, 3]]},
+    )
+    tm._handle_batch_output(recv_obj)
+    assert active_state.rlinf_token_versions == [1, 2, 3]
+    assert recv_obj.customized_info["rollout_weight_versions"] == [None, [1, 2, 3]]
+    assert seen == [recv_obj]

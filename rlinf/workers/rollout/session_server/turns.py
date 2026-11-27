@@ -57,6 +57,7 @@ class TurnRecord:
     kept_len: Optional[int] = None
     continues_prev: Optional[bool] = None
     is_end: bool = False
+    stopped_normally: bool = False
     merged_sampling_params: Optional[dict] = None
 
 

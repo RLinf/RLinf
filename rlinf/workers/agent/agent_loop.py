@@ -259,6 +259,7 @@ class AgentLoopWorker(Worker):
         placement: ModelParallelComponentPlacement,
     ):
         super().__init__()
+        self._verify_assembly = False
         self.cfg = cfg
         self.print_outputs = cfg.agentloop.print_outputs
         if cfg.runner.task_type == "reasoning_eval":
@@ -404,9 +405,9 @@ class AgentLoopWorker(Worker):
                 prompt_ids, sampling_params, rollout_name, **multimodal
             )
         if self.session_server_client is not None:
-            if multimodal:
+            if multimodal and self._verify_assembly:
                 raise ValueError(
-                    "Aligned image inputs are not supported with the session server transport."
+                    "Aligned image inputs are not supported with session_server.verify_assembly=True."
                 )
             binding = self._session_binding.get()
             assert binding is not None, (
@@ -414,7 +415,9 @@ class AgentLoopWorker(Worker):
                 "bound to this task; the group runner binds one per "
                 "trajectory"
             )
-            return await self._generate_on_session(binding, prompt_ids, sampling_params)
+            return await self._generate_on_session(
+                binding, prompt_ids, sampling_params, **multimodal
+            )
         return await self._generate_on_channel(
             prompt_ids, sampling_params, **multimodal
         )
@@ -474,10 +477,15 @@ class AgentLoopWorker(Worker):
         binding: SessionBinding,
         prompt_ids: list[int],
         sampling_params: Optional[dict],
+        **multimodal: Any,
     ):
         try:
             result = await self.session_server_client.generate(
-                binding.group_id, binding.session_id, prompt_ids, sampling_params
+                binding.group_id,
+                binding.session_id,
+                prompt_ids,
+                sampling_params,
+                **multimodal,
             )
         except SessionDiscardedError as exc:
             # Same meaning as the channel path's error report: the group
@@ -924,6 +932,30 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         self.extra_keys_turn = None
         self.extra_keys_traj = None
         self.is_eval = self.cfg.runner.task_type == "reasoning_eval"
+        self._running_groups: dict[int, asyncio.Task] = {}
+
+    def get_session_policy(self) -> Optional[dict[str, Any]]:
+        """Declarative request policy sent on ``POST /sessions`` (override in subclasses)."""
+        return None
+
+    async def cancel_groups(self, group_ids: Sequence[int]) -> None:
+        """Cancel running group tasks and abort their sessions on the server."""
+        tasks = [
+            self._running_groups[gid]
+            for gid in group_ids
+            if gid in self._running_groups
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        if self.session_server_client is not None:
+            await asyncio.gather(
+                *(
+                    self.session_server_client.abort(gid, "cohort_full")
+                    for gid in group_ids
+                )
+            )
 
     async def run_agentloop_rollout_group(
         self,
@@ -948,9 +980,15 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                 like group_id.
         """
         if self.session_server_client is not None:
-            return await self._run_session_server_group(
-                input_ids, answer, group_size, group_id, task_name
-            )
+            if group_id is not None:
+                self._running_groups[group_id] = asyncio.current_task()
+            try:
+                return await self._run_session_server_group(
+                    input_ids, answer, group_size, group_id, task_name
+                )
+            finally:
+                if group_id is not None:
+                    self._running_groups.pop(group_id, None)
         rollout_tasks: list[asyncio.Task[MultiAgentLoopOutput]] = []
         # grpo group_size
         for _ in range(group_size):
@@ -1027,6 +1065,12 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             await asyncio.gather(*rollout_tasks, return_exceptions=True)
             await self.session_server_client.abort(group_id, exc.reason)
             return {}
+        except BaseException:
+            for task in rollout_tasks:
+                task.cancel()
+            await asyncio.gather(*rollout_tasks, return_exceptions=True)
+            # The caller handles group cancellation; never admit a partial group.
+            raise
         outputs = [output for _, output, _, _ in trajectories]
         agent_side = [output is not None for output in outputs]
         assert all(agent_side) or not any(agent_side), (
@@ -1115,7 +1159,11 @@ class MultiAgentLoopWorker(AgentLoopWorker):
     ) -> tuple[SessionBinding, MultiAgentLoopOutput]:
         """Run one trajectory with its session bound to this task."""
         session_id = await self.session_server_client.create_session(
-            group_id, traj_index, group_size, task_name
+            group_id,
+            traj_index,
+            group_size,
+            task_name,
+            request_policy=self.get_session_policy(),
         )
         binding = SessionBinding(
             group_id=group_id, traj_index=traj_index, session_id=session_id

@@ -23,6 +23,7 @@ itself.
 
 import asyncio
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -149,19 +150,23 @@ class SessionServerClient:
         )
 
     async def create_session(
-        self, group_id: int, traj_index: int, group_size: int, task_name: str
+        self,
+        group_id: int,
+        traj_index: int,
+        group_size: int,
+        task_name: str,
+        request_policy: Optional[dict[str, Any]] = None,
     ) -> str:
         """Open the session of one trajectory; returns its session id."""
-        resp = await self._checked_post(
-            group_id,
-            "/sessions",
-            {
-                "group_id": group_id,
-                "traj_index": traj_index,
-                "group_size": group_size,
-                "task_name": task_name,
-            },
-        )
+        body: dict[str, Any] = {
+            "group_id": group_id,
+            "traj_index": traj_index,
+            "group_size": group_size,
+            "task_name": task_name,
+        }
+        if request_policy:
+            body["request_policy"] = request_policy
+        resp = await self._checked_post(group_id, "/sessions", body)
         return resp["session_id"]
 
     async def generate(
@@ -170,6 +175,8 @@ class SessionServerClient:
         session_id: str,
         input_ids: list[int],
         sampling_params: Optional[dict] = None,
+        image_data: Optional[list[Any]] = None,
+        image_spans: Optional[Sequence[Sequence[int]]] = None,
     ) -> dict:
         """Run one generate call; returns the server's response dict.
 
@@ -180,6 +187,17 @@ class SessionServerClient:
         body: dict[str, Any] = {"input_ids": input_ids}
         if sampling_params is not None:
             body["sampling_params"] = sampling_params
+        if image_spans is not None:
+            body["image_spans"] = [list(span) for span in image_spans]
+        if image_data:
+            import base64
+
+            body["image_data"] = [
+                base64.b64encode(bytes(item)).decode("ascii")
+                if isinstance(item, (bytes, bytearray))
+                else item
+                for item in image_data
+            ]
         resp = await self._checked_post(
             group_id,
             f"/sessions/{session_id}/generate",

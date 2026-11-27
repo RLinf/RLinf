@@ -35,7 +35,7 @@ from rlinf.agents.tokenization.agentic_tokenizer import AgenticTokenizer
 class ChatCheckpoint(NamedTuple):
     """The state a turn started from, for a retried request to render from.
 
-    Restoring a rollback means restoring all four at once, and the rollback
+    A rollback restores these fields together, and the rollback
     that uses it consumes it: a conversation's checkpoint is None once one
     rollback has run.
     """
@@ -44,6 +44,7 @@ class ChatCheckpoint(NamedTuple):
     last_input: Optional[list[int]]
     last_output: Optional[list[int]]
     tools: Optional[list]
+    image_history: Optional[dict] = None
 
 
 @dataclass
@@ -88,6 +89,58 @@ class ParsedMessage:
     has_reasoning: bool = False
     has_tool_calls: bool = False
     tool_call_parse_failed: bool = False
+
+
+_POLICY_FIELDS = frozenset({"ignore_sampling_params", "tool_choice_override"})
+
+
+def normalize_request_policy(
+    policy: Any,
+) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """Validate and normalize a session's declarative request policy."""
+    if policy is None:
+        return {}, None
+    if not isinstance(policy, dict):
+        return None, f"request_policy must be an object, got {policy!r}"
+    unsupported = sorted(set(policy) - _POLICY_FIELDS)
+    if unsupported:
+        return None, f"unsupported request_policy fields {unsupported!r}"
+    ignore_sampling = policy.get("ignore_sampling_params", False)
+    if not isinstance(ignore_sampling, bool):
+        return (
+            None,
+            "request_policy.ignore_sampling_params must be a bool, "
+            f"got {ignore_sampling!r}",
+        )
+    tool_choice_override = policy.get("tool_choice_override")
+    if tool_choice_override not in (None, "auto", "none"):
+        return (
+            None,
+            "request_policy.tool_choice_override must be 'auto', 'none', or null, "
+            f"got {tool_choice_override!r}",
+        )
+    if not ignore_sampling and tool_choice_override is None:
+        return {}, None
+    return {
+        "ignore_sampling_params": ignore_sampling,
+        "tool_choice_override": tool_choice_override,
+    }, None
+
+
+def apply_request_policy(body: dict, policy: dict[str, Any]) -> dict:
+    """Adapt an OpenAI chat completion request body per the session's policy."""
+    if not policy:
+        return body
+    adapted = dict(body)
+    if policy.get("ignore_sampling_params"):
+        for field in ("temperature", "top_p", "top_k"):
+            adapted.pop(field, None)
+    override = policy.get("tool_choice_override")
+    if override == "none":
+        adapted["tool_choice"] = "none"
+    elif override == "auto" and adapted.get("tool_choice") not in (None, "none"):
+        adapted["tool_choice"] = "auto"
+    return adapted
 
 
 class ChatCompletions:
@@ -236,10 +289,7 @@ class ChatCompletions:
             and _match_prefix(messages, stored) is not None
         ):
             suffix = messages[len(stored) :]
-            clear_thinking = self._tokenizer.chat_template_kwargs.get(
-                "clear_thinking", False
-            )
-            if not (clear_thinking and _has_user_message(suffix)):
+            if not self._tokenizer.clears_thinking_for(suffix):
                 return RenderedInput(
                     self._tokenizer.build_native_tool_response(
                         list(last_tokens), suffix
@@ -479,10 +529,6 @@ class ChatCompletions:
             "usage": response["usage"],
         }
         return b"data: " + json.dumps(chunk).encode() + b"\n\ndata: [DONE]\n\n"
-
-
-def _has_user_message(messages: list[dict]) -> bool:
-    return any(message.get("role") == "user" for message in messages)
 
 
 def _template_messages(messages: list[dict]) -> list[dict]:

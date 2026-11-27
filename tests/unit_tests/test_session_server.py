@@ -51,8 +51,9 @@ import time
 from types import SimpleNamespace
 from typing import Optional
 
-import aiohttp  # noqa: E402
+import aiohttp
 import pytest
+import torch
 
 # The session server's HTTP layer, its mock engine, and the SGLang module its
 # worker imports (for the default sampling params) need these packages. The
@@ -575,6 +576,7 @@ def _make_worker(worker_cls, verify, base_url):
     worker.return_logprobs = not cfg.algorithm.recompute_logprobs
     worker.extra_keys_turn = None
     worker.extra_keys_traj = None
+    worker._running_groups = {}
     worker._session_binding = contextvars.ContextVar(
         "rlinf_agent_session_binding", default=None
     )
@@ -605,6 +607,55 @@ class TestSessionServerConfig:
         cfg = self._session_server_cfg(enable=enable, chat_template_kwargs=123)
         with pytest.raises(ValueError, match="chat_template_kwargs must be a mapping"):
             validate_session_server_cfg(cfg)
+
+    def test_routerless_session_server_validation(self, monkeypatch):
+        import rlinf.config as rlinf_cfg
+
+        monkeypatch.setattr(rlinf_cfg, "Cluster", lambda: object())
+        monkeypatch.setattr(
+            rlinf_cfg,
+            "ModelParallelComponentPlacement",
+            lambda cfg, cluster: SimpleNamespace(
+                is_disaggregated=cfg.mock_disaggregated,
+                placement_mode=SimpleNamespace(
+                    name="DISAGGREGATED" if cfg.mock_disaggregated else "COLLOCATED"
+                ),
+                rollout_num_model_instances=cfg.mock_instances,
+                rollout_nnodes_per_model_instance=1,
+            ),
+        )
+        base = {
+            "runner": {"async_mode": True},
+            "reward": {"reward_type": "searchr1"},
+            "actor": {"training_backend": "megatron"},
+            "rollout": {
+                "sglang": {"backend_type": "server"},
+                "router": {"type": None},
+            },
+            "session_server": {"enable": True},
+            "mock_instances": 1,
+            "mock_disaggregated": True,
+        }
+        validated = validate_session_server_cfg(OmegaConf.create(base))
+        assert validated.rollout.router.type is None
+
+        bad = OmegaConf.create({**base, "mock_instances": 2})
+        with pytest.raises(ValueError, match="single single-node rollout instance"):
+            validate_session_server_cfg(bad)
+
+        bad_collocated = OmegaConf.create({**base, "mock_disaggregated": False})
+        with pytest.raises(ValueError, match="disaggregated placement"):
+            validate_session_server_cfg(bad_collocated)
+
+        bad_critic = OmegaConf.create({**base, "critic": {"use_critic_model": True}})
+        with pytest.raises(ValueError, match="use_critic_model=False"):
+            validate_session_server_cfg(bad_critic)
+
+        bad_both_modes = OmegaConf.create(
+            {**base, "runner": {"async_mode": True, "synchronous": True}}
+        )
+        with pytest.raises(ValueError, match="exactly one of"):
+            validate_session_server_cfg(bad_both_modes)
 
     def test_reasoning_eval_rejects_an_enabled_session_server(self):
         """Only the asynchronous training runner drives the session servers:
@@ -2234,6 +2285,7 @@ class TestChatCompletionsAgentLoop:
         worker.return_logprobs = False
         worker.extra_keys_turn = None
         worker.extra_keys_traj = None
+        worker._running_groups = {}
         worker.cfg = validate_session_server_cfg(
             OmegaConf.create(
                 {
@@ -2344,6 +2396,9 @@ class TestStartupFailure:
         server._host = "127.0.0.1"
         server._port = find_available_port()
         server._chat_template_kwargs = {}
+        server._minimum_output_tokens = 0
+        server._multimodal_ctx = None
+        server._max_seq_length = 0
         server._http_server = SimpleNamespace(started=False)
         server._http_server_task = None
         server._serve_error = None
@@ -2846,3 +2901,736 @@ class TestPayloadWriterFailures:
 async def _append_async(target, value):
     """Record a group id the way the writer's callback does."""
     target.append(value)
+
+
+def test_session_server_request_policy_validation_and_application():
+    from unittest.mock import Mock
+
+    from rlinf.workers.rollout.session_server.chat_completions import (
+        apply_request_policy,
+        normalize_request_policy,
+    )
+
+    assert normalize_request_policy(None) == ({}, None)
+    assert normalize_request_policy(
+        {"ignore_sampling_params": False, "tool_choice_override": None}
+    ) == ({}, None)
+    policy, err = normalize_request_policy(
+        {"ignore_sampling_params": True, "tool_choice_override": "auto"}
+    )
+    assert err is None
+    assert policy == {
+        "ignore_sampling_params": True,
+        "tool_choice_override": "auto",
+    }
+
+    assert normalize_request_policy("bad")[1] is not None
+    assert normalize_request_policy({"unknown": 1})[1] is not None
+    assert normalize_request_policy({"ignore_sampling_params": 1})[1] is not None
+    assert normalize_request_policy({"tool_choice_override": "required"})[1] is not None
+
+    body = {
+        "tool_choice": "required",
+        "temperature": 0.2,
+        "top_k": 20,
+        "top_p": 0.9,
+        "tools": [{"type": "function"}],
+    }
+    adapted = apply_request_policy(body, policy)
+    assert adapted == {"tool_choice": "auto", "tools": body["tools"]}
+    # Original caller body is never mutated; explicit "none" stays "none".
+    assert body["tool_choice"] == "required"
+    assert (
+        apply_request_policy(
+            {"tool_choice": "none"},
+            {"ignore_sampling_params": False, "tool_choice_override": "auto"},
+        )["tool_choice"]
+        == "none"
+    )
+    assert (
+        apply_request_policy(
+            {"tool_choice": "auto"},
+            {"ignore_sampling_params": False, "tool_choice_override": "none"},
+        )["tool_choice"]
+        == "none"
+    )
+
+    # _create_session validates and stores request_policy.
+    worker = SessionServerWorker.__new__(SessionServerWorker)
+    worker._expected_group_size = 2
+    worker._groups = {}
+    worker._sessions = {}
+    worker._payload_writer = Mock(num_shards=1)
+    worker._next_payload_shard = 0
+
+    bad_resp = asyncio.run(
+        worker._create_session(
+            {
+                "group_id": 1,
+                "traj_index": 0,
+                "group_size": 2,
+                "task_name": "agent",
+                "request_policy": {"tool_choice_override": "required"},
+            }
+        )
+    )
+    assert bad_resp.status_code == 400
+
+    ok_resp = asyncio.run(
+        worker._create_session(
+            {
+                "group_id": 1,
+                "traj_index": 0,
+                "group_size": 2,
+                "task_name": "agent",
+                "request_policy": policy,
+            }
+        )
+    )
+    assert ok_resp.status_code == 200
+    sid = json.loads(ok_resp.body)["session_id"]
+    assert worker._sessions[sid].request_policy == policy
+
+
+def test_session_server_aligned_multimodal_chat_and_generate(monkeypatch):
+    import base64
+    import io
+    from unittest.mock import AsyncMock
+
+    from PIL import Image
+
+    from rlinf.agents.tokenization.agentic_tokenizer import get_agentic_tokenizer
+    from rlinf.hybrid_engines.sglang.multimodal import IMAGE_SPANS_PARAM
+    from rlinf.workers.rollout.session_server.chat_completions import (
+        ChatCheckpoint,
+        ChatCompletions,
+    )
+    from rlinf.workers.rollout.session_server.multimodal import (
+        MultimodalSessionContext,
+    )
+
+    class _FakeImageProc:
+        patch_size = 14
+        merge_size = 2
+        size = {"shortest_edge": 56 * 56, "longest_edge": 28 * 28 * 1280}
+
+        def __call__(self, images, return_tensors="pt", size=None):
+            width = images[0].width
+            grid = torch.tensor([[1, 2, 4]] if width <= 20 else [[1, 4, 4]])
+            return {
+                "pixel_values": torch.full((int(grid.prod().item()), 3), float(width)),
+                "image_grid_thw": grid,
+            }
+
+    vocab = {
+        "<|vision_start|>": 101,
+        "<|image_pad|>": 102,
+        "<|vision_end|>": 103,
+        "<|im_end|>": 104,
+        "<think>": 105,
+        "</think>": 106,
+        "\n": 107,
+    }
+
+    class _FakeTokenizer:
+        unk_token_id = 0
+
+        def convert_tokens_to_ids(self, tokens):
+            if isinstance(tokens, str):
+                return vocab.get(tokens, 0)
+            return [vocab.get(tok, 0) for tok in tokens]
+
+        def encode(self, text, add_special_tokens=False):
+            out, i = [], 0
+            while i < len(text):
+                matched = next((tok for tok in vocab if text.startswith(tok, i)), None)
+                if matched:
+                    out.append(vocab[matched])
+                    i += len(matched)
+                else:
+                    out.append(ord(text[i]) + 1000)
+                    i += 1
+            return out
+
+        def __call__(self, text, add_special_tokens=False):
+            return {"input_ids": self.encode(text, add_special_tokens=False)}
+
+        def apply_chat_template(
+            self,
+            messages,
+            tools=None,
+            add_generation_prompt=True,
+            tokenize=False,
+            return_dict=False,
+            **kwargs,
+        ):
+            last_user = max(
+                (i for i, m in enumerate(messages) if m.get("role") == "user"),
+                default=-1,
+            )
+            parts = []
+            if tools is not None:
+                parts.append("tools:" + json.dumps(tools, ensure_ascii=False))
+            for idx, m in enumerate(messages):
+                content = m.get("content", "")
+                if isinstance(content, list):
+                    rendered = "".join(
+                        "<|vision_start|><|image_pad|><|vision_end|>"
+                        if p.get("type") == "image_url"
+                        else p.get("text", "")
+                        for p in content
+                    )
+                else:
+                    rendered = str(content)
+                reasoning = ""
+                if (
+                    m.get("role") == "assistant"
+                    and m.get("reasoning_content")
+                    and idx > last_user
+                ):
+                    reasoning = f"<think>{m['reasoning_content']}</think>"
+                calls = ""
+                if m.get("tool_calls"):
+                    calls = json.dumps(m["tool_calls"], ensure_ascii=False)
+                parts.append(f"{m['role']}:{reasoning}{rendered}{calls}<|im_end|>\n")
+            if add_generation_prompt:
+                parts.append("assistant:<think>")
+            rendered_text = "|".join(parts)
+            return (
+                self.encode(rendered_text, add_special_tokens=False)
+                if tokenize
+                else rendered_text
+            )
+
+    def _make_png_bytes(width: int) -> bytes:
+        buf = io.BytesIO()
+        Image.new("RGB", (width, 16), "red").save(buf, format="PNG")
+        return buf.getvalue()
+
+    def _b64_url(raw: bytes) -> str:
+        return "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+
+    tok = _FakeTokenizer()
+    proc = SimpleNamespace(tokenizer=tok, image_processor=_FakeImageProc())
+    monkeypatch.setattr(
+        "transformers.AutoProcessor.from_pretrained", lambda *a, **kw: proc
+    )
+    ctx = MultimodalSessionContext(model_path="dummy", precision="bf16")
+    chat_entry = ChatCompletions(get_agentic_tokenizer(tok, "qwen3_5"), "dummy")
+
+    img1 = _make_png_bytes(16)
+    img2 = _make_png_bytes(32)
+    tools_with_literal = [
+        {
+            "type": "function",
+            "function": {
+                "name": "look",
+                "description": "Note <|vision_start|><|image_pad|><|vision_end|>",
+            },
+        }
+    ]
+    msgs1 = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": _b64_url(img1)}},
+                {
+                    "type": "text",
+                    "text": "Literal <|vision_start|><|image_pad|><|vision_end|> __rlinf_lit_imgpad_0__!",
+                },
+            ],
+        }
+    ]
+    rendered1, info1 = ctx.render_chat(
+        chat_entry, None, [], msgs1, tools_with_literal, None
+    )
+    assert len(info1["spans"]) == 1
+    s1, e1 = info1["spans"][0]
+    assert e1 - s1 == 2  # 16 -> 2 image pad tokens, literal & tool markers ignored!
+    assert rendered1.input_ids[s1 - 1 : e1 + 1] == [101, 102, 102, 103]
+    assert (
+        sum(1 for tid in rendered1.input_ids if tid == 102) == 4
+    )  # 2 real + 1 user literal + 1 tool schema literal
+    needle = tok.encode("__rlinf_lit_imgpad_0__")
+    assert any(
+        rendered1.input_ids[k : k + len(needle)] == needle
+        for k in range(len(rendered1.input_ids) - len(needle) + 1)
+    )  # Sentinel collision avoided cleanly!
+
+    # System image, HTTP URL, and corrupt PNG bytes fail cleanly with ValueError.
+    with pytest.raises(ValueError, match="embedded image data URLs"):
+        ctx.render_chat(
+            chat_entry,
+            None,
+            [],
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": "http://x/a.png"}}
+                    ],
+                }
+            ],
+            None,
+            None,
+        )
+    with pytest.raises(ValueError, match="System messages"):
+        ctx.render_chat(
+            chat_entry,
+            None,
+            [],
+            [
+                {
+                    "role": "system",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": _b64_url(img1)}}
+                    ],
+                }
+            ],
+            None,
+            None,
+        )
+    with pytest.raises(ValueError, match="Invalid image payload"):
+        ctx.render_chat(
+            chat_entry,
+            None,
+            [],
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": _b64_url(b"badpng")}}
+                    ],
+                }
+            ],
+            None,
+            None,
+        )
+
+    # Wire into SessionServerWorker and check forwarding, dedup, rollback, /generate, abort, close.
+    worker = SessionServerWorker.__new__(SessionServerWorker)
+    worker._cfg = OmegaConf.create(
+        {
+            "rollout": {
+                "record_token_weight_versions": True,
+                "sglang": {"align_multimodal_inputs": True},
+            },
+            "runner": {"seq_length": 4096},
+            "session_server": {"minimum_output_tokens": 16},
+            "algorithm": {"loss_scales": ["agent_level"]},
+        }
+    )
+    worker._max_seq_length = 4096
+    worker._minimum_output_tokens = 16
+    worker._multimodal_ctx = ctx
+    worker._return_logprob = True
+    worker._verify_assembly = False
+    worker._loaded_versions = [1]
+    worker._metrics = {
+        "session_server/prefix_rewritten": 0,
+        "session_server/prefix_continuous": 0,
+    }
+    worker._sampling_params = {"max_new_tokens": 64}
+    worker._groups = {1: _GroupState(group_id=1, task_name="rpent", group_size=1)}
+    worker._reported_sessions = {}
+    forwarded_bodies = []
+
+    async def fake_forward(body, routing_key, task_name):
+        forwarded_bodies.append(body)
+        return {
+            "output_ids": [10, 11, 104],
+            "meta_info": {
+                "finish_reason": {"type": "stop"},
+                "rollout_weight_versions": [1, 1, 1],
+                "output_token_logprobs": [[-0.1, 10], [-0.2, 11], [-0.3, 104]],
+                "weight_version": 1,
+            },
+        }
+
+    worker._forward_generate = fake_forward
+    emitted_parts = []
+    worker._emit_part = AsyncMock(
+        side_effect=lambda sess, part: emitted_parts.append(part)
+    )
+    worker._maybe_finalize = AsyncMock(return_value=False)
+
+    session = _SessionState(session_id="s1", group_id=1, traj_index=0, entry="chat")
+    worker._sessions = {"s1": session}
+
+    ok_res, err = asyncio.run(
+        worker._generate_core(
+            session, rendered1.input_ids, None, None, image_info=info1
+        )
+    )
+    assert err is None
+    assert forwarded_bodies[-1]["sampling_params"]["custom_params"] == {
+        IMAGE_SPANS_PARAM: info1["spans"]
+    }
+    assert len(forwarded_bodies[-1]["image_data"]) == 1
+    assert len(emitted_parts[-1].image_input["new_images"]) == 1
+
+    # Incremental Qwen3.5 tool-response turn: parses JSON tool_calls args w/ literal marker,
+    # takes render_incremental_text path, deduplicates img1, and keeps continues_prev=True.
+    assistant_call = {
+        "role": "assistant",
+        "reasoning_content": "think",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "look",
+                    "arguments": json.dumps(
+                        {"note": "<|vision_start|><|image_pad|><|vision_end|>"}
+                    ),
+                },
+            }
+        ],
+    }
+    tool_msg = {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": [{"type": "image_url", "image_url": {"url": _b64_url(img2)}}],
+    }
+    msgs2 = [*msgs1, assistant_call, tool_msg]
+    conv1 = ChatConversation(
+        messages=[*msgs1, assistant_call],
+        tools=tools_with_literal,
+        checkpoint=ChatCheckpoint(
+            messages=msgs1,
+            last_input=None,
+            last_output=None,
+            tools=tools_with_literal,
+            image_history=info1,
+        ),
+    )
+    rendered2, info2 = ctx.render_chat(
+        chat_entry,
+        conv1,
+        rendered1.input_ids + [10, 11, 104],
+        msgs2,
+        tools_with_literal,
+        session.image_history,
+    )
+    assert rendered2.input_ids[: len(rendered1.input_ids) + 3] == [
+        *rendered1.input_ids,
+        10,
+        11,
+        104,
+    ]
+    assert len(info2["spans"]) == 2
+    assert info2["spans"][1][1] - info2["spans"][1][0] == 4  # img2 width 32 -> 4 pads
+    ok_res2, err2 = asyncio.run(
+        worker._generate_core(
+            session, rendered2.input_ids, None, None, image_info=info2
+        )
+    )
+    assert err2 is None
+    assert session.turns[1].lcp == len(rendered1.input_ids) + 3
+    assert list(emitted_parts[-1].image_input["new_images"].keys()) == [
+        info2["digests"][1]
+    ]
+
+    # Retried request triggers multimodal rollback and restores checkpoint.image_history.
+    rendered_rb, info_rb = ctx.render_chat(
+        chat_entry,
+        conv1,
+        rendered1.input_ids + [10, 11, 104],
+        msgs1,
+        tools_with_literal,
+        info2,
+    )
+    assert rendered_rb.rollback is True
+    assert info_rb["spans"] == info1["spans"]
+
+    # Direct /generate entry via SessionServerClient serialization + prepare_generate_turn.
+    gen_calls = []
+
+    class _RecordingClient:
+        async def async_post(self, path, body, timeout_s=None):
+            gen_calls.append((path, body))
+            _, g_err = await worker._generate_core(
+                session,
+                list(body["input_ids"]),
+                body.get("sampling_params"),
+                (body.get("rlinf") or {}).get("prev_kept_len"),
+                {
+                    k: v
+                    for k, v in body.items()
+                    if k not in ("rlinf", "input_ids", "sampling_params")
+                },
+            )
+            assert g_err is None
+            return {"output_ids": [10, 11, 104]}
+
+    client = SessionServerClient(["http://127.0.0.1:1"], 30.0, 4.0)
+    client._clients[0] = _RecordingClient()
+    prompt_ids_gen = [900, 101, 102, 102, 103, 901]
+    asyncio.run(
+        client.generate(
+            1, "s1", prompt_ids_gen, image_data=[img1], image_spans=[[2, 4]]
+        )
+    )
+    assert gen_calls[-1][1]["image_spans"] == [[2, 4]]
+    assert gen_calls[-1][1]["image_data"] == [base64.b64encode(img1).decode("ascii")]
+    assert forwarded_bodies[-1]["sampling_params"]["custom_params"] == {
+        IMAGE_SPANS_PARAM: [[2, 4]]
+    }
+
+    # /generate error paths: corrupt PNG -> 400, width mismatch -> 400, verify_assembly -> 400, disabled -> 400.
+    _, err_corrupt = asyncio.run(
+        worker._generate_core(
+            session,
+            prompt_ids_gen,
+            None,
+            None,
+            {"image_data": [b"corrupt"], "image_spans": [[2, 4]]},
+        )
+    )
+    assert err_corrupt[0] == 400 and "Invalid image payload" in err_corrupt[1]
+
+    _, err_width = asyncio.run(
+        worker._generate_core(
+            session,
+            [900, 101, 102, 103, 901],
+            None,
+            None,
+            {"image_data": [img1], "image_spans": [[2, 3]]},
+        )
+    )
+    assert err_width[0] == 400 and "patch width" in err_width[1]
+
+    worker._verify_assembly = True
+    _, err_verify = asyncio.run(
+        worker._generate_core(
+            session,
+            prompt_ids_gen,
+            None,
+            None,
+            {"image_data": [img1], "image_spans": [[2, 4]]},
+        )
+    )
+    assert err_verify[0] == 400 and "verify_assembly" in err_verify[1]
+    worker._verify_assembly = False
+
+    worker._multimodal_ctx = None
+    _, err_disabled = asyncio.run(
+        worker._generate_core(
+            session,
+            prompt_ids_gen,
+            None,
+            None,
+            {"image_data": [img1], "image_spans": [[2, 4]]},
+        )
+    )
+    assert err_disabled[0] == 400 and "align_multimodal_inputs" in err_disabled[1]
+    worker._multimodal_ctx = ctx
+
+    # Headroom check enforces minimum_output_tokens on /generate too.
+    worker._max_seq_length = len(rendered2.input_ids) + 4
+    too_long, err_room = asyncio.run(
+        worker._generate_core(
+            session, rendered2.input_ids, None, None, image_info=info2
+        )
+    )
+    assert too_long is None and err_room[0] == 400
+    worker._max_seq_length = 4096
+
+    # Aborted turn returns 503; mismatched rollout_weight_versions returns 500.
+    async def abort_forward(body, rk, tn):
+        return {"output_ids": [10], "meta_info": {"finish_reason": {"type": "abort"}}}
+
+    worker._forward_generate = abort_forward
+    _, err_abort = asyncio.run(
+        worker._generate_core(
+            session, rendered1.input_ids, None, None, image_info=info1
+        )
+    )
+    assert err_abort[0] == 503
+
+    async def bad_ver_forward(body, rk, tn):
+        return {
+            "output_ids": [10, 11],
+            "meta_info": {
+                "finish_reason": {"type": "stop"},
+                "rollout_weight_versions": [1],
+                "output_token_logprobs": [[-0.1, 10], [-0.2, 11]],
+                "weight_version": 1,
+            },
+        }
+
+    worker._forward_generate = bad_ver_forward
+    _, err_ver = asyncio.run(
+        worker._generate_core(
+            session, rendered1.input_ids, None, None, image_info=info1
+        )
+    )
+    assert err_ver[0] == 500 and "policy version" in err_ver[1]
+
+    # Chat close classifies turns and defaults is_end & idx_to_sub_traj when undeclared.
+    assert asyncio.run(worker._close_session("s1", {})).status_code == 200
+    assert session.turns[0].is_end is True
+    assert session.turns[1].continues_prev is True
+    assert session.extra_fields_train == {"idx_to_sub_traj": [0, 0, 0]}
+
+
+def test_assemble_group_payload_rehydrates_dedup_images_and_folds_turns():
+    from rlinf.workers.rollout.session_server.assembly import (
+        assemble_group_payload,
+        fold_continuous_turns,
+    )
+    from rlinf.workers.rollout.session_server.payload import GroupPayload, PayloadPart
+
+    p0 = torch.full((4, 3), 1.0)
+    g0 = torch.tensor([[1, 2, 2]])
+    # Turn 0 dropped as not_training (rolled back) still carries new_images for Turn 1!
+    parts = [
+        PayloadPart(
+            group_id=1,
+            traj_index=0,
+            turn_index=0,
+            input_ids=[1, 10, 10, 2, 5],
+            output_ids=[6],
+            logprobs=[-0.5],
+            version_start=1,
+            weight_version=1,
+            finish_reason={"type": "stop"},
+            image_input={
+                "digests": ["d0"],
+                "image_spans": [[1, 3]],
+                "new_images": {"d0": (p0, g0)},
+            },
+            token_weight_versions=[1],
+        ),
+        PayloadPart(
+            group_id=1,
+            traj_index=0,
+            turn_index=1,
+            input_ids=[1, 10, 10, 2, 5],
+            output_ids=[6, 7],
+            logprobs=[-0.1, -0.2],
+            version_start=1,
+            weight_version=1,
+            finish_reason={"type": "stop"},
+            image_input={"digests": ["d0"], "image_spans": [[1, 3]], "new_images": {}},
+            token_weight_versions=[1, 1],
+        ),
+        PayloadPart(
+            group_id=1,
+            traj_index=0,
+            turn_index=2,
+            input_ids=[1, 10, 10, 2, 5, 6, 7, 8],
+            output_ids=[9],
+            logprobs=[-0.3],
+            version_start=1,
+            weight_version=1,
+            finish_reason={"type": "stop"},
+            image_input={"digests": ["d0"], "image_spans": [[1, 3]], "new_images": {}},
+            token_weight_versions=[1],
+        ),
+        PayloadPart(
+            group_id=1,
+            traj_index=0,
+            turn_index=-1,
+            input_ids=[],
+            output_ids=[],
+            logprobs=None,
+            version_start=0,
+            weight_version=0,
+            finish_reason={},
+            last=True,
+            rewards=[1.0],
+            verdicts={
+                0: {
+                    "kept_lens": {1: 2, 2: 1},
+                    "continues_prev": {0: False, 1: False, 2: True},
+                    "is_end": {1: False, 2: True},
+                    "not_training": {0: True},
+                    "extra_fields_train": {},
+                }
+            },
+        ),
+    ]
+    assembled = assemble_group_payload(GroupPayload(group_id=1, parts=parts), True)
+    assert assembled.num_sequence == 2
+    assert len(assembled.multi_modal_inputs) == 2
+    assert assembled.multi_modal_inputs[0]["mm_token_type_ids"].tolist() == [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+    ]
+
+    folded = fold_continuous_turns(assembled, max_scored_tokens=64)
+    assert folded.num_sequence == 1
+    assert folded.response_mask == [[True, True, False, True]]
+    assert folded.extra_fields_turn == {
+        "rollout_weight_versions": [[1, 1, 1]],
+        "generate_calls": [2],
+    }
+    assert folded.multi_modal_inputs[0]["mm_token_type_ids"].tolist() == [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ]
+
+    partial_versions = [
+        PayloadPart(
+            group_id=1,
+            traj_index=0,
+            turn_index=0,
+            input_ids=[1],
+            output_ids=[2],
+            logprobs=[-0.1],
+            version_start=1,
+            weight_version=1,
+            finish_reason={"type": "stop"},
+            token_weight_versions=[1],
+        ),
+        PayloadPart(
+            group_id=1,
+            traj_index=0,
+            turn_index=1,
+            input_ids=[1, 2],
+            output_ids=[3],
+            logprobs=[-0.2],
+            version_start=1,
+            weight_version=1,
+            finish_reason={"type": "stop"},
+            token_weight_versions=None,
+        ),
+        PayloadPart(
+            group_id=1,
+            traj_index=0,
+            turn_index=2,
+            input_ids=[],
+            output_ids=[],
+            logprobs=None,
+            version_start=0,
+            weight_version=0,
+            finish_reason={},
+            last=True,
+            rewards=[1.0],
+            verdicts={
+                0: {
+                    "kept_lens": {0: 1, 1: 1},
+                    "continues_prev": {0: False, 1: True},
+                    "is_end": {0: False, 1: True},
+                    "not_training": {},
+                    "extra_fields_train": {},
+                }
+            },
+        ),
+    ]
+    with pytest.raises(ValueError, match="sampled token versions"):
+        assemble_group_payload(GroupPayload(group_id=1, parts=partial_versions), True)

@@ -60,7 +60,13 @@ class RolloutBuffer:
     second task arrives.
     """
 
-    def __init__(self, cfg: DictConfig, train_dataset: Dataset):
+    def __init__(
+        self,
+        cfg: DictConfig,
+        train_dataset: Dataset,
+        *,
+        data_batch_size: int | None = None,
+    ):
         self.rollout_batch_size = cfg.data.rollout_batch_size
         self.max_inflight_groups = cfg.rollout_buffer.max_inflight_groups
         self.max_buffered_groups = cfg.rollout_buffer.max_buffered_groups
@@ -102,7 +108,7 @@ class RolloutBuffer:
         # Version of the release request waiting for a full batch.
         self.pending_release_version: Optional[int] = None
         self.next_group_id = 0
-        self._build_dataloader(cfg, train_dataset)
+        self._build_dataloader(cfg, train_dataset, data_batch_size=data_batch_size)
 
     def _task(self, task_name: Optional[str]) -> dict[str, Any]:
         """The per-task state dict, created at the task's first issued
@@ -142,7 +148,13 @@ class RolloutBuffer:
             },
         )
 
-    def _build_dataloader(self, cfg: DictConfig, train_dataset: Dataset):
+    def _build_dataloader(
+        self,
+        cfg: DictConfig,
+        train_dataset: Dataset,
+        *,
+        data_batch_size: int | None = None,
+    ):
         """Create the dataloader behind the buffer.
 
         Mirrors `ReasoningRunner._build_dataloader` (same sampler, seed,
@@ -158,10 +170,13 @@ class RolloutBuffer:
         else:
             sampler = SequentialSampler(data_source=train_dataset)
 
+        if data_batch_size is None:
+            data_batch_size = cfg.data.rollout_batch_size * cfg.algorithm.get(
+                "max_num_gen_batches", 1
+            )
         self.dataloader = StatefulDataLoader(
             dataset=train_dataset,
-            batch_size=cfg.data.rollout_batch_size
-            * cfg.algorithm.get("max_num_gen_batches", 1),
+            batch_size=data_batch_size,
             num_workers=cfg.data.num_workers,
             drop_last=True,
             collate_fn=collate_fn,
@@ -470,10 +485,20 @@ class RolloutBufferWorker(Worker):
     exists.
     """
 
-    def __init__(self, cfg: DictConfig, train_dataset: Dataset):
+    def __init__(
+        self,
+        cfg: DictConfig,
+        train_dataset: Dataset,
+        *,
+        data_batch_size: int | None = None,
+    ):
         super().__init__()
         self.cfg = cfg
-        self.buffer = RolloutBuffer(cfg, train_dataset)
+        if data_batch_size is None and OmegaConf.select(
+            cfg, "runner.synchronous", default=False
+        ):
+            data_batch_size = cfg.data.get("sampling_batch_size")
+        self.buffer = RolloutBuffer(cfg, train_dataset, data_batch_size=data_batch_size)
         down_sampling_cfg = cfg.algorithm.get("down_sampling", None) or {}
         down_sampling_config = down_sampling_cfg.get("down_sampling_config", None) or {}
         self.reject_equal_reward = bool(
@@ -645,12 +670,17 @@ class RolloutBufferWorker(Worker):
                     already_buffered=False,
                 )
                 continue
+            result, metadata = await self._prepare_result(result, metadata)
             self.buffer.record_result(result, metadata)
             if (
                 self.buffer.pending_release_version is not None
                 and self.buffer.can_release()
             ):
                 await self._dispatch_release(rollout_channel)
+
+    async def _prepare_result(self, result, metadata):
+        """Allow checkpointable buffers to resolve a session payload before release."""
+        return result, metadata
 
     async def _dispatch_release(self, rollout_channel: Channel):
         version = self.buffer.pending_release_version
@@ -729,6 +759,12 @@ class RolloutBufferWorker(Worker):
 
     async def set_loaded_versions(self, versions: dict[int, int]):
         self.buffer.set_loaded_versions(versions)
+
+    async def admit_cohort(self, cohort: dict[str, Any]) -> list[int]:
+        """Admit a selected synchronous cohort (implemented by cohort buffers)."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support synchronous cohort admission."
+        )
 
     async def get_metrics(self) -> dict:
         return self.buffer.get_step_metrics()

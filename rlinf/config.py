@@ -2525,6 +2525,13 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
     if reward_cfg is None or reward_cfg.get("reward_type", None) != "searchr1":
         return cfg
 
+    if OmegaConf.select(
+        cfg, "session_server.enable", default=False
+    ) and not cfg.runner.get("async_mode", False):
+        raise ValueError(
+            "SearchR1 with session_server.enable=True requires runner.async_mode=True."
+        )
+
     with open_dict(cfg.agentloop):
         cfg.agentloop.setdefault("truncate_response", True)
     if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
@@ -2877,6 +2884,20 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             if task_settings.get("generate_timeout_s", None) is None:
                 task_settings.generate_timeout_s = session_cfg.generate_timeout_s
         session_cfg.verify_assembly = bool(session_cfg.get("verify_assembly", False))
+        session_cfg.fold_continuous_turns = bool(
+            session_cfg.get("fold_continuous_turns", False)
+        )
+        min_output_tokens = session_cfg.get("minimum_output_tokens", 0)
+        if (
+            isinstance(min_output_tokens, bool)
+            or not isinstance(min_output_tokens, int)
+            or min_output_tokens < 0
+        ):
+            raise ValueError(
+                "session_server.minimum_output_tokens must be a non-negative "
+                f"integer, found {min_output_tokens!r}."
+            )
+        session_cfg.minimum_output_tokens = int(min_output_tokens)
         # Checked before the conversion: dict() of anything else raises a
         # TypeError naming the call, not the config key.
         chat_template_kwargs = session_cfg.get("chat_template_kwargs", None)
@@ -2895,16 +2916,29 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
     reward_type = (
         reward_cfg.get("reward_type", None) if reward_cfg is not None else None
     )
-    if reward_type != "searchr1":
+    use_reward_model = (
+        bool(reward_cfg.get("use_reward_model", False))
+        if reward_cfg is not None
+        else False
+    )
+    if use_reward_model or reward_type not in (None, "searchr1"):
         raise ValueError(
-            f"session_server.enable requires reward.reward_type 'searchr1', "
-            f"found {reward_type!r}."
+            "session_server.enable requires reward.reward_type 'searchr1' or "
+            "None (agent-reported session rewards) with "
+            "reward.use_reward_model=False, found "
+            f"reward_type={reward_type!r}, use_reward_model={use_reward_model!r}."
         )
-    if not cfg.runner.get("async_mode", False):
+    async_mode = bool(cfg.runner.get("async_mode", False))
+    synchronous = bool(cfg.runner.get("synchronous", False))
+    if not (async_mode or synchronous) or (async_mode and synchronous):
         raise ValueError(
-            "session_server.enable requires runner.async_mode: only the "
-            "async runner drives the session servers (the synchronous and "
-            "eval runners keep the generate channels)."
+            "session_server.enable requires exactly one of runner.async_mode=True "
+            "or runner.synchronous=True on AsyncAgentRunner."
+        )
+    if OmegaConf.select(cfg, "critic.use_critic_model", default=False):
+        raise ValueError(
+            "session_server.enable requires critic.use_critic_model=False "
+            "(AsyncAgentRunner runs without a critic model)."
         )
     if cfg.actor.training_backend != "megatron":
         raise ValueError(
@@ -2935,7 +2969,8 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
         if cfg.rollout.get("router", None) is None:
             cfg.rollout.router = {}
         router_cfg = cfg.rollout.router
-        router_cfg.type = router_cfg.get("type", "sglang")
+        if "type" not in router_cfg:
+            router_cfg.type = "sglang"
         router_cfg.policy = router_cfg.get("policy", "manual")
         router_cfg.assignment_mode = router_cfg.get("assignment_mode", "min_load")
         router_cfg.disable_retries = bool(router_cfg.get("disable_retries", True))
@@ -2954,13 +2989,53 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
         )
         router_cfg.log_level = router_cfg.get("log_level", "warn")
 
-    if cfg.rollout.router.type != "sglang":
+    if cfg.rollout.router.type not in (None, "sglang"):
         raise ValueError(
-            f"session_server.enable requires rollout.router.type 'sglang': "
-            f"the session servers forward generates through a router so a "
-            f"group's requests stay on one engine; found "
-            f"{cfg.rollout.router.type!r}."
+            f"session_server.enable requires rollout.router.type 'sglang' or "
+            f"None, found {cfg.rollout.router.type!r}."
         )
+    for name in ("keep_alive_s", "engine_keep_alive_s"):
+        if not isinstance(cfg.session_server[name], int) or isinstance(
+            cfg.session_server[name], bool
+        ):
+            raise ValueError(
+                f"session_server.{name} must be a whole number of seconds "
+                f"(uvicorn's timeout_keep_alive and sglang's "
+                f"SGLANG_TIMEOUT_KEEP_ALIVE both take ints), found "
+                f"{cfg.session_server[name]!r}."
+            )
+    if cfg.session_server.keep_alive_s <= 1:
+        raise ValueError(
+            f"session_server.keep_alive_s must be > 1, found "
+            f"{cfg.session_server.keep_alive_s}: the session server's HTTP "
+            "clients hold idle connections one second shorter than this, "
+            "and a value of 1 or less leaves them no keepalive window."
+        )
+    if cfg.session_server.num_servers < 1 or cfg.session_server.payload_shards < 1:
+        raise ValueError(
+            f"session_server.num_servers and session_server.payload_shards "
+            f"must both be >= 1, found {cfg.session_server.num_servers} and "
+            f"{cfg.session_server.payload_shards}."
+        )
+    component_placement = ModelParallelComponentPlacement(cfg, Cluster())
+    if not component_placement.is_disaggregated:
+        raise ValueError(
+            "session_server.enable requires disaggregated placement between actor "
+            f"and rollout, found {component_placement.placement_mode.name}."
+        )
+    if cfg.rollout.router.type is None:
+        if (
+            component_placement.rollout_num_model_instances != 1
+            or component_placement.rollout_nnodes_per_model_instance != 1
+        ):
+            raise ValueError(
+                "session_server.enable with rollout.router.type=None "
+                "requires a single single-node rollout instance; found "
+                f"{component_placement.rollout_num_model_instances} instances "
+                f"with {component_placement.rollout_nnodes_per_model_instance} nodes each."
+            )
+        return cfg
+
     if cfg.rollout.router.policy not in ("manual", "cache_aware"):
         raise ValueError(
             f"rollout.router.policy must be 'manual' or 'cache_aware' when the "
@@ -2998,23 +3073,6 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             "auto-scheduler migration moves requests between rollout "
             "instances, which breaks the router's per-group worker pinning."
         )
-    for name in ("keep_alive_s", "engine_keep_alive_s"):
-        if not isinstance(cfg.session_server[name], int) or isinstance(
-            cfg.session_server[name], bool
-        ):
-            raise ValueError(
-                f"session_server.{name} must be a whole number of seconds "
-                f"(uvicorn's timeout_keep_alive and sglang's "
-                f"SGLANG_TIMEOUT_KEEP_ALIVE both take ints), found "
-                f"{cfg.session_server[name]!r}."
-            )
-    if cfg.session_server.keep_alive_s <= 1:
-        raise ValueError(
-            f"session_server.keep_alive_s must be > 1, found "
-            f"{cfg.session_server.keep_alive_s}: the session server's HTTP "
-            "clients hold idle connections one second shorter than this, "
-            "and a value of 1 or less leaves them no keepalive window."
-        )
     # The router's forwarding client holds idle connections for
     # pool_idle_timeout_secs. sglang-router 0.3.x has no such key and
     # hardcodes 50 s (sgl-model-gateway
@@ -3038,13 +3096,6 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             "rollout.router.type 'sglang' requires the sglang_router "
             "package; install it in the training environment."
         )
-    if cfg.session_server.num_servers < 1 or cfg.session_server.payload_shards < 1:
-        raise ValueError(
-            f"session_server.num_servers and session_server.payload_shards "
-            f"must both be >= 1, found {cfg.session_server.num_servers} and "
-            f"{cfg.session_server.payload_shards}."
-        )
-    component_placement = ModelParallelComponentPlacement(cfg, Cluster())
     if component_placement.rollout_num_model_instances == 1:
         logging.warning(
             "session_server.enable with a single rollout instance: the "
@@ -3203,9 +3254,20 @@ def validate_multimodal_learner_cfg(cfg: DictConfig) -> None:
         raise ValueError(
             "Aligned multimodal rollouts require agentloop.is_dynamic_rollout_batch=True."
         )
-    if OmegaConf.select(cfg, "session_server.enable", default=False):
+    router_cfg = cfg.rollout.get("router", None)
+    routerless_session = (
+        router_cfg is not None
+        and "type" in router_cfg
+        and router_cfg.type is None
+        and not OmegaConf.select(cfg, "session_server.verify_assembly", default=False)
+    )
+    if (
+        OmegaConf.select(cfg, "session_server.enable", default=False)
+        and not routerless_session
+    ):
         raise ValueError(
-            "Aligned multimodal rollouts are not supported with session_server.enable=True."
+            "Aligned multimodal rollouts with session_server.enable=True require "
+            "rollout.router.type=None and session_server.verify_assembly=False."
         )
 
 

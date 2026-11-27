@@ -28,6 +28,7 @@ cover every trajectory is finalized: its payload is completed, then its
 
 import asyncio
 import copy
+import math
 import os
 import time
 import uuid
@@ -38,7 +39,7 @@ import aiohttp
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from rlinf.data.schema.reasoning_results import (
     DiscardedGroup,
@@ -51,6 +52,12 @@ from rlinf.workers.rollout.session_server.chat_completions import (
     ChatCheckpoint,
     ChatCompletions,
     ChatConversation,
+    apply_request_policy,
+    normalize_request_policy,
+)
+from rlinf.workers.rollout.session_server.multimodal import (
+    MultimodalSessionContext,
+    attach_multimodal_forward_params,
 )
 from rlinf.workers.rollout.session_server.payload import (
     PayloadDiscard,
@@ -107,6 +114,8 @@ class _SessionState:
     entry: Optional[str] = None
     # The chat entry's server-side conversation.
     chat: Optional[ChatConversation] = None
+    image_history: Optional[dict] = None
+    request_policy: dict[str, Any] = field(default_factory=dict)
     # Set while a request of this session is being served, by either
     # endpoint: a session handles one request at a time.
     inflight: bool = False
@@ -156,6 +165,7 @@ class _GroupState:
     reported: bool = False
     write_failed: bool = False
     pending_settles: list[asyncio.Task] = field(default_factory=list)
+    sent_image_digests: set[str] = field(default_factory=set)
 
 
 class SessionServerWorker(Worker):
@@ -231,6 +241,13 @@ class SessionServerWorker(Worker):
         self._reported_sessions: dict[str, int] = {}
         self._fatal_error: Optional[RuntimeError] = None
         self._chat_template_kwargs = dict(session_server_cfg.chat_template_kwargs)
+        self._minimum_output_tokens = int(
+            session_server_cfg.get("minimum_output_tokens", 0)
+        )
+        self._max_seq_length = int(
+            OmegaConf.select(cfg, "runner.seq_length", default=0) or 0
+        )
+        self._multimodal_ctx: Optional[MultimodalSessionContext] = None
         # The chat route's format converter, built by _setup_chat when the
         # config names an agentic tokenizer family; None serves the
         # generate entry only.
@@ -345,6 +362,27 @@ class SessionServerWorker(Worker):
             f"Session server {self._server_index} chat entry ready (family {family})"
         )
 
+    def _setup_multimodal(self) -> None:
+        """Configure aligned multimodal preprocessing when enabled on SGLang rollout."""
+        from rlinf.config import rollout_aligns_multimodal_inputs
+
+        if not rollout_aligns_multimodal_inputs(self._cfg):
+            self._multimodal_ctx = None
+            return
+        model_cfg = self._cfg.rollout.model
+        precision = OmegaConf.select(self._cfg, "actor.model.precision", default=None)
+        if precision is None:
+            precision = model_cfg.get("precision", None)
+        self._multimodal_ctx = MultimodalSessionContext(
+            model_path=str(model_cfg.model_path),
+            trust_remote_code=bool(model_cfg.get("trust_remote_code", False)),
+            precision=precision,
+        )
+        self.log_info(
+            f"Session server {self._server_index} multimodal alignment ready "
+            f"(image_pad_id={self._multimodal_ctx.image_pad_id})"
+        )
+
     async def serve(
         self,
         router_url: str,
@@ -375,6 +413,7 @@ class SessionServerWorker(Worker):
             # Load the chat entry's tokenizer now, so a bad model path or chat
             # template fails at startup instead of on the first chat request.
             self._setup_chat()
+            self._setup_multimodal()
             self._router_client = InferenceHTTPClient(router_url, keepalive_timeout=4.0)
             self._agent_output_channel = agent_output_channel
             self._payload_writer = PayloadWriter(
@@ -522,6 +561,11 @@ class SessionServerWorker(Worker):
         task_name = body.get("task_name")
         if not isinstance(task_name, str) or not task_name:
             return self._error(400, "task_name must be a non-empty string")
+        request_policy, policy_error = normalize_request_policy(
+            body.get("request_policy")
+        )
+        if policy_error is not None:
+            return self._error(400, policy_error)
 
         if group_size != self._expected_group_size:
             return self._error(
@@ -565,7 +609,10 @@ class SessionServerWorker(Worker):
             )
 
         session = _SessionState(
-            session_id=None, group_id=group_id, traj_index=traj_index
+            session_id=None,
+            group_id=group_id,
+            traj_index=traj_index,
+            request_policy=request_policy,
         )
         session_id = uuid.uuid4().hex[:12]
         session.session_id = session_id
@@ -695,6 +742,7 @@ class SessionServerWorker(Worker):
         sampling_overrides: Any,
         prev_kept_len: Optional[int],
         body_fields: Optional[dict] = None,
+        image_info: Optional[dict[str, Any]] = None,
     ) -> tuple[Optional[dict], Optional[tuple[int, str]]]:
         """Run one generation turn for ``session``; both entries share it.
 
@@ -733,14 +781,46 @@ class SessionServerWorker(Worker):
 
         group = self._groups[session.group_id]
         version_start = min(self._loaded_versions)
-        turn = new_turn_record(
-            input_ids, session.last_input, session.last_output, prev_kept_len
-        )
 
         forwarded = dict(body_fields or {})
         forwarded["input_ids"] = input_ids
         forwarded["sampling_params"] = self._merged_sampling_params(sampling_overrides)
         forwarded["return_logprob"] = self._return_logprob
+
+        if self._max_seq_length and self._minimum_output_tokens > 0:
+            remaining = self._max_seq_length - len(input_ids)
+            if remaining < self._minimum_output_tokens:
+                return None, (
+                    400,
+                    f"the prompt has {len(input_ids)} tokens and the training "
+                    f"sequence length is {self._max_seq_length}, leaving {remaining} "
+                    f"tokens < minimum_output_tokens={self._minimum_output_tokens}",
+                )
+            requested = forwarded["sampling_params"].get("max_new_tokens")
+            forwarded["sampling_params"]["max_new_tokens"] = (
+                remaining if requested is None else min(int(requested), remaining)
+            )
+
+        if image_info is not None:
+            attach_multimodal_forward_params(
+                forwarded, image_info["spans"], image_info["raw_images"]
+            )
+        elif "image_data" in forwarded or "image_spans" in forwarded:
+            if self._multimodal_ctx is None:
+                return None, (
+                    400,
+                    "multimodal /generate inputs require "
+                    "rollout.sglang.align_multimodal_inputs=True",
+                )
+            if self._verify_assembly:
+                return None, (
+                    400,
+                    "verify_assembly=True does not support multimodal requests",
+                )
+            try:
+                image_info = self._multimodal_ctx.prepare_generate_turn(forwarded)
+            except ValueError as exc:
+                return None, (400, str(exc))
 
         try:
             result = await self._forward_generate(
@@ -784,6 +864,17 @@ class SessionServerWorker(Worker):
                 f"the engine reported a non-integer weight_version {weight_version!r}",
             )
 
+        if self._cfg.rollout.get("record_token_weight_versions", False):
+            versions = meta_info.get("rollout_weight_versions") or []
+            if len(versions) != len(output_ids) or any(
+                type(version) is not int or not 0 <= version <= weight_version
+                for version in versions
+            ):
+                return None, (
+                    500,
+                    "the engine must return one installed policy version per sampled token",
+                )
+
         # The group may have been discarded while this request was in
         # flight; a late response writes neither payload nor state.
         group = self._groups.get(session.group_id)
@@ -797,9 +888,37 @@ class SessionServerWorker(Worker):
         logprobs = None
         if self._return_logprob:
             token_logprobs = meta_info.get("output_token_logprobs") or []
+            strict_logprobs = image_info is not None or bool(
+                self._cfg.rollout.get("record_token_weight_versions", False)
+            )
+            if (strict_logprobs and len(token_logprobs) != len(output_ids)) or not all(
+                math.isfinite(float(item[0])) for item in token_logprobs
+            ):
+                return None, (
+                    500,
+                    "the engine must return one finite logprob per sampled token",
+                )
             logprobs = [float(item[0]) for item in token_logprobs]
 
+        part_image_input = None
+        if image_info is not None:
+            new_images = {
+                digest: tensors
+                for digest, tensors in image_info["tensors"].items()
+                if digest not in group.sent_image_digests
+            }
+            part_image_input = {
+                "digests": list(image_info["digests"]),
+                "image_spans": [list(span) for span in image_info["spans"]],
+                "new_images": new_images,
+            }
+            group.sent_image_digests.update(new_images)
+
+        turn = new_turn_record(
+            input_ids, session.last_input, session.last_output, prev_kept_len
+        )
         turn.output_len = len(output_ids)
+        turn.stopped_normally = finish_reason.get("type") == "stop"
         part = PayloadPart(
             group_id=session.group_id,
             traj_index=session.traj_index,
@@ -811,6 +930,8 @@ class SessionServerWorker(Worker):
             weight_version=weight_version,
             finish_reason=dict(finish_reason),
             prev_kept_len=prev_kept_len,
+            image_input=part_image_input,
+            token_weight_versions=meta_info.get("rollout_weight_versions"),
         )
         await self._emit_part(session, part)
         if group.discard_reason is not None:
@@ -827,6 +948,7 @@ class SessionServerWorker(Worker):
             self._metrics["session_server/prefix_rewritten"] += 1
         session.last_input = list(input_ids)
         session.last_output = list(output_ids)
+        session.image_history = image_info
         if self._verify_assembly:
             turn.merged_sampling_params = forwarded["sampling_params"]
         group.num_gen_tokens += len(output_ids)
@@ -926,6 +1048,8 @@ class SessionServerWorker(Worker):
                 "(agentloop.agentic_tokenizer); the chat entry needs one",
                 "no_agentic_tokenizer",
             )
+        if session.request_policy:
+            body = apply_request_policy(body, session.request_policy)
         reason = self._chat_entry.check_request(
             body, self._merged_sampling_params(None)
         )
@@ -942,19 +1066,49 @@ class SessionServerWorker(Worker):
                 session.entry = "chat"
             messages = body["messages"]
             tools = body.get("tools")
-            rendered = self._chat_entry.render(
-                session.chat,
-                (session.last_input or []) + (session.last_output or []),
-                messages,
-                tools,
-            )
+            try:
+                if self._multimodal_ctx is not None:
+                    rendered, image_info = self._multimodal_ctx.render_chat(
+                        self._chat_entry,
+                        session.chat,
+                        (session.last_input or []) + (session.last_output or []),
+                        messages,
+                        tools,
+                        session.image_history,
+                    )
+                else:
+                    if any(
+                        isinstance(part, dict) and part.get("type") == "image_url"
+                        for msg in messages
+                        for part in (
+                            msg.get("content")
+                            if isinstance(msg.get("content"), list)
+                            else ()
+                        )
+                    ):
+                        return self._openai_error(
+                            400,
+                            "image_url chat inputs require "
+                            "rollout.sglang.align_multimodal_inputs=True",
+                            "multimodal_not_enabled",
+                        )
+                    rendered = self._chat_entry.render(
+                        session.chat,
+                        (session.last_input or []) + (session.last_output or []),
+                        messages,
+                        tools,
+                    )
+                    image_info = None
+            except ValueError as exc:
+                return self._openai_error(400, str(exc), "invalid_request")
             # A turn's prompt and answer together have to fit in the length
             # the actor trains on. A chat client cannot know that limit, so
             # the entry holds it: the answer gets whatever room the prompt
             # leaves, and a prompt that does not fit is refused before
             # anything is recorded.
             max_len = self._session_max_len(session)
-            if len(rendered.input_ids) >= max_len:
+            required_room = max(1, self._minimum_output_tokens)
+            if len(rendered.input_ids) > max_len - required_room:
                 return self._openai_error(
                     400,
                     f"the prompt has {len(rendered.input_ids)} tokens and the "
@@ -977,15 +1131,18 @@ class SessionServerWorker(Worker):
                 last_input=session.last_input,
                 last_output=session.last_output,
                 tools=session.chat.tools if session.chat is not None else tools,
+                image_history=session.image_history,
             )
             result, error = await self._generate_core(
                 session,
                 list(rendered.input_ids),
                 overrides,
                 None,
+                image_info=image_info,
             )
             if error is not None:
                 return self._openai_error(*error, "generation_failed")
+            prompt_ids = session.last_input
             text = result.get("text")
             if text is None:
                 # The engines were started without a tokenizer
@@ -997,7 +1154,7 @@ class SessionServerWorker(Worker):
                 )
             parsed = self._chat_entry.parse(
                 text,
-                rendered.input_ids,
+                prompt_ids,
                 tools,
                 body.get("tool_choice") or "auto",
             )
@@ -1012,9 +1169,7 @@ class SessionServerWorker(Worker):
                 tools=tools,
                 checkpoint=checkpoint,
             )
-            response = self._chat_entry.response_body(
-                body, parsed, result, rendered.input_ids
-            )
+            response = self._chat_entry.response_body(body, parsed, result, prompt_ids)
             if body.get("stream"):
                 return Response(
                     content=self._chat_entry.stream_body(response),
@@ -1058,6 +1213,7 @@ class SessionServerWorker(Worker):
             tools=checkpoint.tools,
             checkpoint=None,
         )
+        session.image_history = checkpoint.image_history
         session.last_input = (
             None if checkpoint.last_input is None else list(checkpoint.last_input)
         )
@@ -1158,6 +1314,18 @@ class SessionServerWorker(Worker):
                 f"trajectory {session.traj_index} of group {session.group_id} "
                 f"has no trained turn; abort the group instead of closing it",
             )
+        loss_scales = (
+            OmegaConf.select(self._cfg, "algorithm.loss_scales", default=None) or ()
+        )
+        if (
+            session.entry == "chat"
+            and "agent_level" in loss_scales
+            and "idx_to_sub_traj" not in extra_fields_train
+        ):
+            extra_fields_train = {
+                **extra_fields_train,
+                "idx_to_sub_traj": [0] * trained_turn_count,
+            }
         for name, values in extra_fields_train.items():
             if (
                 not isinstance(values, list)
@@ -1219,8 +1387,11 @@ class SessionServerWorker(Worker):
             turn.kept_len = kept[turn_index]
             turn.continues_prev = continues[turn_index]
             # JSON keys arrive as strings, so look up both forms, as kept_len
-            # does; a turn the agent declares nothing about did not end.
-            turn.is_end = is_end.get(turn_index, is_end.get(str(turn_index), False))
+            # does; chat sessions default to normal-stop unless explicitly overridden.
+            default_is_end = turn.stopped_normally if session.entry == "chat" else False
+            turn.is_end = is_end.get(
+                turn_index, is_end.get(str(turn_index), default_is_end)
+            )
         session.extra_fields_train = extra_fields_train
 
         group.closed.add(session.traj_index)
@@ -1436,12 +1607,14 @@ class SessionServerWorker(Worker):
         group.rewards = []
         for session in group.sessions.values():
             session.turns.clear()
+            session.image_history = None
             session.last_input = None
             session.last_output = None
             session.chat = None
             session.extra_fields_train.clear()
             session.not_training_turns.clear()
         group.verify_result = None
+        group.sent_image_digests.clear()
         if reason == _WRITE_FAILED:
             self._metrics["session_server/payload_write_failed"] += 1
         await self._report_discard(group_id, reason)

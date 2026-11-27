@@ -23,6 +23,7 @@ skip when those are absent.
 """
 
 import asyncio
+import contextvars
 from types import SimpleNamespace
 from unittest import mock
 
@@ -88,9 +89,32 @@ def test_agent_loop_sends_multimodal_request_metadata():
     assert request["image_data"] == images
     assert request["image_spans"] == spans
 
-    worker.session_server_client = object()
-    with pytest.raises(ValueError, match="session server transport"):
-        asyncio.run(worker.generate(ids, {}, image_spans=spans))
+    calls = []
+
+    class _FakeSessionClient:
+        async def generate(self, group_id, sid, prompt_ids, sampling_params, **kw):
+            calls.append((group_id, sid, prompt_ids, kw))
+            return {"output_ids": [3]}
+
+    worker.session_server_client = _FakeSessionClient()
+    worker._session_binding = contextvars.ContextVar("b", default=None)
+    worker._verify_assembly = False
+    token = worker._session_binding.set(
+        SimpleNamespace(
+            group_id=7,
+            session_id="s1",
+            traj_index=0,
+            record_turn=lambda *a: None,
+        )
+    )
+    try:
+        asyncio.run(worker.generate(ids, {}, image_data=images, image_spans=spans))
+        assert calls[-1] == (7, "s1", ids, {"image_spans": spans, "image_data": images})
+        worker._verify_assembly = True
+        with pytest.raises(ValueError, match="verify_assembly"):
+            asyncio.run(worker.generate(ids, {}, image_spans=spans))
+    finally:
+        worker._session_binding.reset(token)
 
 
 def test_multimodal_turn_state_pre_expands_caches_and_emits_token_types():

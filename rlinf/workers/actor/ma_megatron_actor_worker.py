@@ -21,7 +21,7 @@ from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.training.training import unwrap_model
 from megatron.training.utils import average_losses_across_data_parallel_group
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.loss_scales import restore_source_dp_normalization
@@ -30,7 +30,7 @@ from rlinf.algorithms.registry import (
     get_loss_scales,
     policy_loss,
 )
-from rlinf.algorithms.utils import kl_penalty
+from rlinf.algorithms.utils import apply_importance_sampling_correction, kl_penalty
 from rlinf.data.schema.actor_batch import (
     DynamicActorBatch,
 )
@@ -68,6 +68,7 @@ from rlinf.utils.utils import (
     configure_batch_sizes,
     cpu_dict,
     cpu_weight_swap,
+    masked_mean,
 )
 from rlinf.workers.actor.megatron_actor_worker import (
     MegatronActor,
@@ -75,6 +76,7 @@ from rlinf.workers.actor.megatron_actor_worker import (
 from rlinf.workers.megatron_worker import DynamicMegatronBatchMixin
 from rlinf.workers.rollout.session_server.assembly import (
     assemble_group_payload,
+    fold_continuous_turns,
     verify_group_assembly,
 )
 from rlinf.workers.rollout.session_server.payload import payload_channel_for
@@ -156,14 +158,25 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         # cannot overtake it, and a group is delivered once, so no other get
         # waits on this key.
         channel.remove_key(key=delivery.payload_ref.key, async_op=True)
-        result = assemble_group_payload(
-            payload, not self.cfg.algorithm.recompute_logprobs
+        return_logprobs = bool(
+            OmegaConf.select(
+                self.cfg,
+                "rollout.return_logprobs",
+                default=not self.cfg.algorithm.recompute_logprobs,
+            )
         )
+        result = assemble_group_payload(payload, return_logprobs)
         result.group_id = delivery.group_id
         result.task_name = delivery.task_name
         verify = next(part.verify for part in payload.parts if part.last)
         if verify is not None:
             verify_group_assembly(result, verify, self.cfg)
+        if OmegaConf.select(
+            self.cfg, "session_server.fold_continuous_turns", default=False
+        ):
+            result = fold_continuous_turns(
+                result, self.cfg.algorithm.sampling_params.max_new_tokens
+            )
         return result
 
     def _restore_source_normalization(
@@ -394,18 +407,34 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 if "ref_logprobs" in batch:
                     ref_logprobs = batch["ref_logprobs"]
 
-                if self.cfg.algorithm.get("importance_sampling_fix", False):
-                    assert False, (
-                        "importance_sampling_fix is not supported for dynamic rollout batch"
-                    )
-                    rollout_logprobs = batch["rollout_logprobs"]
-                    recomputed_logprobs = batch.get("recomputed_logprobs")
-                    advantages = advantages * torch.clamp(
-                        (recomputed_logprobs - rollout_logprobs).exp(),
-                        max=self.cfg.algorithm.importance_sampling_clip,
-                    )
-
                 mask = batch["response_mask"]
+                correction_metrics = {}
+                if self.cfg.algorithm.get("importance_sampling_fix", False):
+                    if (
+                        "recomputed_logprobs" not in batch
+                        or "rollout_logprobs" not in batch
+                    ):
+                        raise ValueError(
+                            "importance_sampling_fix requires both recomputed_logprobs and rollout_logprobs"
+                        )
+                    clip = self.cfg.algorithm.importance_sampling_clip
+                    advantages, weights, log_ratio = (
+                        apply_importance_sampling_correction(
+                            advantages,
+                            old_logprobs.masked_fill(~mask, 0),
+                            batch["rollout_logprobs"].masked_fill(~mask, 0),
+                            clip,
+                        )
+                    )
+                    correction_metrics = {
+                        "actor/recomputed_logprob_abs_diff": masked_mean(
+                            log_ratio.abs(), mask
+                        ),
+                        "actor/importance_sampling_weight": masked_mean(weights, mask),
+                        "actor/importance_sampling_clip_fraction": masked_mean(
+                            (weights > clip).float(), mask
+                        ),
+                    }
 
                 loss, metrics_data = policy_loss(
                     task_type=self.cfg.runner.task_type,
@@ -471,6 +500,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 # add to log
                 metrics_data.update(
                     {
+                        **correction_metrics,
                         "actor/final_loss": loss.detach(),
                         "actor/entropy_loss": entropy_loss.detach(),
                         "actor/kl_loss": kl_loss.detach(),
@@ -701,8 +731,22 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             turn_rewards = [0.0] * num_trajectories
             turn_counts = [0] * num_trajectories
             token_weighted_version_start_sums = [0] * num_trajectories
+            versions = (rollout_result.extra_fields_turn or {}).get(
+                "rollout_weight_versions"
+            )
+            calls = (rollout_result.extra_fields_turn or {}).get("generate_calls")
+            sampled_sums = [0] * num_trajectories if versions is not None else None
             for turn_index, traj_index in enumerate(rollout_result.idx_to_traj):
                 turn_tokens = rollout_result.response_lengths[turn_index]
+                if rollout_result.response_mask is not None:
+                    turn_tokens = sum(rollout_result.response_mask[turn_index])
+                if sampled_sums is not None:
+                    sampled = versions[turn_index]
+                    if len(sampled) != turn_tokens:
+                        raise ValueError(
+                            "One sampled policy version is required per response token"
+                        )
+                    sampled_sums[traj_index] += sum(sampled)
                 version_start = rollout_result.version_start[turn_index]
                 version_end = rollout_result.version_end[turn_index]
                 earliest_versions[traj_index] = (
@@ -716,7 +760,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     else max(completion_versions[traj_index], version_end)
                 )
                 generated_tokens[traj_index] += turn_tokens
-                call_counts[traj_index] += 1
+                call_counts[traj_index] += calls[turn_index] if calls is not None else 1
                 cross_version_calls[traj_index] += int(version_start != version_end)
                 turn_rewards[traj_index] += rollout_result.rewards[turn_index]
                 turn_counts[traj_index] += 1
@@ -734,6 +778,9 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                         cross_version_calls=cross_version_calls[traj_index],
                         reward=turn_rewards[traj_index]
                         / max(turn_counts[traj_index], 1),
+                        sampled_token_version_sum=sampled_sums[traj_index]
+                        if sampled_sums is not None
+                        else None,
                         token_weighted_version_start_sum=(
                             token_weighted_version_start_sums[traj_index]
                         ),
@@ -789,6 +836,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         input_channel: Channel,
         output_channel: Channel,
         compute_ref_logprobs: bool,
+        payload_channels: Optional[list[Channel]] = None,
     ):
         """
         Compute prev/ref logprobs using the actor Model's forward.
@@ -797,7 +845,9 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             input_channel: The input channel to read from.
             output_channel: The output channel to send results to.
             compute_ref_logprobs: Whether to compute reference logprobs.
+            payload_channels: Optional payload channels for session-server deliveries.
         """
+        self._payload_channels = payload_channels
         batch, results = self.get_step_batch(input_channel)
         self._load_weight_and_optimizer()
         with self.worker_timer():

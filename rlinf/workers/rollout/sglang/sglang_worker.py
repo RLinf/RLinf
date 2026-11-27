@@ -305,6 +305,7 @@ class SGLangWorker(Worker):
             log_level="info",
             max_running_requests=self._cfg_rollout.max_running_requests,
             dist_init_addr=f"127.0.0.1:{str(self.acquire_free_port())}",
+            reasoning_parser=self._cfg_rollout.sglang.get("reasoning_parser", None),
             tool_call_parser=self._cfg_rollout.sglang.get("tool_call_parser", None),
             trust_remote_code=self._cfg_rollout.model.trust_remote_code,
             **version_dependent_args,
@@ -580,7 +581,12 @@ class SGLangWorker(Worker):
         """
         if not self._is_model_instance_entry:
             return
-        await self._backend.sync_weights(pause_mode=self._pause_mode)
+        if self._cfg_rollout.get("record_token_weight_versions", False):
+            await self._backend.sync_weights(
+                pause_mode=self._pause_mode, token_weight_version=version
+            )
+        else:
+            await self._backend.sync_weights(pause_mode=self._pause_mode)
         if version is not None:
             self._weight_version = version
             if self._session_server_enabled:

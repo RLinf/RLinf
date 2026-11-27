@@ -22,12 +22,17 @@ produces one sequence — the layout the agent loop's
 ``get_rollout_result`` produced on the channel path.
 """
 
+from dataclasses import replace
 from typing import Any
 
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.workers.rollout.session_server.payload import GroupPayload, PayloadPart
 
-__all__ = ["assemble_group_payload", "verify_group_assembly"]
+__all__ = [
+    "assemble_group_payload",
+    "fold_continuous_turns",
+    "verify_group_assembly",
+]
 
 # Compared against the agent-side reference, field by field. The version
 # fields stay out: the reference carries None for them (the agent never saw
@@ -89,9 +94,14 @@ def assemble_group_payload(
         key=lambda part: (part.traj_index, part.turn_index),
     )
     turns_by_traj: dict[int, list[PayloadPart]] = {}
+    group_images: dict[str, tuple[Any, Any]] = {}
     for part in parts:
         turns_by_traj.setdefault(part.traj_index, []).append(part)
+        if part.image_input and "new_images" in part.image_input:
+            group_images.update(part.image_input["new_images"])
 
+    image_inputs = []
+    token_versions = []
     idx_to_traj: list[int] = []
     prompt_lengths: list[int] = []
     response_lengths: list[int] = []
@@ -163,6 +173,35 @@ def assemble_group_payload(
             previous_kept = kept
 
             response_ids = part.output_ids[:kept]
+            if part.image_input is not None:
+                import torch
+
+                from rlinf.utils.multimodal import build_mm_token_type_ids
+
+                digests = part.image_input["digests"]
+                spans = part.image_input["image_spans"]
+                missing = [d for d in digests if d not in group_images]
+                if missing:
+                    raise ValueError(
+                        f"Missing deduplicated image payload for group {payload.group_id}: {missing}"
+                    )
+                image_entry = {
+                    "pixel_values": [group_images[d][0] for d in digests],
+                    "image_grid_thw": torch.cat(
+                        [group_images[d][1] for d in digests], dim=0
+                    ),
+                    "mm_token_type_ids": build_mm_token_type_ids(
+                        len(part.input_ids) + kept, spans
+                    ),
+                }
+            else:
+                image_entry = None
+            image_inputs.append(image_entry)
+            token_versions.append(
+                part.token_weight_versions[:kept]
+                if part.token_weight_versions is not None
+                else None
+            )
             idx_to_traj.append(traj_index)
             input_ids.append(part.input_ids + response_ids)
             prompt_lengths.append(len(part.input_ids))
@@ -184,7 +223,16 @@ def assemble_group_payload(
             f"extra_fields_train {name!r} of group {payload.group_id} covers "
             f"{len(values)} sequences, the payload holds {len(idx_to_traj)}"
         )
+    extra_turn = None
+    if any(row is not None for row in token_versions):
+        if any(row is None for row in token_versions):
+            raise ValueError("Missing sampled token versions on one or more turns")
+        extra_turn = {"rollout_weight_versions": token_versions}
     return DynamicRolloutResult(
+        extra_fields_turn=extra_turn,
+        multi_modal_inputs=image_inputs
+        if any(x is not None for x in image_inputs)
+        else None,
         num_sequence=len(idx_to_traj),
         group_size=len(verdicts),
         idx_to_traj=idx_to_traj,
@@ -261,3 +309,143 @@ def verify_group_assembly(result: DynamicRolloutResult, verify: dict, cfg) -> No
                 f"with the caller's override: forwarded {got!r}, expected "
                 f"{expected!r}"
             )
+
+
+def _mm_prefix_continuous(prev_image: Any, cur_image: Any, prev_len: int) -> bool:
+    """Return whether ``cur_image`` preserves ``prev_image`` across ``prev_len`` tokens."""
+    if cur_image is None:
+        return prev_image is None
+    if prev_image is None:
+        cur_types = cur_image.get("mm_token_type_ids")
+        return (
+            cur_types is not None
+            and len(cur_types) >= prev_len
+            and not bool(cur_types[:prev_len].any())
+        )
+
+    import torch
+
+    from rlinf.utils.multimodal import _normalize_tensor_list
+
+    prev_types = prev_image.get("mm_token_type_ids")
+    cur_types = cur_image.get("mm_token_type_ids")
+    if (
+        prev_types is None
+        or cur_types is None
+        or len(cur_types) < prev_len
+        or not torch.equal(prev_types[:prev_len], cur_types[:prev_len])
+    ):
+        return False
+    prev_grid = prev_image.get("image_grid_thw")
+    cur_grid = cur_image.get("image_grid_thw")
+    if (
+        prev_grid is None
+        or cur_grid is None
+        or cur_grid.shape[0] < prev_grid.shape[0]
+        or not torch.equal(prev_grid, cur_grid[: prev_grid.shape[0]])
+    ):
+        return False
+    prev_pixels = _normalize_tensor_list(prev_image["pixel_values"])
+    cur_pixels = _normalize_tensor_list(cur_image["pixel_values"])
+    if len(cur_pixels) < len(prev_pixels):
+        return False
+    return all(a is b or torch.equal(a, b) for a, b in zip(prev_pixels, cur_pixels))
+
+
+def fold_continuous_turns(
+    result: DynamicRolloutResult, max_scored_tokens: int
+) -> DynamicRolloutResult:
+    """Fold same-version turns when token prefix and image history match."""
+    has_versions = result.version_start is not None and result.version_end is not None
+    groups = []
+    scored = 0
+    for i, length in enumerate(result.response_lengths):
+        image = result.multi_modal_inputs[i] if result.multi_modal_inputs else None
+        prev_image = (
+            result.multi_modal_inputs[i - 1]
+            if (i and result.multi_modal_inputs is not None)
+            else None
+        )
+        prev = result.input_ids[i - 1] if i else []
+        image_continuous = i > 0 and _mm_prefix_continuous(prev_image, image, len(prev))
+        same_version = not has_versions or (
+            result.version_start[i]
+            == result.version_end[i]
+            == result.version_start[i - 1]
+            == result.version_end[i - 1]
+        )
+        if (
+            i
+            and result.idx_to_traj[i] == result.idx_to_traj[i - 1]
+            and same_version
+            and image_continuous
+            and len(prev) <= result.prompt_lengths[i]
+            and result.input_ids[i][: len(prev)] == prev
+            and scored + length <= max_scored_tokens
+        ):
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+            scored = 0
+        scored += length
+    if len(groups) == result.num_sequence:
+        return result
+
+    token_versions = (result.extra_fields_turn or {}).get("rollout_weight_versions")
+    masks, logprobs, versions = [], [], []
+    for group in groups:
+        start = result.prompt_lengths[group[0]]
+        mask = [False] * (len(result.input_ids[group[-1]]) - start)
+        scores = [0.0] * len(mask)
+        sampled = []
+        for i in group:
+            offset = result.prompt_lengths[i] - start
+            end = offset + result.response_lengths[i]
+            mask[offset:end] = [True] * result.response_lengths[i]
+            if result.rollout_logprobs is not None:
+                scores[offset:end] = result.rollout_logprobs[i]
+            if token_versions is not None:
+                sampled.extend(token_versions[i])
+        masks.append(mask)
+        logprobs.append(scores)
+        versions.append(sampled)
+
+    def last(rows):
+        return [rows[group[-1]] for group in groups]
+
+    return replace(
+        result,
+        num_sequence=len(groups),
+        idx_to_traj=last(result.idx_to_traj),
+        input_ids=last(result.input_ids),
+        prompt_lengths=[result.prompt_lengths[g[0]] for g in groups],
+        response_lengths=[len(mask) for mask in masks],
+        response_mask=masks,
+        rollout_logprobs=logprobs if result.rollout_logprobs is not None else None,
+        multi_modal_inputs=(
+            last(result.multi_modal_inputs)
+            if result.multi_modal_inputs is not None
+            else None
+        ),
+        rewards=last(result.rewards) if result.rewards is not None else None,
+        is_end=last(result.is_end),
+        version_start=(
+            [result.version_start[g[0]] for g in groups]
+            if result.version_start is not None
+            else None
+        ),
+        version_end=(
+            last(result.version_end) if result.version_end is not None else None
+        ),
+        extra_fields_turn={
+            **(
+                {"rollout_weight_versions": versions}
+                if token_versions is not None
+                else {}
+            ),
+            "generate_calls": [len(g) for g in groups],
+        },
+        extra_fields_train={
+            key: last(rows) for key, rows in result.extra_fields_train.items()
+        },
+    )
