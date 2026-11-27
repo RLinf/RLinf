@@ -20,7 +20,7 @@
       :link: embodied/bench2dex
       :link-type: doc
 
-      用 PPO 或 GRPO 训练 π₀.₅，并在四个评测通道上评测。
+      在 Isaac Sim 灵巧手操作任务上用 PPO、异步 PPO 或 GRPO 训练 π₀.₅，并在四个泛化通道上评测。
 
    .. grid-item-card:: CALVIN
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/calvin.png

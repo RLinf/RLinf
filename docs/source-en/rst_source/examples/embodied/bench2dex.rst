@@ -91,12 +91,12 @@ Setup and Run
 
       **2. Download Assets, Anchors & Convert Weights**
 
-      Download `Bench2Dex/Assets <https://huggingface.co/datasets/Bench2Dex/Assets>`__, Task22 anchors from `Bench2Dex/teleopdata <https://huggingface.co/datasets/Bench2Dex/teleopdata>`__, and the official π₀.₅ checkpoint from `Bench2Dex/policy_ckpt <https://huggingface.co/Bench2Dex/policy_ckpt>`__, then convert the checkpoint to PyTorch format. All Task22 training and evaluation configs read ``BENCH2DEX_ASSETS_PATH``, ``BENCH2DEX_ANCHOR_DIR``, and ``BENCH2DEX_PI05_PATH`` directly:
+      Download `Bench2Dex/Assets <https://huggingface.co/datasets/Bench2Dex/Assets>`__, Task22 anchors from `Bench2Dex/teleopdata <https://huggingface.co/datasets/Bench2Dex/teleopdata>`__, and the official π₀.₅ checkpoint from `Bench2Dex/policy_ckpt <https://huggingface.co/Bench2Dex/policy_ckpt>`__:
 
       .. code-block:: bash
 
          hf download Bench2Dex/Assets --repo-type dataset \
-           --local-dir ./data/bench2dex/assets
+           --local-dir ./data/bench2dex/assets/dex2bench_dataset
          hf download Bench2Dex/teleopdata --repo-type dataset \
            --include "dataset/22_tool_box_loading/origin-generalization/**" \
            --local-dir ./data/bench2dex/teleopdata
@@ -104,7 +104,7 @@ Setup and Run
            --include "22/multi_panda_with_orca/pi05/pi05_base_dex2bench_full/22_pi05_256/2000/**" \
            --local-dir ./data/bench2dex/jax
 
-      Export the local paths and convert the downloaded checkpoint to PyTorch format:
+      Export the local paths (all Task22 training and evaluation configs read ``BENCH2DEX_ASSETS_PATH``, ``BENCH2DEX_ANCHOR_DIR``, and ``BENCH2DEX_PI05_PATH`` directly) and convert the downloaded checkpoint to PyTorch format:
 
       .. code-block:: bash
 
@@ -162,12 +162,12 @@ Setup and Run
 
       **2. Download Assets, Anchors & Convert Weights**
 
-      Download `Bench2Dex/Assets <https://huggingface.co/datasets/Bench2Dex/Assets>`__, Task64 anchors from `Bench2Dex/teleopdata <https://huggingface.co/datasets/Bench2Dex/teleopdata>`__, and the Task64 π₀.₅ checkpoint from `Bench2Dex/policy_ckpt <https://huggingface.co/Bench2Dex/policy_ckpt>`__, then convert to PyTorch format. All Task64 training and evaluation configs read ``BENCH2DEX_ASSETS_PATH``, ``BENCH2DEX_ANCHOR_DIR``, and ``BENCH2DEX_PI05_PATH`` directly:
+      Download `Bench2Dex/Assets <https://huggingface.co/datasets/Bench2Dex/Assets>`__, Task64 anchors from `Bench2Dex/teleopdata <https://huggingface.co/datasets/Bench2Dex/teleopdata>`__, and the Task64 π₀.₅ checkpoint from `Bench2Dex/policy_ckpt <https://huggingface.co/Bench2Dex/policy_ckpt>`__:
 
       .. code-block:: bash
 
          hf download Bench2Dex/Assets --repo-type dataset \
-           --local-dir ./data/bench2dex/assets
+           --local-dir ./data/bench2dex/assets/dex2bench_dataset
          hf download Bench2Dex/teleopdata --repo-type dataset \
            --include "dataset/64_sports_ball_cup_sort/origin-generalization/**" \
            --local-dir ./data/bench2dex/teleopdata
@@ -175,7 +175,7 @@ Setup and Run
            --include "64/multi_panda_with_allegro/pi05/pi05_base_dex2bench_full/64_pi05_256/2000/**" \
            --local-dir ./data/bench2dex/jax
 
-      Export the local paths and convert the downloaded checkpoint to PyTorch format:
+      Export the local paths (all Task64 training and evaluation configs read ``BENCH2DEX_ASSETS_PATH``, ``BENCH2DEX_ANCHOR_DIR``, and ``BENCH2DEX_PI05_PATH`` directly) and convert the downloaded checkpoint to PyTorch format:
 
       .. code-block:: bash
 
@@ -261,19 +261,21 @@ Setup and Run
       * - ``env.train.max_episode_steps`` / ``env.train.max_steps_per_rollout_epoch``
         - Task control-step limit and rollout budget rounded up to a multiple of ``num_action_chunks``.
       * - ``env.train.skip_intermediate_renders`` / ``env.eval.skip_intermediate_renders``
-        - Set to ``false`` whenever ``video_cfg.save_video=true`` is enabled.
+        - Set to ``false`` whenever ``env.train.video_cfg.save_video=true`` or ``env.eval.video_cfg.save_video=true`` is enabled.
 
    See :doc:`Placement </rst_source/concepts/placement>` to adjust GPU placement and :doc:`Checkpoint Resume </rst_source/guides/resume>` to resume from a saved run.
 
 Visualization and Results
 -------------------------
 
-Track ``env/success_once`` and ``eval/success_once`` with ``tensorboard --logdir ./results --port 6006``; see :doc:`Training Metrics </rst_source/reference/metrics>` for metric definitions. Multi-channel evaluation writes summary success rates to ``success_rates.tsv`` and per-episode records to each channel's ``per_episode.jsonl`` (see :doc:`Evaluation </rst_source/evaluations/index>`).
+Track ``env/success_once`` and ``eval/success_once`` with ``tensorboard --logdir ./logs --port 6006`` (the Task22 critic warmup command above writes to ``./results/task22-warmup``); see :doc:`Training Metrics </rst_source/reference/metrics>` for metric definitions.
+
+Multi-channel evaluation writes summary success rates to ``success_rates.tsv`` and per-episode records to each channel's ``per_episode.jsonl`` under ``--output-root``. For general single-config evaluation CLI usage, see :doc:`Evaluation </rst_source/evaluations/index>`.
 
 Task22 Fixed White-Background PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Synchronous PPO on Task22 (22 epochs, 128 training episodes per epoch, 32-episode independent evaluations after epochs 10 and 20, starting from warmup weights with a fresh optimizer):
+Synchronous PPO on Task22 (the reference config schedules 190 epochs; the verification run stopped after 22 epochs once independent evaluation reached 100%, using 128 training episodes per epoch and 32-episode independent evaluations after epochs 10 and 20, starting from warmup weights with a fresh optimizer):
 
 .. list-table::
    :header-rows: 1
@@ -298,39 +300,45 @@ Synchronous PPO on Task22 (22 epochs, 128 training episodes per epoch, 32-episod
 Task64 Evaluation and Throughput
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Evaluated on NVIDIA A800 80 GB GPUs using ``64_sports_ball_cup_sort`` with dual Panda/Allegro (50 episodes per channel for success rate across 3 runs on 4 GPUs / 16 environments; end-to-end physics throughput vs. single-GPU official implementation):
+Pre-RL evaluation parity and throughput of the official ``2000`` π₀.₅ checkpoint on NVIDIA A800 80 GB GPUs using ``64_sports_ball_cup_sort`` with dual Panda/Allegro (50 episodes per channel for success rate across 3 runs on 4 GPUs / 16 environments; end-to-end physics throughput vs. single-GPU official implementation):
 
 .. list-table::
    :header-rows: 1
-   :widths: 16 20 24 22 18
+   :widths: 12 15 18 19 20 16
 
    * - Channel
      - Official π₀.₅
      - RLinf π₀.₅ (3-run mean)
+     - Official Throughput (1 GPU / 1 env)
      - RLinf Throughput (4 GPUs / 16 envs)
      - Speedup vs. 1-GPU Official
    * - ``none``
      - 42.00%
      - 34.67%
+     - 11.94 steps/s
      - 65.30 steps/s
      - 5.47×
    * - ``cov``
      - 18.00%
      - 16.67%
+     - 11.41 steps/s
      - 65.89 steps/s
      - 5.78×
    * - ``inv``
      - 4.00%
      - 16.00%
+     - 11.88 steps/s
      - 54.52 steps/s
      - 4.59×
    * - ``inv_cov``
      - 22.00%
      - 18.67%
+     - 11.83 steps/s
      - 65.80 steps/s
      - 5.56×
    * - **Overall**
      - **21.50%**
      - **21.33%**
+     - —
      - —
      - —

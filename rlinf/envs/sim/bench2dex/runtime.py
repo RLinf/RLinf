@@ -59,6 +59,8 @@ def launch_bench2dex_app(
 ):
     """Launch the application in its simulator subprocess."""
     os.environ.pop("DISPLAY", None)
+    os.environ.setdefault("ACCEPT_EULA", "Y")
+    os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
     os.environ["DEX2BENCH_DATASET_ROOT"] = str(spec.assets_path / "dex2bench_dataset")
     # Upstream uses top-level packages and relative resources inside this child.
     sys.path.insert(0, str(spec.source_path))

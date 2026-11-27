@@ -25,9 +25,6 @@ Policy and value optimization statistics logged every actor update (on-policy PP
    * - ``train/actor/clip_fraction``
      - Fraction of tokens or actions whose importance ratio was clipped.
      - Sustained values above ``0.3`` mean the policy is moving too fast per epoch.
-   * - ``train/actor/dual_clip_fraction``
-     - Fraction of valid samples hitting the PPO dual-clip bound (see :doc:`PPO <algorithms/ppo>`).
-     - Frequent clipping indicates large negative-advantage importance ratios.
    * - ``train/actor/clipped_ratio``
      - Mean clipped probability ratio.
      - Should remain close to ``1.0``.
@@ -221,8 +218,8 @@ Logged by ``compute_decoupled_ppo_actor_loss`` during :doc:`Async PPO <algorithm
      - Fraction of samples filtered by ``behave_weight_threshold``.
      - High drop rates mean stale samples are being discarded instead of trained on.
    * - ``train/actor/dual_clip_fraction``
-     - Fraction of entries hitting the dual-clip bound ``clip_ratio_c``.
-     - Persistent high fraction signals overly large policy shifts.
+     - Fraction of entries hitting the dual-clip bound ``clip_ratio_c`` (always logged in Async PPO; logged in sync PPO when ``algorithm.use_dual_clip`` is set; see :doc:`PPO <algorithms/ppo>`).
+     - Persistent high fraction signals overly large policy shifts or negative-advantage importance ratios.
    * - ``train/actor/average_version`` / ``train/actor/current_version``
      - Mean behavior-policy version of the training batch vs. current actor version.
      - Gap ``current_version - average_version`` directly measures policy staleness in steps.

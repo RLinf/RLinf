@@ -4048,7 +4048,7 @@ install_bench2dex_env() {
     local revision="fd90dcc625b66c2e535a8b25bcf75bc81c7b080d"
     local checkout_exists=0
     [ -d "${BENCH2DEX_PATH:-$VENV_DIR/bench2dex}" ] && checkout_exists=1
-    isaaclab_dir=$(clone_or_reuse_repo ISAAC_LAB_PATH "$VENV_DIR/isaaclab" https://github.com/isaac-sim/IsaacLab.git -b v2.3.2 --depth 1)
+    isaaclab_dir=$(clone_or_reuse_repo ISAAC_LAB_PATH "$VENV_DIR/isaaclab" https://github.com/isaac-sim/IsaacLab.git -b v2.3.0 --depth 1)
     bench2dex_dir=$(clone_or_reuse_repo BENCH2DEX_PATH "$VENV_DIR/bench2dex" https://github.com/Bench2Dex/Bench2Dex.git)
     if [ "$checkout_exists" -eq 0 ]; then
         git -C "$bench2dex_dir" checkout --detach "$revision" >&2
@@ -4062,6 +4062,14 @@ install_bench2dex_env() {
     uv pip install "flatdict==4.0.1" --no-build-isolation
     uv pip install -e "$isaaclab_dir/source/isaaclab"
     uv pip install -r "$SCRIPT_DIR/embodied/envs/bench2dex.txt"
+    export ACCEPT_EULA=Y
+    export OMNI_KIT_ACCEPT_EULA=YES
+    if ! grep -q '^export ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export ACCEPT_EULA=Y" >> "$VENV_DIR/bin/activate"
+    fi
+    if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
+    fi
     printf '\nexport BENCH2DEX_PATH=%q\n' "$bench2dex_dir" >> "$VENV_DIR/bin/activate"
 }
 

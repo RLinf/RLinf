@@ -58,6 +58,9 @@ Supported Benchmark Prefixes
    * - ``behavior_*`` / ``behavior-*``
      - ``behavior``
      - BEHAVIOR-1K
+   * - ``bench2dex_*`` / ``bench2dex-*``
+     - ``bench2dex``
+     - Bench2Dex
    * - ``calvin_*`` / ``calvin-*``
      - ``calvin``
      - CALVIN (via config fallback)

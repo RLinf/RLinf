@@ -1,7 +1,7 @@
 Bench2Dex
 =========
 
-使用 RLinf 在并行 `Bench2Dex <https://github.com/Bench2Dex/Bench2Dex>`__\ （基于 Isaac Sim 的灵巧手操作基准）环境中训练和评测 π₀.₅ policy。Bench2Dex 通过 ``none``、``cov``、``inv`` 和 ``inv_cov`` 四个泛化通道评测 policy；本页以 Task22 和 Task64 为例介绍完整流程，同时支持通过配置扩展到其他 Bench2Dex 场景和机器人。
+使用 RLinf 在 `Bench2Dex <https://github.com/Bench2Dex/Bench2Dex>`__\ （基于 Isaac Sim 的灵巧手操作基准）并行环境中训练和评测 π₀.₅ policy。Bench2Dex 通过 ``none``、``cov``、``inv`` 和 ``inv_cov`` 四个泛化通道评测 policy；本页以 Task22 和 Task64 为例介绍完整流程，同时支持通过配置扩展到其他 Bench2Dex 场景和机器人。
 
 概览
 ----
@@ -60,9 +60,9 @@ policy 根据双目和腕部 RGB 图像以及关节位置，输出各关节的�
    * - 字段
      - 说明
    * - 观测
-     - 双目与腕部 RGB 图像，加机器人活跃关节位置。
+     - 双目与腕部 RGB 图像，加机器人受控关节位置。
    * - 动作
-     - 对应机器人活跃关节的目标绝对位置。
+     - 对应机器人受控关节的目标绝对位置。
    * - 奖励
      - 稀疏 0/1 成功奖励。
    * - 提示词
@@ -91,12 +91,12 @@ policy 根据双目和腕部 RGB 图像以及关节位置，输出各关节的�
 
       **2. 下载资产、场景锚点并转换权重**
 
-      从 `Bench2Dex/Assets <https://huggingface.co/datasets/Bench2Dex/Assets>`__ 下载场景资产，从 `Bench2Dex/teleopdata <https://huggingface.co/datasets/Bench2Dex/teleopdata>`__ 下载 Task22 锚点，从 `Bench2Dex/policy_ckpt <https://huggingface.co/Bench2Dex/policy_ckpt>`__ 下载官方 π₀.₅ checkpoint 并转换为 PyTorch 格式。Task22 的训练与评测配置直接读取以下环境变量：
+      从 `Bench2Dex/Assets <https://huggingface.co/datasets/Bench2Dex/Assets>`__ 下载场景资产，从 `Bench2Dex/teleopdata <https://huggingface.co/datasets/Bench2Dex/teleopdata>`__ 下载 Task22 锚点，从 `Bench2Dex/policy_ckpt <https://huggingface.co/Bench2Dex/policy_ckpt>`__ 下载官方 π₀.₅ checkpoint：
 
       .. code-block:: bash
 
          hf download Bench2Dex/Assets --repo-type dataset \
-           --local-dir ./data/bench2dex/assets
+           --local-dir ./data/bench2dex/assets/dex2bench_dataset
          hf download Bench2Dex/teleopdata --repo-type dataset \
            --include "dataset/22_tool_box_loading/origin-generalization/**" \
            --local-dir ./data/bench2dex/teleopdata
@@ -104,7 +104,7 @@ policy 根据双目和腕部 RGB 图像以及关节位置，输出各关节的�
            --include "22/multi_panda_with_orca/pi05/pi05_base_dex2bench_full/22_pi05_256/2000/**" \
            --local-dir ./data/bench2dex/jax
 
-      设置本地路径并将下载的 checkpoint 转换为 PyTorch 格式：
+      导出本地路径（Task22 的训练与评测配置直接读取 ``BENCH2DEX_ASSETS_PATH``、``BENCH2DEX_ANCHOR_DIR`` 和 ``BENCH2DEX_PI05_PATH``）并将下载的 checkpoint 转换为 PyTorch 格式：
 
       .. code-block:: bash
 
@@ -162,12 +162,12 @@ policy 根据双目和腕部 RGB 图像以及关节位置，输出各关节的�
 
       **2. 下载资产、场景锚点并转换权重**
 
-      从 `Bench2Dex/Assets <https://huggingface.co/datasets/Bench2Dex/Assets>`__ 下载资产，从 `Bench2Dex/teleopdata <https://huggingface.co/datasets/Bench2Dex/teleopdata>`__ 下载 Task64 锚点，从 `Bench2Dex/policy_ckpt <https://huggingface.co/Bench2Dex/policy_ckpt>`__ 下载 Task64 的 π₀.₅ checkpoint 并转换为 PyTorch 格式。Task64 的训练与评测配置直接读取以下环境变量：
+      从 `Bench2Dex/Assets <https://huggingface.co/datasets/Bench2Dex/Assets>`__ 下载资产，从 `Bench2Dex/teleopdata <https://huggingface.co/datasets/Bench2Dex/teleopdata>`__ 下载 Task64 锚点，从 `Bench2Dex/policy_ckpt <https://huggingface.co/Bench2Dex/policy_ckpt>`__ 下载 Task64 的 π₀.₅ checkpoint：
 
       .. code-block:: bash
 
          hf download Bench2Dex/Assets --repo-type dataset \
-           --local-dir ./data/bench2dex/assets
+           --local-dir ./data/bench2dex/assets/dex2bench_dataset
          hf download Bench2Dex/teleopdata --repo-type dataset \
            --include "dataset/64_sports_ball_cup_sort/origin-generalization/**" \
            --local-dir ./data/bench2dex/teleopdata
@@ -175,7 +175,7 @@ policy 根据双目和腕部 RGB 图像以及关节位置，输出各关节的�
            --include "64/multi_panda_with_allegro/pi05/pi05_base_dex2bench_full/64_pi05_256/2000/**" \
            --local-dir ./data/bench2dex/jax
 
-      设置本地路径并将下载的 checkpoint 转换为 PyTorch 格式：
+      导出本地路径（Task64 的训练与评测配置直接读取 ``BENCH2DEX_ASSETS_PATH``、``BENCH2DEX_ANCHOR_DIR`` 和 ``BENCH2DEX_PI05_PATH``）并将下载的 checkpoint 转换为 PyTorch 格式：
 
       .. code-block:: bash
 
@@ -257,23 +257,25 @@ policy 根据双目和腕部 RGB 图像以及关节位置，输出各关节的�
       * - ``env.train.init_params.anchor_dir``
         - 指向该任务的 HDF5 场景锚点目录。
       * - ``actor.model.action_dim`` / ``actor.model.openpi.model_action_dim``
-        - 设置为 policy 控制的机器人活跃关节数。
+        - 设置为 policy 控制的机器人受控关节数。
       * - ``env.train.max_episode_steps`` / ``env.train.max_steps_per_rollout_epoch``
         - 分别设置为任务控制步上限以及按 ``num_action_chunks`` 向上取整后的单轮 rollout 步数上限。
       * - ``env.train.skip_intermediate_renders`` / ``env.eval.skip_intermediate_renders``
-        - 开启 ``video_cfg.save_video=true`` 录制视频时，需将其设为 ``false``。
+        - 开启 ``env.train.video_cfg.save_video=true`` 或 ``env.eval.video_cfg.save_video=true`` 录制视频时，需将其设为 ``false``。
 
    调整 GPU 分配见 :doc:`Placement </rst_source/concepts/placement>`，恢复已保存的训练见 :doc:`断点续训 </rst_source/guides/resume>`。
 
 可视化与结果
 ------------
 
-运行 ``tensorboard --logdir ./results --port 6006`` 查看 ``env/success_once`` 与 ``eval/success_once``，指标定义见 :doc:`训练指标 </rst_source/reference/metrics>`。四通道评测会在输出目录下生成 ``success_rates.tsv`` 汇总各通道成功率，并在每个通道子目录写入逐回合的 ``per_episode.jsonl``，评测用法见 :doc:`评测 </rst_source/evaluations/index>`。
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``env/success_once`` 与 ``eval/success_once``\ （上文 Task22 critic 预热命令写入 ``./results/task22-warmup``），指标定义见 :doc:`训练指标 </rst_source/reference/metrics>`。
+
+四通道评测会在 ``--output-root`` 下生成汇总各通道成功率的 ``success_rates.tsv``，并在各通道子目录写入逐回合的 ``per_episode.jsonl``；通用单配置评测命令行用法见 :doc:`评测 </rst_source/evaluations/index>`。
 
 Task22 固定白底同步 PPO
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-Task22 同步 PPO 在固定白底场景下训练 22 轮（每轮 128 个训练回合，第 10 轮和第 20 轮后各运行 32 个回合独立评测；从预热权重加载并新建优化器）：
+Task22 同步 PPO 在固定白底场景下运行（参考配置共 190 轮；验证实验在独立评测达到 100% 后于第 22 轮停止，每轮 128 个训练回合，第 10 轮和第 20 轮后各运行 32 个回合独立评测；从预热权重加载并新建优化器）：
 
 .. list-table::
    :header-rows: 1
@@ -298,39 +300,45 @@ Task22 同步 PPO 在固定白底场景下训练 22 轮（每轮 128 个训练�
 Task64 四通道评测与并行吞吐
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-在 NVIDIA A800 80 GB GPU 上评测 ``64_sports_ball_cup_sort``\ （双臂 Panda 与 Allegro 灵巧手；成功率取 4 卡 16 环境 3 次运行、每通道 50 回合的均值；吞吐为端到端物理步吞吐对比官方单卡单环境实现）：
+在 NVIDIA A800 80 GB GPU 上评测官方 ``2000`` 步 π₀.₅ checkpoint 在 ``64_sports_ball_cup_sort``\ （双臂 Panda 与 Allegro 灵巧手）上的 RL 前评测一致性与吞吐（成功率取 4 卡 16 环境 3 次运行、每通道 50 回合的均值；吞吐为端到端物理步吞吐对比官方单卡单环境实现）：
 
 .. list-table::
    :header-rows: 1
-   :widths: 16 20 24 22 18
+   :widths: 12 15 18 19 20 16
 
    * - 通道
      - 官方 π₀.₅
      - RLinf π₀.₅（3 次均值）
+     - 官方吞吐（1 卡 / 1 环境）
      - RLinf 吞吐（4 卡 / 16 环境）
      - 相对官方单卡倍率
    * - ``none``
      - 42.00%
      - 34.67%
+     - 11.94 steps/s
      - 65.30 steps/s
      - 5.47×
    * - ``cov``
      - 18.00%
      - 16.67%
+     - 11.41 steps/s
      - 65.89 steps/s
      - 5.78×
    * - ``inv``
      - 4.00%
      - 16.00%
+     - 11.88 steps/s
      - 54.52 steps/s
      - 4.59×
    * - ``inv_cov``
      - 22.00%
      - 18.67%
+     - 11.83 steps/s
      - 65.80 steps/s
      - 5.56×
-   * - **总计**
+   * - **平均**
      - **21.50%**
      - **21.33%**
+     - —
      - —
      - —

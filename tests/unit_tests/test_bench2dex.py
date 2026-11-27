@@ -1206,3 +1206,62 @@ def test_embodied_runner_preserves_env_overlap_when_offload_disabled():
     runner._finish_run = lambda: None
     runner.run()
     assert events.index("start:train") < events.index("wait:env")
+
+
+def test_launch_bench2dex_app_sets_eula_defaults_and_dataset_root(
+    monkeypatch, tmp_path
+):
+    import os
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    from rlinf.envs.sim.bench2dex.runtime import launch_bench2dex_app
+
+    captured = {}
+
+    class FakeApp:
+        def __init__(self, args):
+            self.app = SimpleNamespace()
+            captured["args"] = args
+            captured["ACCEPT_EULA"] = os.environ.get("ACCEPT_EULA")
+            captured["OMNI_KIT_ACCEPT_EULA"] = os.environ.get("OMNI_KIT_ACCEPT_EULA")
+            captured["DEX2BENCH_DATASET_ROOT"] = os.environ.get(
+                "DEX2BENCH_DATASET_ROOT"
+            )
+            captured["DISPLAY"] = os.environ.get("DISPLAY")
+
+    isaaclab_mod = ModuleType("isaaclab")
+    isaaclab_app_mod = ModuleType("isaaclab.app")
+    isaaclab_app_mod.AppLauncher = FakeApp
+    utils_mod = ModuleType("utils")
+    utils_render_mod = ModuleType("utils.isaac_rendering")
+    utils_render_mod.configure_headless_camera_parity_experience = (
+        lambda *args, **kwargs: None
+    )
+    isaacsim_root = tmp_path / "isaacsim"
+    (isaacsim_root / "kit").mkdir(parents=True)
+
+    monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.delenv("ACCEPT_EULA", raising=False)
+    monkeypatch.delenv("OMNI_KIT_ACCEPT_EULA", raising=False)
+    monkeypatch.setitem(sys.modules, "isaaclab", isaaclab_mod)
+    monkeypatch.setitem(sys.modules, "isaaclab.app", isaaclab_app_mod)
+    monkeypatch.setitem(sys.modules, "utils", utils_mod)
+    monkeypatch.setitem(sys.modules, "utils.isaac_rendering", utils_render_mod)
+    monkeypatch.setattr(
+        "rlinf.envs.sim.bench2dex.runtime.importlib.util.find_spec",
+        lambda name: SimpleNamespace(submodule_search_locations=[str(isaacsim_root)]),
+    )
+    cwd = os.getcwd()
+    try:
+        spec = SimpleNamespace(source_path=tmp_path, assets_path=tmp_path / "assets")
+        launch_bench2dex_app({"output_dir": str(tmp_path / "out")}, spec, shard=0)
+    finally:
+        os.chdir(cwd)
+
+    assert captured["DISPLAY"] is None
+    assert captured["ACCEPT_EULA"] == "Y"
+    assert captured["OMNI_KIT_ACCEPT_EULA"] == "YES"
+    assert captured["DEX2BENCH_DATASET_ROOT"] == str(
+        tmp_path / "assets" / "dex2bench_dataset"
+    )

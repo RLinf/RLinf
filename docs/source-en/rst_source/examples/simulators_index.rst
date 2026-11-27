@@ -20,7 +20,7 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
       :link: embodied/bench2dex
       :link-type: doc
 
-      Train π₀.₅ with PPO or GRPO and evaluate on four channels.
+      Train π₀.₅ with PPO, Async PPO, or GRPO on Isaac Sim dexterous manipulation tasks and evaluate across four generalization channels.
 
    .. grid-item-card:: CALVIN
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/calvin.png
