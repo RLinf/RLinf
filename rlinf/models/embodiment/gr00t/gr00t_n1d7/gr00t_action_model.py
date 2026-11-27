@@ -989,7 +989,11 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
         )
         backbone_inputs = self.backbone.prepare_input(inputs)
         action_inputs = self.action_head.prepare_input(inputs)
-        backbone_output = self.backbone(backbone_inputs)
+        if getattr(self, "_backbone_frozen", False):
+            with torch.no_grad():
+                backbone_output = self.backbone(backbone_inputs)
+        else:
+            backbone_output = self.backbone(backbone_inputs)
         output = Gr00tN1d7ActionHead.forward(
             self.action_head, backbone_output, action_inputs
         )

@@ -27,6 +27,21 @@ def _limit_sft_logits(_module, args, kwargs):
     return args, {**kwargs, "logits_to_keep": 1}
 
 
+def _resolve_sft_checkpoint(model_path: Path) -> tuple[Path, Path] | None:
+    """Return ``(checkpoint_dir, full_weights_path)`` for an FSDP SFT export."""
+    if (
+        (model_path / "model.safetensors").is_file()
+        or (model_path / "model.safetensors.index.json").is_file()
+        or any(model_path.glob("model-*.safetensors"))
+    ):
+        return None
+    for checkpoint_dir in (model_path / "actor", model_path):
+        full_weights_path = checkpoint_dir / "model_state_dict" / "full_weights.pt"
+        if full_weights_path.is_file():
+            return checkpoint_dir, full_weights_path
+    return None
+
+
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     from gr00t.configs.model.gr00t_n1d7 import Gr00tN1d7Config
     from gr00t.model.gr00t_n1d7.gr00t_n1d7 import Gr00tN1d7
@@ -89,7 +104,9 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         if not model_path.exists():
             raise FileNotFoundError(f"Model path does not exist: {model_path}")
 
-        config = Gr00tN1d7Config.from_pretrained(str(model_path))
+        sft_checkpoint = _resolve_sft_checkpoint(model_path)
+        config_dir = sft_checkpoint[0] if sft_checkpoint is not None else model_path
+        config = Gr00tN1d7Config.from_pretrained(str(config_dir))
         training_mode = cfg.get("training_mode", "rl")
         if training_mode not in {"rl", "sft"}:
             raise ValueError(
@@ -118,34 +135,51 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
 
         backbone_model_path = OmegaConf.select(cfg, "backbone_model_path", default=None)
 
-        loaded = GR00T_N1_7_ForRLActionPrediction.from_pretrained(
-            config=config,
-            local_model_path=str(model_path),
-            pretrained_model_name_or_path=str(model_path),
-            backbone_model_path=backbone_model_path,
-            torch_dtype=torch_dtype,
-            embodiment_tag=emb_tag,
-            denoising_steps=cfg.denoising_steps,
-            output_action_chunks=cfg.num_action_chunks,
-            obs_converter_type=cfg.obs_converter_type,
-            rl_head_config=cfg.rl_head_config,
-            init_backbone_from_config=init_backbone_from_config,
-            output_loading_info=init_backbone_from_config,
-        )
-        if init_backbone_from_config:
-            model, loading_info = loaded
-            if (
-                loading_info["missing_keys"]
-                or loading_info["mismatched_keys"]
-                or loading_info["error_msgs"]
-            ):
-                raise ValueError(
-                    f"Incomplete GR00T SFT checkpoint restore: {loading_info}"
-                )
-            model.checkpoint_loading_info = loading_info
-            logger.info("GR00T SFT whole-checkpoint loading info: %s", loading_info)
+        if sft_checkpoint is not None:
+            checkpoint_dir, full_weights_path = sft_checkpoint
+            model = GR00T_N1_7_ForRLActionPrediction(
+                config=config,
+                local_model_path=str(checkpoint_dir),
+                backbone_model_path=backbone_model_path,
+                compute_dtype=torch_dtype,
+                embodiment_tag=emb_tag,
+                denoising_steps=cfg.denoising_steps,
+                output_action_chunks=cfg.num_action_chunks,
+                obs_converter_type=cfg.obs_converter_type,
+                rl_head_config=cfg.rl_head_config,
+                init_backbone_from_config=(backbone_model_path is not None),
+            )
+            model.load_state_dict(torch.load(full_weights_path, map_location="cpu"))
+            model.eval()
         else:
-            model = loaded
+            loaded = GR00T_N1_7_ForRLActionPrediction.from_pretrained(
+                config=config,
+                local_model_path=str(model_path),
+                pretrained_model_name_or_path=str(model_path),
+                backbone_model_path=backbone_model_path,
+                torch_dtype=torch_dtype,
+                embodiment_tag=emb_tag,
+                denoising_steps=cfg.denoising_steps,
+                output_action_chunks=cfg.num_action_chunks,
+                obs_converter_type=cfg.obs_converter_type,
+                rl_head_config=cfg.rl_head_config,
+                init_backbone_from_config=init_backbone_from_config,
+                output_loading_info=init_backbone_from_config,
+            )
+            if init_backbone_from_config:
+                model, loading_info = loaded
+                if (
+                    loading_info["missing_keys"]
+                    or loading_info["mismatched_keys"]
+                    or loading_info["error_msgs"]
+                ):
+                    raise ValueError(
+                        f"Incomplete GR00T SFT checkpoint restore: {loading_info}"
+                    )
+                model.checkpoint_loading_info = loading_info
+                logger.info("GR00T SFT whole-checkpoint loading info: %s", loading_info)
+            else:
+                model = loaded
     finally:
         restore_npu_patches(Patcher, npu_patch_state)
 

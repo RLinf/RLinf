@@ -1,12 +1,12 @@
 GR00T-N1.7 监督微调
 ===================
 
-使用 LIBERO Spatial 示范数据全参数微调 GR00T-N1.7，并保存可恢复训练的 checkpoint。本示例从 NVIDIA 的 3B 权重开始，用 FSDP 训练视觉编码器、语言模型和 action head。
+在 LIBERO Spatial 示范数据上用 FSDP 全参数微调 GR00T-N1.7，保存可恢复训练的 checkpoint，并直接在 LIBERO Spatial 上评测微调后的模型。
 
 概览
 ----
 
-模型读取双相机图像、机器人状态和任务指令，学习预测 16 步动作片段。
+模型接收主相机和腕部相机 RGB 图像、机器人状态以及任务指令，预测 16 步动作块。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -31,6 +31,9 @@ GR00T-N1.7 监督微调
 
       8 张 NVIDIA GPU · FSDP
 
+| **你将完成：** 安装环境 → 下载模型与数据 → 启动 ``run_vla_sft.sh`` → 观察 ``train/loss`` 并评测。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 已获取 ``nvidia/Cosmos-Reason2-2B`` 的 Hugging Face 访问权限 · 8 张 NVIDIA GPU。
+
 任务
 ~~~~
 
@@ -40,8 +43,8 @@ GR00T-N1.7 监督微调
    * - 任务套件
      - 示范数据
      - 配置
-   * - LIBERO Spatial：10 个任务
-     - 432 条轨迹，52,970 个时间步，采样频率 10 Hz
+   * - LIBERO Spatial（10 个任务）
+     - 432 条轨迹，52,970 个时间步，10 Hz
      - ``libero_sft_gr00t_n1d7``
 
 观测与动作
@@ -55,144 +58,109 @@ GR00T-N1.7 监督微调
    * - 观测
      - 主相机与腕部相机 RGB 图像；8 维末端与夹爪状态
    * - 动作
-     - 16 步、每步 7 维的笛卡尔位移、旋转增量和夹爪控制
+     - 16 步、每步 7 维的笛卡尔位移、旋转增量与夹爪控制
    * - 指令
-     - 示范轨迹中的任务描述
+     - 示范轨迹附带的任务描述
 
-安装
-----
+安装与运行
+----------
 
 .. include:: _setup_common.rst
 
-安装并激活 GR00T-N1.7 环境：
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: LIBERO Spatial
 
-   bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
-   source .venv/bin/activate
+      **1. 安装**
 
-也可以激活此前按上述模型和环境选项安装的已有环境。后续命令均在所选环境、RLinf 仓库根目录执行。示例配置使用单机八卡；调整 GPU 分配时，同时调整 batch size。
+      克隆仓库并安装、激活 ``gr00t_n1d7`` 环境：
 
-下载模型与数据
---------------
+      .. code-block:: bash
 
-先在 Hugging Face 接受 `Cosmos-Reason2-2B <https://huggingface.co/nvidia/Cosmos-Reason2-2B>`_ 的访问条款，再下载 GR00T 权重以及 backbone 配置和 tokenizer：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
+         source .venv/bin/activate
 
-.. code-block:: bash
+      **2. 下载模型与数据**
 
-   hf auth login
-   hf download nvidia/GR00T-N1.7-3B --local-dir checkpoints/GR00T-N1.7-3B
-   hf download nvidia/Cosmos-Reason2-2B \
-     --include '*.json' '*.txt' --local-dir checkpoints/Cosmos-Reason2-2B
+      先在 Hugging Face 接受 `Cosmos-Reason2-2B <https://huggingface.co/nvidia/Cosmos-Reason2-2B>`_ 的访问条款并登录 ``hf auth login``，再下载基座权重、backbone 配置与 tokenizer 以及 `Physical Intelligence LIBERO <https://huggingface.co/datasets/physical-intelligence/libero>`_ 数据集：
 
-GR00T checkpoint 包含 backbone 权重，Cosmos 目录用于提供加载所需的配置和 tokenizer。
+      .. code-block:: bash
 
-下载 `Physical Intelligence LIBERO 数据集 <https://huggingface.co/datasets/physical-intelligence/libero>`_：
+         hf auth login
+         hf download nvidia/GR00T-N1.7-3B --local-dir ./checkpoints/GR00T-N1.7-3B
+         hf download nvidia/Cosmos-Reason2-2B --include '*.json' '*.txt' --local-dir ./checkpoints/Cosmos-Reason2-2B
+         hf download physical-intelligence/libero --repo-type dataset --local-dir ./datasets/physical-intelligence-libero
 
-.. code-block:: bash
+      ``GR00T-N1.7-3B`` 提供预训练权重，``Cosmos-Reason2-2B`` 提供 backbone 配置和 tokenizer。数据集包含 40 个任务、1,693 条轨迹，图像内嵌在 Parquet 文件中；``examples/sft/config/libero_sft_gr00t_n1d7.yaml`` 会筛选 10 个 Spatial 任务，将夹爪动作转为 GR00T 格式，并缓存归一化统计量。
 
-   hf download physical-intelligence/libero \
-     --repo-type dataset --local-dir datasets/physical-intelligence-libero
+      **3. 启动训练**
 
-完整数据集包含 40 个任务、1,693 条轨迹，双相机图像直接存放在 Parquet 文件中。保留 ``meta/`` 和 ``data/`` 目录；已有完整下载可直接在下方填写路径。示例用 ``data.task_names`` 筛选 10 个 Spatial 任务，将夹爪动作转换为 GR00T 约定，再计算所选轨迹的归一化统计。
+      在仓库根目录启动单机 FSDP 训练：
 
-运行
-----
+      .. code-block:: bash
 
-编辑 ``examples/sft/config/libero_sft_gr00t_n1d7.yaml``，设置数据集、模型权重和 backbone 配置的路径，再设置 GPU 分配、batch size 和训练预算：
+         bash examples/sft/run_vla_sft.sh libero_sft_gr00t_n1d7 \
+           data.train_data_paths="$PWD/datasets/physical-intelligence-libero" \
+           actor.model.model_path="$PWD/checkpoints/GR00T-N1.7-3B" \
+           actor.model.backbone_model_path="$PWD/checkpoints/Cosmos-Reason2-2B"
 
-.. code-block:: yaml
+      日志与 TensorBoard 事件保存在 ``logs/<timestamp>-libero_sft_gr00t_n1d7/``，checkpoint 按 ``runner.save_interval`` 步数保存在 ``libero_sft_gr00t_n1d7/checkpoints/global_step_<N>/``。需要断点续训时，传入 ``runner.resume_dir="$PWD/logs/.../checkpoints/global_step_<N>"`` 并保持数据集、GPU 数量、batch size 与 dataloader worker 数不变（详见 :doc:`../../guides/resume`\ ；数据流重放不保证随机图像增强逐位一致）。
 
-   cluster:
-     component_placement:
-       actor: 0-7
-   data:
-     train_data_paths:
-       - /absolute/path/to/datasets/physical-intelligence-libero
-     format: physical_libero
-     statistics_path: ./data_statistics/libero_spatial.json
-   runner:
-     max_steps: 20000
-     save_interval: 1000
-   actor:
-     micro_batch_size: 1
-     global_batch_size: 32
-     model:
-       model_path: /absolute/path/to/checkpoints/GR00T-N1.7-3B
-       backbone_model_path: /absolute/path/to/checkpoints/Cosmos-Reason2-2B
-     optim:
-       total_training_steps: 20000
+      .. dropdown:: 高级配置（可选）
 
-保留配置中已有的 Spatial 任务列表。``data.statistics_path`` 指定缓存目录和文件名前缀，每个数据集和 episode 选择分别生成带哈希后缀的缓存文件。归一化统计也会随 checkpoint 保存。
+         调整硬件分配或训练步数时，可在 ``examples/sft/config/libero_sft_gr00t_n1d7.yaml`` 或命令行覆盖以下配置项：
 
-全局 batch size 必须能被 GPU 数与 microbatch size 的乘积整除。保留 ``runner.max_epochs: -1``，训练持续采样，到 ``runner.max_steps`` 指定的更新次数后停止。``actor.optim.total_training_steps`` 决定学习率计划长度。20,000 次更新是示例预算，不代表已经测得的收敛目标。
+         .. list-table::
+            :header-rows: 1
+            :widths: 34 66
 
-使用修改后的配置启动单机训练。指定本地 Ray 实例，避免连入机器上的其他集群：
+            * - 配置项
+              - 说明
+            * - ``cluster.component_placement.actor``
+              - FSDP 训练使用的 GPU 编号（默认 ``0-7``）。
+            * - ``actor.micro_batch_size`` / ``actor.global_batch_size``
+              - 单卡 micro-batch size 与全局 batch size（默认 ``1`` 与 ``32``）；全局 batch size 需能被 GPU 数与 ``micro_batch_size`` 的乘积整除。
+            * - ``runner.max_steps`` / ``runner.save_interval``
+              - 总训练步数与保存间隔（保持 ``runner.max_epochs: -1``）。
+            * - ``actor.optim.total_training_steps``
+              - 余弦学习率调度的总步数。
+            * - ``data.statistics_path``
+              - 按数据集和任务子集哈希缓存统计量的文件前缀；每个 checkpoint 也会同步保存统计量。
 
-.. code-block:: bash
+.. dropdown:: 评测 SFT checkpoint（可选）
 
-   export RLINF_NODE_RANK=0
-   export RAY_ADDRESS=local
-   bash examples/sft/run_vla_sft.sh libero_sft_gr00t_n1d7
+   参考 :doc:`../../evaluations/guides/libero` 直接在 LIBERO Spatial 上评测 ``global_step_<N>``\ （如需继续强化学习后训练，见 :doc:`gr00t`\ ）：
 
-启动脚本将控制台日志和 TensorBoard 事件写入 ``logs/<timestamp>-libero_sft_gr00t_n1d7/``。训练过程中查看 ``train/loss`` 和全局更新次数；checkpoint 位于该运行目录下的 ``libero_sft_gr00t_n1d7/checkpoints/global_step_N/``。
+   .. code-block:: bash
 
-恢复训练
-~~~~~~~~
+      bash evaluations/run_eval.sh libero libero_spatial_gr00t_n1d7_eval \
+        rollout.model.model_path="$PWD/logs/<run_dir>/libero_sft_gr00t_n1d7/checkpoints/global_step_3000" \
+        rollout.model.backbone_model_path="$PWD/checkpoints/Cosmos-Reason2-2B"
 
-在原 YAML 中，将 ``runner.resume_dir`` 设为已保存的 ``global_step_N`` 目录的绝对路径，再执行上面的启动命令。保持数据集、GPU 拓扑、batch size 和 dataloader worker 数不变。``runner.max_steps`` 表示包含已完成更新在内的总更新次数。
-
-短程检查保存与恢复流程时，首次启动设置 ``runner.max_steps: 10``、``runner.save_interval: 10``、``actor.optim.lr_warmup_steps: 0`` 和 ``actor.optim.total_training_steps: 20``。运行结束后，把 ``runner.max_steps`` 改为 20，并将 ``runner.resume_dir`` 指向刚保存的 ``global_step_10``，再启动一次。第二次运行应从第 10 次更新继续，保存 ``global_step_20``。checkpoint 恢复详见 :doc:`../../guides/resume`。
-
-.. note::
-
-   dataloader 通过重放数据流恢复读取位置，随机图像增强的结果不保证与恢复前完全一致。
+   ``evaluations/libero/libero_spatial_gr00t_n1d7_eval.yaml`` 默认关闭 value head 并设置 ``env.eval.ignore_terminations=False``，直接从 checkpoint 目录读取 processor、归一化统计量与权重，在 40 个并行环境中完成全部 500 条轨迹评测。
 
 可视化与结果
 ------------
 
-启动 TensorBoard 查看训练记录：
+启动 TensorBoard 查看 ``train/loss`` 与训练进度（指标定义见 :doc:`../../reference/metrics`\ ）：
 
 .. code-block:: bash
 
-   tensorboard --logdir logs
+   tensorboard --logdir ./logs
 
-用 ``train/loss`` 观察动作拟合情况，并确认保存的更新目录与预算一致。checkpoint 包含模型、优化器、训练归一化统计、processor 设置和 dataloader 恢复状态。指标定义见 :doc:`../../reference/metrics`。
+在 8 张 NVIDIA A800、全局 batch size 为 64 的配置下训练 3,000 步后，LIBERO Spatial 实测结果如下：
 
-准备训练模型并评测
-~~~~~~~~~~~~~~~~~~
+.. list-table::
+   :header-rows: 1
+   :widths: 38 32 30
 
-将训练保存的模型配置和 processor 放入评测模型目录。先把 ``SFT_ACTOR`` 设为待评测更新对应的 ``actor/`` 目录：
-
-.. code-block:: bash
-
-   BASE_MODEL="$(realpath checkpoints/GR00T-N1.7-3B)"
-   SFT_ACTOR=/absolute/path/to/global_step_N/actor
-   EVAL_MODEL="$(realpath -m checkpoints/GR00T-N1.7-SFT)"
-   mkdir -p "$EVAL_MODEL"
-   ln -s "$BASE_MODEL"/model*.safetensors "$EVAL_MODEL/"
-   cp "$BASE_MODEL/model.safetensors.index.json" "$EVAL_MODEL/"
-   cp "$SFT_ACTOR"/{config.json,processor_config.json,statistics.json,embodiment_id.json} "$EVAL_MODEL/"
-
-评测目录用基座权重的符号链接构建模型，并使用 SFT 保存的 processor。请保留基座目录。下面的评测命令从同一个 SFT checkpoint 加载训练权重。
-
-评测先加载 Cosmos backbone，再恢复 GR00T 权重。将完整的 Cosmos checkpoint 下载到 ``checkpoints/Cosmos-Reason2-2B``：
-
-.. code-block:: bash
-
-   hf download nvidia/Cosmos-Reason2-2B --local-dir checkpoints/Cosmos-Reason2-2B
-
-复用现有 LIBERO Spatial 配置，只启动评测。将完整模型配置传给 rollout，并关闭 value head：
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh libero_spatial_ppo_gr00t_n1d7 \
-     runner.only_eval=True \
-     'rollout.model=${actor.model}' \
-     actor.model.model_path="$EVAL_MODEL" \
-     actor.model.backbone_model_path="$(realpath checkpoints/Cosmos-Reason2-2B)" \
-     actor.model.add_value_head=False \
-     runner.ckpt_path="$SFT_ACTOR/model_state_dict/full_weights.pt" \
-     env.eval.ignore_terminations=False
-
-``rollout.model.model_path`` 选择训练保存的 processor，``runner.ckpt_path`` 指向配套的训练权重。命令沿用原配置的 GPU 分配和 rollout 预算，按评测协议调整这两项。评测设置见 :doc:`../../evaluations/index`，LIBERO 环境准备见 :doc:`gr00t`。
+   * - 模型
+     - 配置
+     - LIBERO Spatial（``success_once``）
+   * - 基座模型（``nvidia/GR00T-N1.7-3B``）
+     - 500 条轨迹
+     - ``0/500``\ （0.0%）
+   * - SFT（3,000 步）
+     - 8× A800 · GBS 64 · 500 条轨迹
+     - ``367/500``\ （73.4%）

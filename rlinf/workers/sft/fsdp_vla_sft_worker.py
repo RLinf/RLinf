@@ -129,7 +129,11 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         super().save_checkpoint(save_path, step)
         self._save_data_checkpoint(save_path)
         if self._rank == 0:
-            self.model.save_sft_checkpoint_metadata(save_path)
+            save_model_metadata = getattr(
+                self.model, "save_sft_checkpoint_metadata", None
+            )
+            if save_model_metadata is not None:
+                save_model_metadata(save_path)
             save_data_metadata = getattr(
                 self.data_loader, "save_sft_checkpoint_metadata", None
             )

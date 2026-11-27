@@ -65,11 +65,18 @@ def build_gr00t_sft_dataloader(
         if resume_dir
         else model_cfg.get("processor_path", model_cfg.model_path)
     )
-    processor = Gr00tN1d7Processor.from_pretrained(
-        processor_path,
-        modality_configs={tag.value: modality_configs},
-        model_name=model_cfg.get("backbone_model_path", "nvidia/Cosmos-Reason2-2B"),
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.gr00t_action_model import (
+        redirect_qwen3_backbone_to_local,
     )
+
+    backbone_model_path = model_cfg.get("backbone_model_path", None)
+    with redirect_qwen3_backbone_to_local(
+        "nvidia/Cosmos-Reason2-2B", backbone_model_path
+    ):
+        processor = Gr00tN1d7Processor.from_pretrained(
+            processor_path,
+            modality_configs={tag.value: modality_configs},
+        )
     paths = [data_paths] if isinstance(data_paths, str) else list(data_paths)
     datasets = []
     sizes = []

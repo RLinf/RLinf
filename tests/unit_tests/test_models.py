@@ -6944,18 +6944,13 @@ def test_sd3_pretraining_auxiliary_placement_and_gradients(sd3_policy, offload):
         model.to("cpu")
 
 
-@pytest.mark.parametrize("parameter_dtype", [torch.float32, torch.bfloat16])
-def test_gr00t_sft_loss(monkeypatch, parameter_dtype):
-    """SFT dispatch must preserve the upstream FM objective and gradient path."""
-    if isinstance(sys.modules.get("imageio"), MagicMock):
-        monkeypatch.delitem(sys.modules, "imageio")
-    pytest.importorskip("imageio")
+def _build_tiny_gr00t_n1d7_sft_model(parameter_dtype):
+    """Build a minimal GR00T-N1.7 model with the real upstream action head."""
     config_module = pytest.importorskip("gr00t.configs.model.gr00t_n1d7")
-    upstream = pytest.importorskip("gr00t.model.gr00t_n1d7.gr00t_n1d7")
+    pytest.importorskip("gr00t.model.gr00t_n1d7.gr00t_n1d7")
     pytest.importorskip("gr00t.model.gr00t_n1d7.processing_gr00t_n1d7")
     from transformers.feature_extraction_utils import BatchFeature
 
-    from rlinf.models.embodiment.base_policy import ForwardType
     from rlinf.models.embodiment.gr00t.gr00t_n1d7.gr00t_action_model import (
         FlowMatchingActionHeadForRLActionPrediction,
         GR00T_N1_7_ForRLActionPrediction,
@@ -7029,6 +7024,20 @@ def test_gr00t_sft_loss(monkeypatch, parameter_dtype):
         config, rl_head_config, output_action_chunks=3
     ).float()
     model.train()
+    return model
+
+
+@pytest.mark.parametrize("parameter_dtype", [torch.float32, torch.bfloat16])
+def test_gr00t_sft_loss(monkeypatch, parameter_dtype):
+    """SFT dispatch must preserve the upstream FM objective and gradient path."""
+    if isinstance(sys.modules.get("imageio"), MagicMock):
+        monkeypatch.delitem(sys.modules, "imageio")
+    pytest.importorskip("imageio")
+    upstream = pytest.importorskip("gr00t.model.gr00t_n1d7.gr00t_n1d7")
+
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    model = _build_tiny_gr00t_n1d7_sft_model(parameter_dtype)
     assert model.dtype == parameter_dtype
     mask = torch.zeros(2, 3, 8)
     mask[:, :, :4] = 1
@@ -7069,6 +7078,39 @@ def test_gr00t_sft_loss(monkeypatch, parameter_dtype):
     for name, parameter in model.named_parameters():
         if name in gradients:
             torch.testing.assert_close(parameter.grad, gradients[name], rtol=0, atol=0)
+
+
+def test_gr00t_sft_frozen_backbone_skips_gradients(monkeypatch):
+    """Frozen backbone flag must suppress backbone autograd during SFT."""
+    if isinstance(sys.modules.get("imageio"), MagicMock):
+        monkeypatch.delitem(sys.modules, "imageio")
+    pytest.importorskip("imageio")
+
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    model = _build_tiny_gr00t_n1d7_sft_model(torch.float32)
+    model._backbone_frozen = True
+    mask = torch.ones(2, 3, 8)
+    inputs = {
+        "backbone_features": torch.randn(2, 5, 16),
+        "attention_mask": torch.tensor([[1, 1, 1, 0, 0], [1, 1, 1, 1, 0]]),
+        "state": torch.randn(2, 1, 8),
+        "action": torch.randn(2, 3, 8),
+        "action_mask": mask,
+        "embodiment_id": torch.zeros(2, dtype=torch.long),
+    }
+
+    result = model(forward_type=ForwardType.SFT, data={"inputs": inputs})
+    result["loss"].backward()
+
+    assert model.backbone.projection.weight.grad is None
+    assert model.backbone.projection.bias.grad is None
+    assert any(
+        "action_decoder" in name
+        and param.grad is not None
+        and param.grad.abs().sum() > 0
+        for name, param in model.named_parameters()
+    )
 
 
 def test_gr00t_sft_logits():
@@ -7414,6 +7456,66 @@ def test_gr00t_sft_metadata(gr00t_libero_parquet, gr00t_sft_config):
     restored = Gr00tN1d7Config.from_pretrained(output)
     assert restored.action_horizon == 16
     assert restored.max_action_dim == 7
+
+
+def test_gr00t_sft_processor_keeps_canonical_model_name_with_local_backbone(
+    gr00t_libero_parquet, gr00t_sft_config, tmp_path, monkeypatch
+):
+    import json
+
+    processing = pytest.importorskip("gr00t.model.gr00t_n1d7.processing_gr00t_n1d7")
+    from transformers import Qwen3VLProcessor
+
+    from rlinf.data.datasets.gr00t import build_gr00t_sft_dataloader
+
+    backbone_dir = tmp_path / "local-cosmos"
+    backbone_dir.mkdir()
+    gr00t_sft_config.actor.model.backbone_model_path = str(backbone_dir)
+
+    seen_calls = []
+
+    def fake_qwen3_from_pretrained(model_name, *args, **kwargs):
+        seen_calls.append((model_name, kwargs.get("local_files_only")))
+        return SimpleNamespace(tokenizer=SimpleNamespace())
+
+    monkeypatch.setattr(Qwen3VLProcessor, "from_pretrained", fake_qwen3_from_pretrained)
+    monkeypatch.setattr(
+        processing,
+        "build_processor",
+        lambda model_name, *args, **kwargs: Qwen3VLProcessor.from_pretrained(
+            model_name, *args, **kwargs
+        ),
+    )
+
+    loader, _ = build_gr00t_sft_dataloader(
+        gr00t_sft_config, 1, 0, [str(gr00t_libero_parquet)]
+    )
+    assert seen_calls == [(str(backbone_dir.resolve()), True)]
+    assert loader.dataset.processor.model_name == "nvidia/Cosmos-Reason2-2B"
+
+    output = tmp_path / "checkpoint"
+    output.mkdir()
+    loader.save_sft_checkpoint_metadata(str(output))
+    saved_cfg = json.loads((output / "processor_config.json").read_text())
+    assert saved_cfg["processor_kwargs"]["model_name"] == "nvidia/Cosmos-Reason2-2B"
+
+
+def test_gr00t_n1d7_resolve_sft_checkpoint(tmp_path):
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7 import _resolve_sft_checkpoint
+
+    base_dir = tmp_path / "base"
+    base_dir.mkdir()
+    (base_dir / "model.safetensors").write_bytes(b"stub")
+    assert _resolve_sft_checkpoint(base_dir) is None
+
+    step_dir = tmp_path / "global_step_3000"
+    actor_dir = step_dir / "actor"
+    weights = actor_dir / "model_state_dict" / "full_weights.pt"
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"stub")
+
+    assert _resolve_sft_checkpoint(step_dir) == (actor_dir, weights)
+    assert _resolve_sft_checkpoint(actor_dir) == (actor_dir, weights)
 
 
 def test_rollout_model_path_inherits_from_actor():

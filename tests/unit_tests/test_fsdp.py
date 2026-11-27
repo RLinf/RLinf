@@ -2169,3 +2169,43 @@ def test_prefix_async_replay_drains_without_rank_collectives(tmp_path):
         nprocs=2,
         join=True,
     )
+
+
+def test_vla_sft_save_checkpoint_skips_missing_model_metadata(
+    tmp_path, single_rank_env, monkeypatch
+):
+    from torchdata.stateful_dataloader import StatefulDataLoader
+
+    from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    dist.init_process_group(
+        "gloo",
+        init_method=(f"tcp://{os.environ['MASTER_ADDR']}:{os.environ['MASTER_PORT']}"),
+        rank=0,
+        world_size=1,
+    )
+    monkeypatch.setattr(
+        FSDPSftWorker, "save_checkpoint", lambda self, save_path, step=0: None
+    )
+
+    worker = object.__new__(FSDPVlaSftWorker)
+    worker._rank = 0
+    worker._world_size = 1
+    worker._data_epoch = 0
+    worker.model = nn.Linear(2, 2)
+    worker.data_loader = StatefulDataLoader(torch.arange(4), batch_size=2)
+    worker.data_iter = iter(worker.data_loader)
+
+    plain_dir = tmp_path / "plain_model"
+    plain_dir.mkdir()
+    worker.save_checkpoint(str(plain_dir), step=1)
+    assert (plain_dir / "data.pt").is_file()
+    assert (plain_dir / "rng.pt").is_file()
+
+    recorded = []
+    worker.model.save_sft_checkpoint_metadata = recorded.append
+    hook_dir = tmp_path / "hook_model"
+    hook_dir.mkdir()
+    worker.save_checkpoint(str(hook_dir), step=2)
+    assert recorded == [str(hook_dir)]
