@@ -237,8 +237,17 @@ def test_control_authentication_and_remote_peer_policy(use_whitelist):
     from rlinf.hybrid_engines.sglang.common.http_routes import add_rlinf_routes
 
     class Manager:
+        async def run_task_method(self, obj, request):
+            return {"version": obj}
+
         async def sync_hf_weight(self, obj, request):
             return {"version": obj}
+
+        async def abort_generation(self, obj, request):
+            return None
+
+    with pytest.raises(ValueError, match="nonempty authentication token"):
+        add_rlinf_routes(FastAPI(), control_token="")
 
     app = FastAPI()
     if use_whitelist:
@@ -252,18 +261,26 @@ def test_control_authentication_and_remote_peer_policy(use_whitelist):
                 transport=transport, base_url="http://test"
             ) as client:
                 remote_blocked = use_whitelist and host != "127.0.0.1"
-                response = await client.post(
-                    "/rlinf/sync_hf_weight", json={"payload_b64": "invalid-pickle"}
-                )
-                assert response.status_code == (403 if remote_blocked else 401)
-                response = await client.post(
-                    "/rlinf/sync_hf_weight",
-                    json={"payload_b64": base64.b64encode(pickle.dumps(7)).decode()},
-                    headers={"X-RLinf-Control-Token": "test-secret"},
-                )
-                assert response.status_code == (403 if remote_blocked else 200)
-                if not remote_blocked:
-                    assert response.json()["version"] == 7
+                for method in ("run_task_method", "sync_hf_weight", "abort_generation"):
+                    response = await client.post(
+                        f"/rlinf/{method}", json={"payload_b64": "invalid-pickle"}
+                    )
+                    assert response.status_code == (403 if remote_blocked else 401)
+                    response = await client.post(
+                        f"/rlinf/{method}",
+                        json={
+                            "payload_b64": base64.b64encode(pickle.dumps(7)).decode()
+                        },
+                        headers={"X-RLinf-Control-Token": "test-secret"},
+                    )
+                    assert response.status_code == (403 if remote_blocked else 200)
+                    if not remote_blocked:
+                        if method == "run_task_method":
+                            assert pickle.loads(
+                                base64.b64decode(response.json()["payload_b64"])
+                            ) == {"version": 7}
+                        elif method == "sync_hf_weight":
+                            assert response.json()["version"] == 7
 
     asyncio.run(run())
 

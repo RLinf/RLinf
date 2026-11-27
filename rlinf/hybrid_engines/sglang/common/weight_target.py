@@ -46,8 +46,12 @@ def receive_hf_weights(
     version = bucket.pop("weight_version", None)
     if count < 1:
         raise ValueError(f"Expected positive weight bucket count, got {count}")
+    first_error: Exception | None = None
     if on_first_bucket is not None:
-        on_first_bucket()
+        try:
+            on_first_bucket()
+        except Exception as exc:
+            first_error = exc
     for index in range(count):
         pending = (
             worker.recv(
@@ -56,8 +60,14 @@ def receive_hf_weights(
             if index + 1 < count
             else None
         )
-        load_bucket(bucket)
+        if first_error is None:
+            try:
+                load_bucket(bucket)
+            except Exception as exc:
+                first_error = exc
         bucket = pending.wait() if pending is not None else None
+    if first_error is not None:
+        raise first_error
     return int(version) if version is not None else None
 
 
@@ -118,15 +128,20 @@ class SGLangWeightTarget(torch.nn.Module):
         parameters = dict(module.named_parameters())
         parameters.update(module.named_buffers())
         specs: list[tuple[str, str, tuple[int, int, int] | None, tuple[int, ...]]] = []
+        claimed: dict[str, list[tuple[int, int, int] | None]] = {}
         for name, shape in self.shapes.items():
             mapped, shard = name, None
             if name not in parameters:
                 for mapper in mappers:
-                    mapped, index, _ = mapper(mapped)
-                    if index is not None:
-                        shard = index
-                    if not mapped or mapped in parameters:
+                    candidate, index, _ = mapper(name)
+                    if not candidate:
+                        mapped, shard = "", None
                         break
+                    if candidate in parameters:
+                        mapped, shard = candidate, index
+                        break
+                    if candidate != name:
+                        mapped, shard = candidate, index
             # SGLang maps checkpoint-only, unused weights to an empty name.
             if not mapped:
                 continue
@@ -142,12 +157,13 @@ class SGLangWeightTarget(torch.nn.Module):
             value = parameter.detach()
             narrow_spec: tuple[int, int, int] | None = None
             if shard is not None:
-                owner = module.get_submodule(mapped.rsplit(".", 1)[0])
+                owner = module.get_submodule(mapped.rpartition(".")[0])
                 sizes = getattr(owner, "output_sizes", None)
                 dim = getattr(parameter, "output_dim", None)
                 if (
                     sizes is None
                     or dim is None
+                    or isinstance(shard, bool)
                     or not isinstance(shard, int)
                     or not 0 <= shard < len(sizes)
                 ):
@@ -163,6 +179,22 @@ class SGLangWeightTarget(torch.nn.Module):
                     f"Patch target {name} requires a contiguous full-shape view "
                     f"{shape}, got {tuple(value.shape)}"
                 )
+            existing = claimed.setdefault(mapped, [])
+            for prev in existing:
+                if prev is None or narrow_spec is None:
+                    raise ValueError(
+                        f"Aliased patch target for serving parameter {mapped}: {name}"
+                    )
+                prev_dim, prev_offset, prev_size = prev
+                cur_dim, cur_offset, cur_size = narrow_spec
+                if prev_dim != cur_dim or not (
+                    cur_offset + cur_size <= prev_offset
+                    or prev_offset + prev_size <= cur_offset
+                ):
+                    raise ValueError(
+                        f"Overlapping fused patch slices for serving parameter {mapped}: {name}"
+                    )
+            existing.append(narrow_spec)
             specs.append((name, mapped, narrow_spec, shape))
         if not specs:
             raise ValueError("No serving parameters are available for patch sync")

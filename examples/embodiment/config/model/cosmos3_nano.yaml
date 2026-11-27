@@ -1,0 +1,5 @@
+defaults:
+  - cosmos3
+  - _self_
+
+model_variant: nano

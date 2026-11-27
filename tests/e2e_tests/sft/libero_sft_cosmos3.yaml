@@ -1,6 +1,6 @@
 defaults:
   - hybrid_engines/fsdp@actor.fsdp_config
-  - model/cosmos3@actor.model
+  - model/cosmos3_nano@actor.model
   - override hydra/job_logging: stdout
 
 hydra:

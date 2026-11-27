@@ -15,8 +15,8 @@
 """Private pickle-based control routes for SRT and SGLang Diffusion servers.
 
 Authenticate before unpickling: all control routes can execute untrusted pickle.
-SRT uses loopback, or 0.0.0.0 with a peer whitelist for session-server access.
-Diffusion uses token authentication on loopback or a trusted cluster interface.
+Both SRT and SGLang Diffusion keep control routes on loopback and mount
+``PeerWhitelistMiddleware`` when binding 0.0.0.0 for router/session access.
 HTTP does not encrypt tokens or payloads; trust the server's pickled responses.
 """
 

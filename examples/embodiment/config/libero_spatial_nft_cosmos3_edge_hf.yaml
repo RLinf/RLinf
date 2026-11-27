@@ -77,13 +77,14 @@ env:
       save_video: false
   eval:
     rollout_epoch: 1
-    # Revisit the same 40 initial states, one complete episode per state.
-    total_num_envs: 40
-    auto_reset: false
-    ignore_terminations: false
+    total_num_envs: 64
+    auto_reset: true
+    ignore_terminations: true
+    use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: true
+    specific_reset_id: null
     max_episode_steps: 512
-    max_steps_per_rollout_epoch: 512
+    max_steps_per_rollout_epoch: 4096
     group_size: 1
     is_eval: true
     video_cfg:
@@ -126,8 +127,8 @@ actor:
     save_full_model_weights: true
     mixed_precision:
       param_dtype: bf16
-      reduce_dtype: bf16
-      buffer_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: null
       cast_forward_inputs: false
 reward:
   use_reward_model: false

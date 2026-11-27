@@ -87,14 +87,37 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
     def device(self) -> torch.device:
         return next(self.omni.parameters()).device
 
+    def _compute_device(self) -> torch.device:
+        device = getattr(self.omni, "tensor_kwargs", {}).get("device")
+        if isinstance(device, torch.device):
+            return device
+        if isinstance(device, int) and not isinstance(device, bool):
+            return torch.device(device)
+        if device is not None:
+            device_str = str(device)
+            if device_str.isdigit():
+                return torch.device(int(device_str))
+            if device_str == "cuda" and torch.cuda.is_available():
+                return torch.device("cuda", torch.cuda.current_device())
+            return torch.device(device_str)
+        return self.device
+
     def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
-        """Accept EMA-enabled SFT weights in an EMA-disabled RL/eval replica."""
-        if not self._ema_enabled:
-            state_dict = state_dict.copy()
-            for key in tuple(state_dict):
-                if key.startswith("omni.net_ema."):
-                    del state_dict[key]
-        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+        """Accept EMA-enabled SFT weights and wrapper-normalized keys."""
+        from rlinf.models.embodiment.cosmos3.weight_mapping import (
+            strip_wrapper_prefixes,
+        )
+
+        target_by_stripped = {
+            strip_wrapper_prefixes(key): key for key in self.state_dict().keys()
+        }
+        remapped = {}
+        for key, value in state_dict.items():
+            stripped = strip_wrapper_prefixes(key)
+            if not self._ema_enabled and stripped.startswith("omni.net_ema."):
+                continue
+            remapped[target_by_stripped.get(stripped, key)] = value
+        return super().load_state_dict(remapped, strict=strict, assign=assign)
 
     def set_global_step(self, step: int) -> None:
         step = int(step)
@@ -153,7 +176,9 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         n, horizon, raw_dim = actions.shape
         self._set_device(actions.device)
         self._ensure_vision_device_patch()
-        batch = self._build_batch(forward_inputs["images"], forward_inputs["prompts"])
+        batch = self._build_batch(
+            forward_inputs["images"], forward_inputs["prompts"], device=actions.device
+        )
         with torch.no_grad():
             plans, clean, cond, _, _, reference, mask, has_actions = (
                 self.omni._prepare_inference_data(batch, seed=[0] * n)
@@ -218,8 +243,9 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         # Cosmos reads token IDs and image sizes back as Python lists/integers.
         # Keep these on the host instead of copying them to CUDA and back.
         host_keys = {"text_token_ids", "image_size"}
+        compute_device = self._compute_device()
         data = {
-            key: value if key in host_keys else _cosmos_to(value, self.device)
+            key: value if key in host_keys else _cosmos_to(value, compute_device)
             for key, value in data.items()
         }
         self._ensure_vision_device_patch()
@@ -245,7 +271,7 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
 
         def _patched(omni_self, state, *args, **kwargs):
             if hasattr(state, "device") and state.device.type == "cpu":
-                state = state.to(self.device)
+                state = state.to(self._compute_device())
             return original(omni_self, state, *args, **kwargs)
 
         self.omni._encode_vision_item = functools.partial(_patched, self.omni)
@@ -286,11 +312,20 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         self.omni.to(device)
         self._set_device(device)
 
-    def _build_batch(self, images: torch.Tensor, prompts: torch.Tensor) -> dict:
+    def _build_batch(
+        self,
+        images: torch.Tensor,
+        prompts: torch.Tensor,
+        *,
+        device: torch.device | None = None,
+    ) -> dict:
         from cosmos_framework.inference.action import build_action_batch
         from cosmos_framework.inference.args import ModelMode
         from cosmos_framework.inference.inference import _merge_data_batches
 
+        target_device = device if device is not None else self._compute_device()
+        model_mode = getattr(ModelMode, "POLICY", None)
+        mode_kwargs = {"model_mode": model_mode} if model_mode is not None else {}
         horizon = int(self._option("num_action_chunks", 16))
         batches = []
         for image, prompt in zip(images, decode_prompts(prompts), strict=True):
@@ -302,12 +337,12 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
                     prompt=prompt,
                     view_point=str(self._option("action_view_point", "ego_view")),
                     domain_name=str(self._option("domain_name", "libero")),
-                    model_mode=ModelMode.POLICY,
                     action_chunk_size=horizon,
                     fps=int(self._option("fps", 20)),
                     resolution=str(self._option("resolution", "256")),
                     input_video_key=self.omni.input_video_key,
-                    device=self.device,
+                    device=target_device,
+                    **mode_kwargs,
                 )
             )
         return _merge_data_batches(batches)
@@ -315,9 +350,10 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
     @torch.no_grad()
     def generate_eval_actions(self, images: torch.Tensor, prompts: torch.Tensor):
         """Use Cosmos native deterministic sampler for HF evaluation."""
-        self._set_device(self.device)
+        compute_device = self._compute_device()
+        self._set_device(compute_device)
         self._ensure_vision_device_patch()
-        batch = self._build_batch(images, prompts)
+        batch = self._build_batch(images, prompts, device=compute_device)
         n = images.shape[0]
         steps = int(self._option("num_inference_steps", 30))
         shift = float(self._option("shift", 10.0))
@@ -335,12 +371,14 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
     @torch.no_grad()
     def sample_train_actions(self, images: torch.Tensor, prompts: torch.Tensor):
         """Sample an SDE trajectory and return endpoints for NFT resampling."""
-        self._set_device(self.device)
+        compute_device = self._compute_device()
+        self._set_device(compute_device)
         self._ensure_vision_device_patch()
-        batch = self._build_batch(images, prompts)
+        batch = self._build_batch(images, prompts, device=compute_device)
         n = images.shape[0]
         horizon = int(self._option("num_action_chunks", 16))
         raw_dim = int(self._option("raw_action_dim", 10))
+        action_dim = int(self._option("action_dim", 7))
         steps = int(self._option("num_inference_steps", 30))
         shift = float(self._option("shift", 10.0))
         seeds = torch.randint(0, 2**31 - 1, (n,)).tolist()
@@ -359,7 +397,7 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         cond_mask[:, -action_width:].view(n, horizon, model_dim)[..., raw_dim:].fill_(1)
         ref[:, -action_width:].view(n, horizon, model_dim)[..., raw_dim:].zero_()
         x = cond_mask * ref + (1 - cond_mask) * x
-        times = shifted_timesteps(steps, shift, self.device)
+        times = shifted_timesteps(steps, shift, compute_device)
         noise_level = float(self._option("noise_level", 0.5))
         if noise_level <= 0:
             raise ValueError("Cosmos3 RL noise_level must be positive")
@@ -386,7 +424,7 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         ]
         endpoint = x.cpu()
         return list(model_actions.unbind(0)), {
-            "prev_logprobs": torch.zeros(n, horizon, 7),
+            "prev_logprobs": torch.zeros(n, horizon, action_dim),
             "prev_values": None,
             "forward_inputs": {
                 "images": images,

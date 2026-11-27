@@ -11,10 +11,7 @@ RLinf 的评测 rollout，并使用 RLinf 支持的各类仿真器进行模型�
 
 .. note::
 
-   本文只介绍 **eval rollout / sglang-serve** 路径。该路径负责在评测时将环境观测
-   转换成动作，不包含训练侧的模型注册、FSDP Policy 或 SFT 适配。训练侧适配请参考
-   :doc:`使用 FSDP 添加新模型 <new_model_fsdp>` 和
-   :doc:`添加新的 SFT 模型 <new_model_sft>`。
+   本文覆盖 **SGLang 具身 rollout** 路径（同时支持评测与 RL 训练采样）。FSDP actor 或 SFT 模型的训练侧注册请参考 :doc:`使用 FSDP 添加新模型 <new_model_fsdp>` 与 :doc:`添加新的 SFT 模型 <new_model_sft>`。
 
 
 第一部分：适配新模型
@@ -23,80 +20,56 @@ RLinf 的评测 rollout，并使用 RLinf 支持的各类仿真器进行模型�
 整体架构
 --------
 
-SGLang 具身评测路径将通用逻辑与模型逻辑分开：
+SGLang 具身路径将通用调度逻辑与模型逻辑分开：
 
-- 驱动脚本（如 ``eval_embodied_agent.py``）通过
-  :func:`launch_sglang_router_and_server` 启动一个或多个 sglang server 进程，
-  并把每个 server 的 URL 推送给 rollout worker；server 的启动、``/health``
-  轮询和端口分配由 ``SGLangServerWorker``\ （driver 侧）负责，rollout worker
-  本身不再持有 server 子进程；
-- ``SGLangEmbodiedWorker`` 按自己的 rank 取一个 driver 分配的 server URL，
-  用它创建一个 :class:`InferenceHTTPClient`，加载模型对应的 **sglang adapter**，
-  并通过 channel 与环境 Worker 交换 observation 和 action。**向 server 发起的
-  HTTP 请求（msgpack 编码 + 重试）由 worker 自己完成**；
-- **sglang adapter**\ （一个独立的普通类，例如 ``DreamZeroSGLangAdapter``）只负责
-  模型特有的纯逻辑：``build_request`` 把 env observation 转成请求 payload，
-  ``parse_response`` 把 server 响应转成动作，``action_path`` 声明动作端点。它
-  **不持有 HTTP client，也不亲自发请求**。
+- ``EmbodiedComponentPlacement`` 按 ``dp_size * tp_size * sp_degree * cfg_parallel_degree`` 自动推导每个 SGLang Diffusion server 实例占用的 GPU 数，并将 rollout 硬件 rank 按实例分组；
+- 每个 ``SGLangEmbodiedWorker`` 在 ``init_worker()`` 中于分配到的 GPU 上独立拉起并管理一个 ``SGLangServerBackend``\ （``server_type="embodied"``），建立本地回环控制与推理客户端，加载模型对应的 **sglang adapter**，并通过 channel 与 ``EnvWorker`` 交换观测和动作。配置 ``rollout.sglang.launch_router: true`` 且 adapter 设置 ``supports_router = True`` 后，驱动脚本会调用 ``launch_embodied_sglang_router`` 启动可选 router 转发推理请求，控制与权重同步请求仍留在本地回环；
+- **sglang adapter** 继承 ``SGLangEmbodiedAdapter``\ （如 ``DreamZeroSGLangAdapter``、``Cosmos3SGLangAdapter``），负责请求构造（``build_request``）、响应解析（``parse_response``）以及可选的训练采样和权重映射钩子（``supports_training``、``validate_training``、``create_weight_target``、``map_weight_name``、``parse_rollout_response``）。异步 HTTP 通信由基类借助 worker 的 ``InferenceHTTPClient`` 统一完成。
 
-因此，接入新模型时通常 **不需要修改**
-``rlinf/workers/rollout/sglang/sglang_embodied_worker.py``，也无需关心 server
-如何启动——server 参数完全由 YAML 的 ``rollout.sglang.server`` 直接传递给 sglang server 进程。模型由
-``rollout.model.model_type`` 选择，调用关系如下：
+因此，接入新模型通常 **不需要修改** ``rlinf/workers/rollout/sglang/sglang_embodied_worker.py``。server 参数由 YAML 的 ``rollout.sglang.server`` 直接传递给 ``ServerArgs.from_kwargs``，模型由 ``rollout.model.model_type`` 选择，调用关系如下：
 
 .. code-block:: text
 
    rollout.model.model_type: "<your_model>"
                  │
                  ▼
-   驱动脚本: launch_sglang_router_and_server()
-                 │  (rollout.sglang.server_type == "embodied" → SGLangServerWorker)
-                 ▼
-   每个 SGLangServerWorker.init_server()
-                 │  (rollout.sglang.server → ServerArgs.from_kwargs → dispatch_launch)
+   EmbodiedComponentPlacement  （按 dp * tp * sp * cfg 为每个 server 分组 GPU）
+                 │
                  ▼
    SGLangEmbodiedWorker.init_worker()
                  │
-                 ├── get_sglang_adapter_cls("<your_model>")
-                 ├── 取本 rank 的 server URL，创建 InferenceHTTPClient
-                 └── 创建 YourSglangAdapter(cfg, rank)
-
-   SGLangEmbodiedWorker.predict(env_obs)   # 由 EmbodiedEvalRunner 驱动
+                 ├── get_sglang_adapter_cls("<your_model>") → YourSglangAdapter(cfg, rank)
+                 └── SGLangServerBackend(server_type="embodied").initialize()
+                       (rollout.sglang.server → ServerArgs.from_kwargs → dispatch_launch)
                  │
-                 ├── adapter.build_request(env_obs)  → (payload, state)
-                 ├── http_client.post(adapter.action_path, payload, msgpack=True, ...)
-                 └── adapter.parse_response(resp, state)  → [N, H, D] 动作
+                 ▼ （可选：rollout.sglang.launch_router: true 时）
+   驱动脚本: launch_embodied_sglang_router() → rollout_group.set_sglang_router_url()
+
+   SGLangEmbodiedWorker.predict(env_obs, mode)   # 由 EmbodiedEvalRunner / EmbodiedRunner 驱动
+                 │
+                 ├── adapter.async_build_request(env_obs, mode) → (payload, state)
+                 └── adapter.async_send_request(client, payload, state, mode) → [N, H, D] 动作
 
 
-要进入这条调用链，配置中必须同时满足以下条件：
+进入该调用链需满足以下配置项：
 
 .. code-block:: yaml
 
    runner:
-     task_type: embodied_eval
-     only_eval: true
+     task_type: embodied_eval   # RL 训练时为 embodied
+     only_eval: true            # RL 训练时为 false
 
    rollout:
      rollout_backend: sglang
      sglang:
-       server_type: embodied      # 选择 server 分派 = embodied（走 dispatch_launch）
-       launch_server: true        # 驱动脚本启动 server 组
+       serving_mode: embodied   # rollout worker = SGLangEmbodiedWorker
+       backend_type: server
+       launch_server: true      # 由各 worker 启动并管理自己的 server 子进程
+       launch_router: false     # 设为 true 时启用 SGLang router
      model:
        model_type: "<your_model>"
 
-注意 ``rollout.sglang.server_type`` 与 ``rollout.model.model_type`` 是两个\ **正交**
-字段，名字不同、职责不同：
-
-- ``rollout.sglang.server_type`` 决定 **server 子进程走哪条 sglang 分派分支**
-  （同一个 ``SGLangServerWorker`` 类内：``srt`` = 语言模型走
-  ``sglang.srt.entrypoints.http_server.launch_server``；``embodied`` = VLA/diffusion
-  走 ``sglang.multimodal_gen.runtime.launch_server.dispatch_launch``，服务
-  ``/v1/actions/generations`` 端点）；
-- ``rollout.model.model_type`` 决定 **rollout worker 加载哪个 sglang adapter**
-  （adapter registry 查找键）。
-
-``serving_mode: embodied`` 也不可省略——否则 RLinf 会创建普通的 ``SGLangWorker``
-而非 ``SGLangEmbodiedWorker``。
+``rollout.sglang.serving_mode`` 选择 ``SGLangEmbodiedWorker``\ （其固定通过 ``sglang.multimodal_gen.runtime.launch_server.dispatch_launch`` 拉起 ``server_type="embodied"``），``rollout.model.model_type`` 决定从 adapter registry 加载的模型适配器。
 
 
 适配步骤
@@ -152,17 +125,15 @@ worker 完成）。在编写 RLinf 代码前，先确认 SGLang 侧已经具备�
 
    rlinf/models/embodiment/<your_model>/sglang_adapter.py
 
-adapter 是一个 **独立的普通类**\ （不需要继承任何基类），构造签名为
-``(cfg, rank)``，需要实现 ``build_request`` / ``parse_response`` 两个方法并声明
-``action_path``：
+adapter 继承 ``rlinf/models/embodiment/sglang_adapter.py`` 中的 :class:`SGLangEmbodiedAdapter`，构造签名为 ``(cfg, rank)``，实现 ``build_request`` 和 ``parse_response`` 并声明 ``action_path``\ （若依赖单 server 会话状态，设置 ``supports_router = False``）：
 
 .. code-block:: python
 
-   import numpy as np
    import torch
+   from rlinf.models.embodiment.sglang_adapter import SGLangEmbodiedAdapter
 
 
-   class YourSglangAdapter:
+   class YourSglangAdapter(SGLangEmbodiedAdapter):
        action_path = "/v1/actions/generations"
 
        def __init__(self, cfg, rank):
@@ -192,20 +163,10 @@ adapter 是一个 **独立的普通类**\ （不需要继承任何基类），�
 
 接口设计：
 
-- **HTTP 收发由 worker 负责**——adapter 不持有 HTTP client、也不发请求。worker
-  会调用 ``build_request`` 拿到 payload，用 ``http_client.post(adapter.action_path,
-  payload, msgpack=True, ...)`` 发送，再把响应交给 ``parse_response``；
-- ``build_request`` 输入的 ``env_obs`` 是按 batch 组织的环境观测字典；通用字段包括
-  ``main_images``、``task_descriptions``，模型还可以使用 ``wrist_images``、
-  ``states`` 或其它视角。返回 ``(payload, state)``：``payload`` 是发给 server 的
-  请求体，``state`` 是需要在 ``parse_response`` 阶段复用的任意中间量；
-- ``parse_response`` 返回 ``(actions, info)``：``actions`` 必须是 Tensor，shape
-  为 ``[N, num_action_chunks, action_dim]``；``info`` 是附加信息字典，为未来训练
-  扩展预留，目前可以像 DreamZero 一样返回 ``prev_logprobs``、``prev_values`` 和
-  ``forward_inputs``；
-- 当前 SGLang embodied Worker 只用于评测。若 adapter 不支持训练模式，应对
-  ``mode != "eval"`` 明确抛出 ``NotImplementedError``。后续计划支持将 SGLang
-  作为 rollout worker，用于具身模型训练。
+- **HTTP 传输封装在 ``SGLangEmbodiedAdapter`` 基类中**：worker 将 ``InferenceHTTPClient`` 传给 ``adapter.async_request_actions``\ （或分批时调用 ``async_build_request`` 与 ``async_send_request``），由基类在工作线程构造请求、异步发送至 ``action_path``\ （训练时为 ``rollout_path``）并解析响应；
+- ``build_request`` 输入的 ``env_obs`` 是按 batch 组织的环境观测字典；通用字段包括 ``main_images``、``task_descriptions``，模型还可使用 ``wrist_images``、``states`` 或其他视角。返回 ``(payload, state)``，其中 ``payload`` 为请求体，``state`` 供 ``parse_response`` 复用；
+- ``parse_response`` 返回 ``(actions, info)``：``actions`` 是形状为 ``[N, num_action_chunks, action_dim]`` 的 Tensor，``info`` 携带 ``prev_logprobs``、``prev_values`` 和 ``forward_inputs``；
+- 仅支持评测的 adapter 保留默认的 ``supports_training = False``。如需支持 RL 训练采样和在线权重同步（参考 ``Cosmos3SGLangAdapter``），将 ``supports_training = True`` 并实现 ``validate_training``、``map_weight_name``、``create_weight_target`` 与 ``parse_rollout_response``。
 
 .. important::
 
@@ -596,11 +557,8 @@ Hydra defaults
 字段说明：
 
 - ``component_placement`` 指定 env 和 rollout 的放置方式；
-- ``task_type: embodied_eval`` 选择 ``EmbodiedEvalRunner``；
-- ``only_eval: True`` 是必填项，``SGLangEmbodiedWorker`` 会对此断言；
-- ``ckpt_path`` 在本路径中可以为 ``null``，Server 从
-  ``rollout.model.model_path`` 加载权重；
-- 当前脚本仅支持评测，不支持训练。
+- ``task_type: embodied_eval`` 选择 ``EmbodiedEvalRunner``\ （RL 训练使用 ``task_type: embodied`` 和 ``only_eval: false``）；
+- server 直接从 ``rollout.model.model_path`` 加载权重时，``ckpt_path`` 保持为 ``null``；评测 RLinf checkpoint 时可将其指向目标权重文件。
 
 
 环境并行与评测步数
@@ -650,33 +608,23 @@ SGLang Worker 分发
      return_logprobs: false
 
      sglang:
-       server_type: "embodied"      # server 分派 = embodied（走 dispatch_launch）
-       launch_server: true          # 驱动脚本启动 server 组
-       launch_router: false         # 不启动 router（action endpoint 不被 router 转发）
-       group_name: SGLangServerGroup
+       serving_mode: "embodied"      # rollout worker = SGLangEmbodiedWorker
+       backend_type: server
+       launch_server: true           # 每个 worker 自行管理 server 子进程
+       launch_router: false          # 设为 true 可由 SGLang router 统一转发请求
        router_group_name: SGLangRouterGroup
 
 - ``rollout_backend: sglang`` 选择 SGLang 后端；
-- ``serving_mode: embodied`` 选择 rollout worker = ``SGLangEmbodiedWorker``；
-- ``server_type: embodied`` 选择 server 分派分支 = ``embodied``\ （VLA/
-  diffusion，走 ``sglang.multimodal_gen`` 的 ``dispatch_launch``）。
-  ``serving_mode`` 与 ``server_type`` 正交：前者负责 worker 侧怎么连，后者管
-  server 子进程走哪条 sglang 分派；两者都在同一个 ``SGLangServerWorker`` 类内
-  生效，不再区分 server 类；
-- ``launch_router: false`` 是必填：sglang router 只转发固定 LLM 端点
-  （``/generate``、``/v1/chat/completions``），不转发 dreamzero 的
-  ``/v1/actions/generations``，所以具身路径禁用 router，rollout worker 直接
-  连本 rank 分配的 server URL。
+- ``serving_mode: embodied`` 选择 ``SGLangEmbodiedWorker``，由每个 rollout worker 在分配到的 GPU 上拉起具身 SGLang Diffusion server（经由 ``sglang.multimodal_gen`` 的 ``dispatch_launch``）；
+- ``launch_router: false`` 会让请求直接发往各自 worker 持有的本地 loopback server。不依赖单实例会话状态的适配器可以在使用支持转发 ``/v1/actions/generations`` 与 ``/rollout/generate`` 的 router 构建时启用 ``launch_router: true``。
 
-``pipeline_stage_num`` 会参与每个 rollout rank 的 eval batch size 计算；
-``return_logprobs: false`` 表示评测不需要策略概率。
+``pipeline_stage_num`` 会参与每个 rollout rank 的 eval batch size 计算；``return_logprobs: false`` 表示评测不需要策略概率。
 
 
 Server 启动与并行配置
 ~~~~~~~~~~~~~~~~~~~~~
 
-``rollout.sglang`` 顶层放 RLinf 私有的参数（HTTP 客户端、并行度、
-launch 开关），``server`` 子块放转发给 sglang 的 ``ServerArgs`` 字段：
+``rollout.sglang`` 顶层放 RLinf 私有参数（HTTP 客户端、启动开关、router 配置），``server`` 子块放转发给 SGLang 的 ``ServerArgs`` 字段：
 
 .. code-block:: yaml
 
@@ -686,14 +634,12 @@ launch 开关），``server`` 子块放转发给 sglang 的 ``ServerArgs`` 字�
        pipeline_parallel_size: 1
        launch_server: true
        launch_router: false
-       server_type: embodied
        seed: 1140
 
        server:                       # → ServerArgs.from_kwargs
          backend: sglang
          pipeline_class_name: DreamZeroPipeline
          tp_size: ${..tensor_parallel_size}
-         num_gpus: 1
          attention_backend: TORCH_SDPA
          dit_cpu_offload: false
          cfg_parallel_degree: 1
@@ -711,30 +657,14 @@ RLinf 私有参数字段说明：
 
    * - 字段
      - 含义
-   * - ``tensor_parallel_size``
-     - 每个 server engine 的 TP 大小；launcher 按 ``tp×pp`` 把硬件 rank 打包成
-       engine（4 卡 tp=2 → 2 个 2-GPU server；tp=4 → 1 个 4-GPU server）
-   * - ``pipeline_parallel_size``
-     - 每个 server engine 的 PP 大小
    * - ``launch_server`` / ``launch_router``
-     - 是否由驱动脚本启动 server 组 / router
-   * - ``server_type``
-     - server 分派分支：``srt`` / ``embodied``
+     - 是否由每个 rollout worker 拉起本地 server 子进程（必须为 ``true``）以及驱动脚本是否启动可选的 router
    * - ``seed``
      - 每次 action 请求使用的随机种子
 
-``server`` 子块的字段就是 ``ServerArgs`` 字段（``backend``、
-``attention_backend``、``tp_size``、``num_gpus``、``dit_cpu_offload``、
-``cfg_parallel_degree``、``sp_degree`` 等），``pipeline_config`` 子块是
-``DreamZeroPipelineConfig`` 字段（``cfg_scale``、``default_num_inference_steps``、
-``dreamzero_*`` 等）。具体字段含义以所用 SGLang 版本的 ``ServerArgs`` /
-``DreamZeroPipelineConfig`` 为准。
+``server`` 子块的字段对应 ``ServerArgs`` 字段（``backend``、``attention_backend``、``dp_size``、``tp_size``、``sp_degree``、``cfg_parallel_degree``、``dit_cpu_offload`` 等），``pipeline_config`` 子块对应 ``DreamZeroPipelineConfig`` 字段（``cfg_scale``、``default_num_inference_steps``、``dreamzero_*`` 等）。请不要在配置中设置 ``server.num_gpus``：``EmbodiedComponentPlacement`` 会自动按 ``dp_size * tp_size * sp_degree * cfg_parallel_degree`` 推导每个 server 实例占用的 GPU 数，并将 rollout 硬件 rank 打包为对应数量的 worker 与 server。
 
-如果有多个 rollout rank，``launch_sglang_router_and_server`` 会把硬件 rank 按
-``tensor_parallel_size × pipeline_parallel_size`` 打包成多个 server engine 并行
-启动。**HTTP 端口和 master_port 由 worker 的 PortLock 串行分配空闲端口**，
-无需也不要在 YAML 中手设 ``host`` / ``port`` / ``port_base`` / ``master_port_base``——
-这能避免并发 rank 抢同一端口（曾出现 master_port 在 30005 上 EADDRINUSE）。
+**HTTP 端口、master_port 与 scheduler_ports 由 worker 的 PortLock 自动分配空闲端口**，无需也不要在 YAML 中手设 ``host`` / ``port`` / ``port_base`` / ``master_port_base``，以避免并发 rank 争抢同一端口。
 
 
 HTTP Client 配置

@@ -118,8 +118,6 @@ class Scheduler(_Scheduler):
             parent_address=parent_address, world_size=ranks_per_instance, rank=rank
         )
         rank_map = DisaggRankMapper.get_rollout_rank_to_actor_rank_map(
-            actor_tp_size=1,
-            actor_pp_size=1,
             actor_world_size=placement.get_world_size("actor"),
             rollout_tp_size=placement.rollout_tp_size,
             rollout_world_size=placement.rollout_world_size,
@@ -332,7 +330,10 @@ class _SchedulerManager:
         )
 
         if async_scheduler_client.server_args.dp_size == 1:
-            results = [await async_scheduler_client.forward(obj)]
+            try:
+                results = [await async_scheduler_client.forward(obj)]
+            except Exception as exc:
+                results = [exc]
         else:
             # Native forward() treats RLinf's custom requests as generation.
             # Send concurrently: initialization and sync use world collectives.

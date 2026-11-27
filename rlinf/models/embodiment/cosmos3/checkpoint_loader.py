@@ -34,9 +34,11 @@ def native_checkpoint_covers_language_model(
     if not (checkpoint_path / ".metadata").is_file():
         return False
     metadata = dcp.FileSystemReader(checkpoint_path).read_metadata().state_dict_metadata
+    from rlinf.models.embodiment.cosmos3.weight_mapping import strip_wrapper_prefixes
+
     state = model.net.language_model.state_dict()
     for name, tensor in state.items():
-        name = f"net.language_model.{name}"
+        name = f"net.language_model.{strip_wrapper_prefixes(name)}"
         if any(key in name for key in keys_to_skip_loading):
             return False
         entry = metadata.get(name)
@@ -110,7 +112,8 @@ def _load_diffusers_checkpoint(model: nn.Module, checkpoint_path: Path) -> None:
     state_dict = net.state_dict()
     planner = _DiffusersLoadPlanner(checkpoint_path)
     target_state = planner._normalize_target_state_dict(state_dict)
-    _, loaded_keys = planner._build_remapped_state_dict(target_state)
+    remapped = planner._build_remapped_state_dict(target_state)
+    loaded_keys = remapped[1]
     missing_keys = set(target_state) - loaded_keys
     if missing_keys:
         raise ValueError(

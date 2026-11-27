@@ -375,3 +375,29 @@ def test_nft_objective_rejects_unsupported_settings(settings, message):
             schedule=schedule,
             config=config,
         )
+
+
+def test_init_nft_ema_state_normalizes_wrapper_prefixes_on_both_sides():
+    from rlinf.algorithms.diffusion.nft import init_nft_ema_state
+
+    wrapped_state = {
+        "omni.net._checkpoint_wrapped_module.w": torch.ones(2, dtype=torch.bfloat16),
+        "omni.net.frozen": torch.ones(2, dtype=torch.bfloat16),
+    }
+    ema = init_nft_ema_state(
+        wrapped_state,
+        ["omni.net._checkpoint_wrapped_module.w"],
+        use_fp32=True,
+    )
+    assert ema["omni.net._checkpoint_wrapped_module.w"].dtype == torch.float32
+    assert ema["omni.net.frozen"].dtype == torch.bfloat16
+
+    unwrapped_state = {
+        "omni.net.w": torch.ones(2, dtype=torch.bfloat16),
+    }
+    ema_unwrapped = init_nft_ema_state(
+        unwrapped_state,
+        ["omni.net._orig_mod.w"],
+        use_fp32=True,
+    )
+    assert ema_unwrapped["omni.net.w"].dtype == torch.float32

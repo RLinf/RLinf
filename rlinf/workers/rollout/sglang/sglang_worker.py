@@ -312,7 +312,7 @@ class SGLangWorker(Worker):
 
         self.log_info(f"Stopping SGLang worker {self._rank} ...")
         if self._backend is not None:
-            self._backend.shutdown()
+            await self._backend.async_shutdown()
         self.log_info(f"SGLang worker {self._rank} stopped.")
 
     async def _validate_weight_at_first(self):

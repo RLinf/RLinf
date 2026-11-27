@@ -1,6 +1,6 @@
 defaults:
   - env/libero_spatial@env.eval
-  - model/cosmos3@rollout.model
+  - model/cosmos3_nano@rollout.model
   - override hydra/job_logging: stdout
 
 hydra:

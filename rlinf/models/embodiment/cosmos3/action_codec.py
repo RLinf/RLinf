@@ -71,12 +71,21 @@ class Cosmos3ActionCodec:
 
     @staticmethod
     def parse_size(size: str) -> tuple[int, int]:
-        """Parse ``"WxH"`` (e.g. ``"320x192"``) into (target_w, target_h)."""
+        """Parse ``"WxH"`` (e.g. ``"320x192"``) into positive (target_w, target_h)."""
+        parts = str(size).lower().replace(",", "x").split("x")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid Cosmos3 size {size!r}; expected 'WxH'")
         try:
-            w_s, h_s = str(size).lower().replace(",", "x").split("x")
-            return int(w_s), int(h_s)
-        except Exception:
-            return 832, 480
+            target_w, target_h = int(parts[0]), int(parts[1])
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid Cosmos3 size {size!r}; expected integer 'WxH'"
+            ) from exc
+        if target_w <= 0 or target_h <= 0:
+            raise ValueError(
+                f"Cosmos3 size must be positive, got {size!r} ({target_w}x{target_h})"
+            )
+        return target_w, target_h
 
     @staticmethod
     def load_stats(path: Any, normalization: str) -> dict[str, np.ndarray] | None:
@@ -111,7 +120,10 @@ class Cosmos3ActionCodec:
             lo = self.stats["min"]
             hi = self.stats["max"]
             return (norm + 1.0) / 2.0 * (hi - lo) + lo
-        return norm
+        raise ValueError(
+            f"Unsupported Cosmos3 action_normalization {method!r}; "
+            "expected 'quantile', 'quantile_rot', 'meanstd', or 'minmax'"
+        )
 
     @staticmethod
     def rot6d_to_axisangle(rot6d: np.ndarray) -> np.ndarray:
@@ -216,11 +228,13 @@ class Cosmos3ActionCodec:
         main_arr = _to_uint8_hwc(main)  # [N, H, W, 3]
         if wrist is not None:
             wrist_arr = _to_uint8_hwc(wrist)
+            if main_arr.shape != wrist_arr.shape:
+                raise ValueError(
+                    "Cosmos3 main_images and wrist_images must have matching shapes, "
+                    f"got {main_arr.shape} vs {wrist_arr.shape}"
+                )
             # h-concat: left = agentview (third-person), right = wrist
-            if main_arr.shape[1:] == wrist_arr.shape[1:]:
-                concat = np.concatenate([main_arr, wrist_arr], axis=2)
-            else:
-                concat = main_arr
+            concat = np.concatenate([main_arr, wrist_arr], axis=2)
         else:
             concat = main_arr
 
@@ -278,24 +292,53 @@ class Cosmos3ActionCodec:
 
     def action_to_env(self, action: Any) -> np.ndarray:
         """Convert a model action chunk to env-scale ``[num_action_chunks, 7]``."""
+        if self.raw_action_dim != 10:
+            raise ValueError(
+                f"Cosmos3 rot6d action decoding requires raw_action_dim=10, "
+                f"got {self.raw_action_dim}"
+            )
         a = action
-        while (
-            isinstance(a, list)
-            and len(a) == 1
-            and isinstance(a[0], list)
-            and a[0]
-            and isinstance(a[0][0], (list, tuple))
-        ):
-            a = a[0]
-        if isinstance(a, (list, tuple)) and a and not isinstance(a[0], (list, tuple)):
-            a = [list(a)]
-        rows = [[float(v) for v in r] for r in a]
-        if not rows:
-            raise ValueError("Cosmos3 returned an empty action array")
-        arr = np.asarray(rows, dtype=np.float32)
+        if isinstance(a, np.ndarray):
+            arr = np.asarray(a, dtype=np.float32)
+            while arr.ndim > 2 and arr.shape[0] == 1:
+                arr = arr[0]
+            arr = np.atleast_2d(arr)
+        else:
+            while (
+                isinstance(a, list)
+                and len(a) == 1
+                and isinstance(a[0], list)
+                and a[0]
+                and isinstance(a[0][0], (list, tuple))
+            ):
+                a = a[0]
+            if (
+                isinstance(a, (list, tuple))
+                and a
+                and not isinstance(a[0], (list, tuple))
+            ):
+                a = [list(a)]
+            rows = [[float(v) for v in r] for r in a]
+            if not rows:
+                raise ValueError("Cosmos3 returned an empty action array")
+            arr = np.asarray(rows, dtype=np.float32)
+
+        if arr.ndim != 2 or arr.shape[0] == 0:
+            raise ValueError(
+                f"Expected 2-D non-empty Cosmos3 action chunk, got shape {arr.shape}"
+            )
+        if arr.shape[-1] < self.raw_action_dim:
+            raise ValueError(
+                f"Expected at least {self.raw_action_dim} action channels, "
+                f"got shape {arr.shape}"
+            )
         raw_norm = arr[..., : self.raw_action_dim]
+        if not np.isfinite(raw_norm).all():
+            raise ValueError("Cosmos3 action contains non-finite values")
 
         arr = self.denormalize(raw_norm)
+        if not np.isfinite(arr).all():
+            raise ValueError("Denormalized Cosmos3 action contains non-finite values")
         trans = arr[:, :3]
         rot6d = arr[:, 3:9]
         gripper = arr[:, 9:10]

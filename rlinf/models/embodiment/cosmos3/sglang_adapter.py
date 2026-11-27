@@ -87,9 +87,7 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
         # Cosmos3 LIBERO recipe: rot6d 10-D, frame_wise_relative, quantile_rot.
         # raw_action_dim is the MODEL width 10, distinct from the env's 7.
         self._raw_action_dim = self._codec.raw_action_dim
-        self._action_normalization = self._codec.action_normalization
-        self._action_stats_path = self._codec.action_stats_path
-        self._stats = self._codec.stats
+        self._action_dim = int(c.get("action_dim", 7))
 
         env_cfg = cfg.env.get("train", None) or cfg.env.get("eval", None) or {}
         env_type = c.get("domain_name", None) or env_cfg.get("env_type", None)
@@ -148,6 +146,7 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
             "noise_level",
             "prompt_bytes",
             "tokenizer_path",
+            "ema_enabled",
         )
         for key in replay_keys:
             if cfg.actor.model.get(key) != cfg.rollout.model.get(key):
@@ -208,11 +207,13 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
         Returns:
             Lists of env indices that together cover every env once.
         """
-        tasks = self._extract_tasks(env_obs)
+        tasks = self._codec.extract_tasks(env_obs)
         n_cam = 2 if env_obs.get("wrist_images") is not None else 1
         by_prompt: dict[str, list[int]] = {}
         for index, task in enumerate(tasks):
-            by_prompt.setdefault(self._augment_prompt(task, n_cam), []).append(index)
+            by_prompt.setdefault(self._codec.augment_prompt(task, n_cam), []).append(
+                index
+            )
         size = self._max_request_batch
         return [
             indices[start : start + size]
@@ -220,26 +221,15 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
             for start in range(0, len(indices), size)
         ]
 
-    @staticmethod
-    def _parse_size(size: str) -> tuple[int, int]:
-        return Cosmos3ActionCodec.parse_size(size)
-
-    @staticmethod
-    def _load_stats(path: Any, normalization: str) -> dict[str, np.ndarray] | None:
-        return Cosmos3ActionCodec.load_stats(path, normalization)
-
-    def _denormalize(self, action: np.ndarray) -> np.ndarray:
-        return self._codec.denormalize(action)
-
-    def _rot6d_to_axisangle(self, rot6d: np.ndarray) -> np.ndarray:
-        return self._codec.rot6d_to_axisangle(rot6d)
-
     def prepare_request_context(
         self, env_obs: dict, mode: str = "eval"
     ) -> dict[str, Any]:
         del env_obs
         if mode == "train":
-            return {"seed": int(torch.randint(2**31 - 1, (1,)).item())}
+            return {
+                "seed": int(torch.randint(2**31 - 1, (1,)).item()),
+                "nft_noise_seed": int(torch.randint(2**31 - 1, (1,)).item()),
+            }
         return {}
 
     def build_request_with_context(
@@ -253,7 +243,11 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
             and request_context is not None
             and "seed" in request_context
         ):
-            return self.build_rollout_request(env_obs, seed=request_context["seed"])
+            return self.build_rollout_request(
+                env_obs,
+                seed=request_context["seed"],
+                nft_noise_seed=request_context.get("nft_noise_seed"),
+            )
         return self.build_request(env_obs, mode=mode)
 
     def build_request(
@@ -264,13 +258,14 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
             return self.build_rollout_request(env_obs)
         if mode != "eval":
             raise ValueError(f"Unsupported Cosmos3 rollout mode: {mode}")
-        tasks = self._extract_tasks(env_obs)
-        image_uris = self._encode_images(
+        tasks = self._codec.extract_tasks(env_obs)
+        image_uris = self._codec.encode_images(
             env_obs, len(tasks), self._target_w, self._target_h
         )
         n_cam = 2 if env_obs.get("wrist_images") is not None else 1
-        seed = int(self.cfg_rollout.get("sglang", {}).get("seed", 1140) or 1140)
-        prompts = [self._augment_prompt(t, n_cam) for t in tasks]
+        raw_seed = self.cfg_rollout.get("sglang", {}).get("seed")
+        seed = 1140 if raw_seed is None else int(raw_seed)
+        prompts = [self._codec.augment_prompt(t, n_cam) for t in tasks]
         input_payload: dict[str, Any] = {"prompt": prompts}
         if all(image_uris):
             input_payload["input_reference"] = image_uris
@@ -308,12 +303,16 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
         return payload, {}
 
     def build_rollout_request(
-        self, env_obs: dict, *, seed: int | None = None
+        self,
+        env_obs: dict,
+        *,
+        seed: int | None = None,
+        nft_noise_seed: int | None = None,
     ) -> tuple[dict, dict]:
         """Build a JSON /rollout/generate request and retain actor observations."""
-        tasks = self._extract_tasks(env_obs)
+        tasks = self._codec.extract_tasks(env_obs)
         n_cam = 2 if env_obs.get("wrist_images") is not None else 1
-        prompts = [self._augment_prompt(task, n_cam) for task in tasks]
+        prompts = [self._codec.augment_prompt(task, n_cam) for task in tasks]
         if not prompts or len(set(prompts)) != 1:
             raise ValueError("Cosmos3 RL requests must group identical prompts")
         if (
@@ -321,7 +320,7 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
             or self._num_frames != self._num_action_chunks + 1
         ):
             raise ValueError("Cosmos3 RL requires policy mode and num_frames=horizon+1")
-        images = self.prepare_images(
+        images = self._codec.prepare_images(
             env_obs, len(tasks), self._target_w, self._target_h
         )
         if images is None:
@@ -330,9 +329,14 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
         if noise_level <= 0:
             raise ValueError("Cosmos3 RL noise_level must be positive")
         seed = int(torch.randint(2**31 - 1, (1,)).item()) if seed is None else int(seed)
+        nft_noise_seed = (
+            int(torch.randint(2**31 - 1, (1,)).item())
+            if nft_noise_seed is None
+            else int(nft_noise_seed)
+        )
         payload = {
             "prompt": prompts[0],
-            "image_path": self._encode_prepared_images(images, len(tasks)),
+            "image_path": self._codec.encode_prepared_images(images, len(tasks)),
             "seed": seed,
             "height": self._target_h,
             "width": self._target_w,
@@ -365,7 +369,7 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
             "prompts": encode_prompts(
                 prompts, int(self.model_cfg.get("prompt_bytes", 512))
             ),
-            "nft_noise_seed": seed,
+            "nft_noise_seed": nft_noise_seed,
         }
 
     def parse_rollout_response(
@@ -417,14 +421,16 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
                 raise ValueError(
                     "Cosmos3 rollout contains nonfinite actions or replay tensors"
                 )
-            actions.append(self._action_to_env(action.numpy()))
+            actions.append(self._codec.action_to_env(action.numpy()))
             nft_actions.append(action)
             nft_endpoints.append(endpoint_state[0])
         endpoint = torch.stack(nft_endpoints)
         generator = torch.Generator().manual_seed(state["nft_noise_seed"])
         return torch.from_numpy(np.stack(actions)).float(), {
-            "prev_logprobs": torch.zeros(len(actions), self._num_action_chunks, 7),
-            "prev_values": torch.zeros(len(actions), 1),
+            "prev_logprobs": torch.zeros(
+                len(actions), self._num_action_chunks, self._action_dim
+            ),
+            "prev_values": None,
             "forward_inputs": {
                 "images": state["images"],
                 "prompts": state["prompts"],
@@ -435,10 +441,6 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
                 "nft_noise_level": torch.zeros(len(actions)),
             },
         }
-
-    @staticmethod
-    def _augment_prompt(task: str, n_cam: int) -> str:
-        return Cosmos3ActionCodec.augment_prompt(task, n_cam)
 
     def parse_response(
         self, resp: dict, state: dict[str, Any]
@@ -452,7 +454,7 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
                 f"Cosmos3 action values have unexpected ndim={arr.ndim} "
                 f"(expected one [horizon, D] array per env); shape={arr.shape}"
             )
-        chunks = [self._action_to_env(arr[i]) for i in range(arr.shape[0])]
+        chunks = [self._codec.action_to_env(arr[i]) for i in range(arr.shape[0])]
         if not chunks:
             raise ValueError("Cosmos3 returned no action chunks to parse.")
         actions = (
@@ -460,7 +462,7 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
             .detach()
             .cpu()
             .contiguous()
-        )  # [N, num_action_chunks, 7]
+        )  # [N, num_action_chunks, action_dim]
         flat = actions.reshape(actions.shape[0], -1)
         info = {
             "prev_logprobs": torch.zeros_like(flat),
@@ -468,32 +470,6 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
             "forward_inputs": {"action": flat.cpu()},
         }
         return actions, info
-
-    @staticmethod
-    def _extract_tasks(env_obs: dict) -> list[str]:
-        return Cosmos3ActionCodec.extract_tasks(env_obs)
-
-    @staticmethod
-    def _encode_prepared_images(images: np.ndarray | None, n: int) -> list[str | None]:
-        return Cosmos3ActionCodec.encode_prepared_images(images, n)
-
-    @staticmethod
-    def _encode_images(
-        env_obs: dict, n: int, target_w: int = 832, target_h: int = 480
-    ) -> list[str | None]:
-        return Cosmos3ActionCodec.encode_images(env_obs, n, target_w, target_h)
-
-    @staticmethod
-    def prepare_images(
-        env_obs: dict, n: int, target_w: int, target_h: int
-    ) -> np.ndarray | None:
-        return Cosmos3ActionCodec.prepare_images(env_obs, n, target_w, target_h)
-
-    @staticmethod
-    def _resize_reflect_pad(
-        img_hwc: np.ndarray, target_w: int, target_h: int
-    ) -> np.ndarray:
-        return Cosmos3ActionCodec.resize_reflect_pad(img_hwc, target_w, target_h)
 
     @staticmethod
     def _action_data(resp: dict) -> list[Any]:
@@ -507,6 +483,3 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
                 f"— check action_gen=true and action_mode=policy. resp={resp}"
             )
         return values
-
-    def _action_to_env(self, action: Any) -> np.ndarray:
-        return self._codec.action_to_env(action)

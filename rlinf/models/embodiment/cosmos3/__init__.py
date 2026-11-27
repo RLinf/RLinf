@@ -103,6 +103,36 @@ def _initialize_rotary_buffers(net: nn.Module) -> None:
                 module.original_inv_freq = module.inv_freq.clone()
 
 
+def _initialize_nonpersistent_buffers(net: nn.Module) -> None:
+    """Restore all nonpersistent buffers left uninitialized by meta to_empty."""
+    import inspect
+
+    _initialize_rotary_buffers(net)
+    cpu = torch.device("cpu")
+    time_embedder = getattr(net, "time_embedder", None)
+    if (
+        time_embedder is not None
+        and hasattr(time_embedder, "_timestep_frequencies")
+        and hasattr(time_embedder, "_init_weights")
+    ):
+        params = inspect.signature(time_embedder._init_weights).parameters
+        if "buffer_device" in params:
+            time_embedder._init_weights(buffer_device=cpu)
+        else:
+            time_embedder._init_weights()
+    rigrope = getattr(net, "rigrope", None)
+    if rigrope is not None and hasattr(rigrope, "reset_parameters"):
+        params = inspect.signature(rigrope.reset_parameters).parameters
+        if "device" in params:
+            rigrope.reset_parameters(device=cpu)
+        else:
+            rigrope.reset_parameters()
+    # Qwen3-VL asserts rotary inv_freq is fp32; normalize after buffer init.
+    for module in net.modules():
+        if getattr(module, "inv_freq", None) is not None:
+            module.inv_freq = module.inv_freq.float()
+
+
 def _initialize_native_weights(
     model: nn.Module, model_path: str, keys_to_skip_loading: list[str]
 ) -> None:
@@ -129,6 +159,22 @@ def _initialize_native_weights(
             del language_model.init_weights
 
 
+def _guard_flash_attn_namespace() -> None:
+    """Prevent cosmos_framework flash2 probes from crashing on flash-attn-4 namespaces."""
+    import importlib.metadata
+
+    try:
+        import flash_attn
+    except Exception:
+        return
+    if hasattr(flash_attn, "__version__"):
+        return
+    try:
+        importlib.metadata.version("flash_attn")
+    except importlib.metadata.PackageNotFoundError:
+        flash_attn.__version__ = "0.0.0"
+
+
 def get_model(cfg: DictConfig, torch_dtype=None):
     """Build a trainable Cosmos3 model for SFT, actor and HF rollout.
 
@@ -147,6 +193,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         )
     checkpoint_format = str(cfg.get("checkpoint_format", "native")).lower()
 
+    _guard_flash_attn_namespace()
     import cosmos_framework.model.generator.omni_mot_model as omni_mot_model
     from cosmos_framework.utils import distributed as cosmos_distributed
     from cosmos_framework.utils.flags import Device as _CosmosDevice
@@ -224,10 +271,6 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             "device": _orig_device,
             "dtype": torch.float32,
         }
-        # Qwen3-VL asserts rotary inv_freq is fp32; bf16 build cast it to bf16.
-        for _mod in cosmos3_model.modules():
-            if getattr(_mod, "inv_freq", None) is not None:
-                _mod.inv_freq = _mod.inv_freq.float()
         if checkpoint_format != "diffusers":
             _initialize_native_weights(
                 cosmos3_model,
@@ -235,10 +278,10 @@ def get_model(cfg: DictConfig, torch_dtype=None):
                 list(cfg.get("keys_to_skip_loading", [])),
             )
         # Nonpersistent buffers are absent from both DCP and Diffusers weights.
-        _initialize_rotary_buffers(cosmos3_model.net)
+        _initialize_nonpersistent_buffers(cosmos3_model.net)
         net_ema = getattr(cosmos3_model, "net_ema", None)
         if net_ema is not None:
-            _initialize_rotary_buffers(net_ema)
+            _initialize_nonpersistent_buffers(net_ema)
 
     # Native checkpoints warm-start from a base model; Diffusers packages load
     # the complete trained policy, including action heads, into the same native

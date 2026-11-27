@@ -185,11 +185,11 @@ class DisaggRankMapper(RankMapper):
     @classmethod
     def get_actor_rank_to_rollout_rank_map(
         cls,
-        actor_tp_size: int,
-        actor_pp_size: int,
-        actor_world_size: int,
-        rollout_tp_size: int,
-        rollout_world_size: int,
+        actor_tp_size: int = 1,
+        actor_pp_size: int = 1,
+        actor_world_size: int = 1,
+        rollout_tp_size: int = 1,
+        rollout_world_size: int = 1,
         rollout_sp_degree: int = 1,
         rollout_dp_size: int = 1,
     ) -> dict[int, list[tuple[int, int]]]:
@@ -245,11 +245,11 @@ class DisaggRankMapper(RankMapper):
     @classmethod
     def get_rollout_rank_to_actor_rank_map(
         cls,
-        actor_tp_size: int,
-        actor_pp_size: int,
-        actor_world_size: int,
-        rollout_tp_size: int,
-        rollout_world_size: int,
+        actor_tp_size: int = 1,
+        actor_pp_size: int = 1,
+        actor_world_size: int = 1,
+        rollout_tp_size: int = 1,
+        rollout_world_size: int = 1,
         rollout_sp_degree: int = 1,
         rollout_dp_size: int = 1,
     ) -> dict[tuple[int, int], int]:
@@ -429,21 +429,29 @@ def launch_embodied_sglang_router(
     ):
         return None
 
+    from omegaconf import OmegaConf
+
     from rlinf.workers.rollout.sglang import launch_router_for_workers
 
     sglang_cfg = cfg.rollout.sglang
+    router_cfg = sglang_cfg.get("router") or OmegaConf.create({})
+    required_routes = rollout_group.get_required_router_paths().wait()[0]
     router_group, router_url = launch_router_for_workers(
         config=cfg,
         cluster=cluster,
         worker_group=rollout_group,
-        router_cfg=sglang_cfg.router,
+        router_cfg=router_cfg,
         router_group_name=sglang_cfg.get("router_group_name", "SGLangRouterGroup"),
         router_node_group=sglang_cfg.get("router_node_group"),
+        required_routes=required_routes,
     )
     try:
         rollout_group.set_sglang_router_url(router_url).wait()
     except BaseException:
-        router_group.stop().wait()
+        try:
+            router_group.stop().wait()
+        except Exception:
+            pass
         raise
     return router_group
 

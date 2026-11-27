@@ -62,6 +62,7 @@ def attach_workers_to_router(
     worker_group,
     *,
     init_router: bool = False,
+    required_routes: Sequence[str] | None = None,
 ) -> str:
     """Register every server owned by ``worker_group`` onto ``router_group``.
 
@@ -69,12 +70,16 @@ def attach_workers_to_router(
         router_group: Launched ``SGLangRouterWorker`` group.
         worker_group: Worker group exposing ``get_server_url()``.
         init_router: Call ``router_group.init_router().wait()`` first when True.
+        required_routes: Optional HTTP paths the router must expose before
+            backend servers are attached.
 
     Returns:
         The router's HTTP base URL.
     """
     if init_router:
         router_group.init_router().wait()
+    if required_routes:
+        router_group.verify_routes(list(required_routes)).wait()
     server_urls = [
         url for url in worker_group.get_server_url().wait() if url is not None
     ]
@@ -98,12 +103,13 @@ def launch_router_for_workers(
     router_node_rank: int = 0,
     router_node_group: str | Sequence[str] | None = None,
     placement_strategy: PlacementStrategy | None = None,
+    required_routes: Sequence[str] | None = None,
 ) -> tuple["object", str]:
     """Launch a ``SGLangRouterWorker`` and attach a worker group's servers to it.
 
     Returns:
         ``(router_group, router_url)``. Rolls back ``router_group`` if
-        initialization or server registration fails.
+        initialization, route verification, or server registration fails.
     """
     router_ps = placement_strategy or NodePlacementStrategy(
         node_ranks=[router_node_rank],
@@ -119,10 +125,16 @@ def launch_router_for_workers(
     )
     try:
         router_url = attach_workers_to_router(
-            router_group, worker_group, init_router=True
+            router_group,
+            worker_group,
+            init_router=True,
+            required_routes=required_routes,
         )
     except BaseException:
-        router_group.stop().wait()
+        try:
+            router_group.stop().wait()
+        except Exception:
+            pass
         raise
     return router_group, router_url
 

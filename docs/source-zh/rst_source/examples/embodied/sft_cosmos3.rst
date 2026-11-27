@@ -1,10 +1,10 @@
-Cosmos3 监督微调（LIBERO）
-================================
+Cosmos3 监督微调与 NFT 训练（LIBERO）
+========================================
 
-把 NVIDIA Cosmos3-Nano（OmniMoT 视频世界模型）按照 libero 的动作空间进行 sft 微调，适配 libero 仿真器。
+在 LIBERO 演示数据上使用 FSDP2 微调 NVIDIA Cosmos3-Nano 或 Cosmos3-Edge，将权重导出为 Diffusers 目录，并基于 SGLang rollout 继续开展 Diffusion-NFT 强化学习训练。
 
 概览
-----------------------------------------
+----
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -17,224 +17,237 @@ Cosmos3 监督微调（LIBERO）
    .. grid-item-card:: 方法
       :text-align: center
 
-      在 Libero 仿真器上的 SFT
+      SFT · Diffusion-NFT（GRPO）
 
    .. grid-item-card:: 数据
       :text-align: center
 
-      LIBERO（LeRobot）
+      LIBERO（LeRobot v3）
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      8个 A800 80GB GPU
+      4–8 张 A800 / A100 80 GB GPU
 
-| **你将完成：** 安装 → 准备基座模型与数据 → ``run_vla_sft.sh`` 训练 → 获得一个适配 libero 仿真器的 Cosmos3 模型。
-| **前置条件：** :doc:`安装 </rst_source/start/installation>` · Cosmos3-Nano 基座权重（DCP）· Wan2.2 VAE · 下载好的 LIBERO LeRobot 数据集。
+| **你将完成：** 安装依赖 → 准备基座权重与 LIBERO 数据 → 运行 SFT → 导出 ``model_diffusers`` → 评测或继续开展 Edge NFT 训练。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · Cosmos3 基座权重（DCP）· Wan2.2 VAE · LIBERO LeRobot v3 数据集。
 
 安装
-----------------------------------------
+----
 
 .. include:: _setup_common.rst
 
-安装 Cosmos3（如需仿真评测，加 ``--env libero``）：
+安装 Cosmos3 训练环境（``--env libero`` 会一并安装 LIBERO 仿真环境）：
+
+.. tab-set::
+
+   .. tab-item:: 海外源
+
+      .. code-block:: bash
+
+         unset PYTHONPATH
+         bash requirements/install.sh embodied --model cosmos3 --env libero
+         source .venv/bin/activate
+
+   .. tab-item:: 国内镜像
+
+      .. code-block:: bash
+
+         unset PYTHONPATH
+         bash requirements/install.sh embodied --model cosmos3 --env libero --use-mirror
+         source .venv/bin/activate
+
+克隆 ``cosmos-framework`` 并导出路径，供 RLinf 加载 Cosmos3 数据变换与归一化统计文件：
 
 .. code-block:: bash
 
-   unset PYTHONPATH
-   # 国内用户可加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model cosmos3 --env libero
-   source .venv/bin/activate
+   git clone https://github.com/NVIDIA/cosmos-framework.git ./cosmos-framework
+   export COSMOS_FRAMEWORK_PATH="$PWD/cosmos-framework"
 
-Cosmos3 的数据变换与归一化统计依赖 cosmos-framework，训练前下载并设置路径：
+Nano SFT 离线缓存
+~~~~~~~~~~~~~~~~~
 
-.. code-block:: bash
+Nano SFT 和基座 DCP 转换会读取 Hugging Face 缓存中的 ``Qwen3-VL-8B-Instruct`` 与 ``Wan2.2-TI2V-5B``。离线机器需先将它们下载到 ``HF_HOME``，启动前再设置 ``HF_HUB_OFFLINE=1`` 和 ``TRANSFORMERS_OFFLINE=1``：
 
-   git clone https://github.com/NVIDIA/cosmos-framework.git /path/to/cosmos-framework
-   export COSMOS_FRAMEWORK_PATH=/path/to/cosmos-framework
+.. tab-set::
 
-离线缓存 Qwen3-VL-8B-Instruct 和 Wan2.2 模型
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   .. tab-item:: 海外源
 
-Nano 的 SFT 与基座转换会从 Hugging Face 拉取三个模型文件，离线机器要先下好放进 HF 本地缓存，再开离线模式（``HF_HUB_OFFLINE=1``）让 ``from_pretrained`` / ``hf download`` 直接读缓存，否则 worker 会在网络重试处卡死：
+      .. code-block:: bash
 
-- **Qwen3-VL-8B-Instruct** （tokenizer / VLM 配置）：SFT 启动与 ``convert_model_to_dcp`` 重建模型时都用。
-- **Wan2.2-TI2V-5B** 与 **Wan2.2-TI2V-5B-Diffusers**：仅 ``convert_model_to_dcp`` 重建模型时下载。
+         export HF_HOME=${HF_HOME:-~/.cache/huggingface}
+         hf download Qwen/Qwen3-VL-8B-Instruct
+         hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
 
-直接下载进 HF 缓存（推荐，缓存布局自动正确）：
+   .. tab-item:: 国内镜像
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   export HF_HOME=${HF_HOME:-~/.cache/huggingface}
-   # 国内可用镜像加速：export HF_ENDPOINT=https://hf-mirror.com
-   hf download Qwen/Qwen3-VL-8B-Instruct
-   hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
-   hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
-
-准备基座模型
-----------------------------------------
-
-Cosmos3 SFT **从基座模型 Cosmos3-Nano 热启动，训练生成分支与动作头** 。``actor.model.model_path`` 必须指向一个 **DCP 格式** 的基座权重目录，``wan_vae_path`` 指向 Wan2.2 VAE：
-
-.. code-block:: yaml
-
-   defaults:
-     - model/cosmos3@actor.model      # 引入 examples/embodiment/config/model/cosmos3.yaml
-
-   hydra:
-     searchpath:
-       - file://${oc.env:REPO_PATH}/examples/embodiment/config/
-
-   actor:
-     model:
-       model_path: /path/to/Cosmos3-Nano-DCP
-       wan_vae_path: /path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
-       load_to_device: false          # 见下方 warning
-
-准备基座 DCP 权重
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**第 1 步：下载 Cosmos3-Nano（diffusers 格式）**
-
-从 Hugging Face 下载 ``nvidia/Cosmos3-Nano``。它是 **diffusers/safetensors 格式**\ （``model_index.json`` + ``transformer/*.safetensors`` 分片 + ``vae/`` + ``text_tokenizer/`` 等），**不是 DCP**——SFT 还不能直接用，需第 2 步转成 DCP。
-
-.. code-block:: bash
-
-   # 国内可用镜像加速：export HF_ENDPOINT=https://hf-mirror.com
-   hf download nvidia/Cosmos3-Nano \
-     --local-dir /path/to/Cosmos3-Nano
-
-.. note::
-
-   基座用 ``--local-dir`` 下载到\ **普通目录**\ 即可。
-
-**第 2 步：转成 DCP**
-
-SFT 不能直接从 diffusers 目录加载基座：cosmos3 的基座加载器 ``_load_base_weights`` 用 ``_is_safetensors_checkpoint`` 判定格式——它只检查路径\ **顶层**\ 是否有 ``*.safetensors`` 文件（非递归）。diffusers 目录把分片放在 ``transformer/`` 子目录、顶层没有，判定为 ``False``，于是落到 DCP 加载分支，而 diffusers 目录又不是 DCP，会加载失败。因此必须先用 cosmos-framework 的 ``convert_model_to_dcp.py`` 把 diffusers 转成 DCP 再给 ``model_path`` 用。
-
-.. note::
-
-   本步重建整个 OmniMoTModel，会经 cosmos 的 ``hf_cli`` 下载 ``Qwen3-VL-8B-Instruct``\ （tokenizer）和 ``Wan2.2-TI2V-5B`` 的 ``Wan2.2_VAE.pth``\ （VAE）——这两个资产离线机器要先下好进 HF 缓存（见上方），再开 ``HF_HUB_OFFLINE=1`` 跑本步。
-
-.. code-block:: bash
-
-   # 在训练用的 venv 里跑（保证 DCP metadata 与训练 Python 版本一致）
-   export HF_HOME=/path/to/hf-cache
-   export HF_HUB_OFFLINE=1          # 走缓存；需先下好上面两个模型
-   export TRANSFORMERS_OFFLINE=1
-   python -m cosmos_framework.scripts.convert_model_to_dcp \
-     --checkpoint-path /path/to/Cosmos3-Nano \
-     --no-use-ema-weights \
-     -o /path/to/Cosmos3-Nano-DCP
-
-.. note::
-
-   - ``--checkpoint-path`` 既接受模型名（触发 HF 下载）也接受本地 diffusers 目录；离线机器先下好再指本地路径。
-   - DCP 的 ``.metadata`` 是 pickle、**与保存时的 Python 版本绑定**，所以 ``convert_model_to_dcp`` 必须在与训练\ **相同的 venv** 里跑，产出的 DCP 才能在训练时加载（目录名带 ``-py311`` 后缀即此意）。
-
-Cosmos3-Edge SFT
-----------------------------------------
-
-Edge 使用 ``examples/sft/config/libero_sft_cosmos3_edge.yaml``\ ，引入 ``model/cosmos3_edge``\ 。它将 Nano 的 Qwen3-VL 主干与 tokenizer 替换为原生 Nemotron 主干和 Edge processor，同时复用 LIBERO 数据管线和原生 flow-matching SFT loss。Edge 还将 ``k_norm_und_for_gen`` 纳入训练，并在模型构建时恢复非持久化 RoPE buffer。
-
-复用上文安装的 Cosmos3 训练环境，并使用包含 ``EDGE_MODEL_CONFIG`` 和 Edge processor 的 framework checkout。从 RLinf 仓库根目录下载完整 HF 快照，在同一环境中转成 DCP：
-
-.. code-block:: bash
-
-   export REPO_PATH="$PWD"
-   export COSMOS3_ASSET_ROOT=/path/to/cosmos3-assets
-   hf download nvidia/Cosmos3-Edge \
-     --revision 344d602b128d1bbdacb43b08d0a3626f46343e29 \
-     --local-dir "$COSMOS3_ASSET_ROOT/Cosmos3-Edge"
-   hf download Wan-AI/Wan2.2-TI2V-5B Wan2.2_VAE.pth \
-     --local-dir "$COSMOS3_ASSET_ROOT/Wan2.2-TI2V-5B"
-
-   cd "$COSMOS_FRAMEWORK_PATH"
-   COSMOS_DEVICE=cpu CUDA_VISIBLE_DEVICES="" \
-   python -m cosmos_framework.scripts.convert_model_to_dcp \
-     --checkpoint-path "$COSMOS3_ASSET_ROOT/Cosmos3-Edge" \
-     --config-file cosmos_framework/inference/configs/model/Cosmos3-Edge.yaml \
-     --output-path "$COSMOS3_ASSET_ROOT/Cosmos3-Edge-DCP-py311" \
-     --experiment-overrides \
-       'model.config.tokenizer.bucket_name=""' \
-       'model.config.tokenizer.object_store_credential_path_pretrained=""' \
-       "model.config.tokenizer.vae_path=$COSMOS3_ASSET_ROOT/Wan2.2-TI2V-5B/Wan2.2_VAE.pth" \
-       model.config.vlm_config.tokenizer.repository=null \
-       "model.config.vlm_config.tokenizer.tokenizer_type=$COSMOS3_ASSET_ROOT/Cosmos3-Edge"
-   cd "$REPO_PATH"
-
-注意：当前 checkpoint 转换需要清空 VAE bucket 和凭据字段后才会按本地文件加载；否则推理 YAML 会把本地 VAE 路径拼成 S3 URI，随后要求 ``credentials/gcp_training.secret``。
-
-原始 Edge 快照需完整保留，用于提供 processor metadata 和 tokenizer；DCP 输出提供模型权重，不能代替 processor 目录。
-
-在 ``examples/sft/config/libero_sft_cosmos3_edge.yaml`` 中填写路径。LIBERO-all 数据路径应指向包含 ``libero_spatial``、``libero_object``、``libero_goal`` 和 ``libero_10`` 的父目录，并使用至少四个 actor rank：
-
-.. code-block:: yaml
-
-   data:
-     train_data_paths: /path/to/LIBERO_LeRobot_v3
-     data_type: libero_all
-
-   actor:
-     micro_batch_size: 64
-     global_batch_size: 256
-     model:
-       checkpoint_format: native
-       model_path: /path/to/cosmos3-assets/Cosmos3-Edge-DCP-py311
-       tokenizer_path: /path/to/cosmos3-assets/Cosmos3-Edge
-       wan_vae_path: /path/to/cosmos3-assets/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
-       action_stats_path: /path/to/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
-       load_to_device: false
-
-使用 Edge 对应的配置名启动：
-
-.. code-block:: bash
-
-   bash examples/sft/run_vla_sft.sh libero_sft_cosmos3_edge
-
-训练完成后，用 ``evaluations/libero/libero_spatial_cosmos3_edge_eval_hf.yaml`` 做 HF 评测。将 ``rollout.model`` 下的基座 DCP、Edge processor、VAE 和动作统计路径设为训练时使用的路径，并将 ``runner.ckpt_path`` 指向目标 step 的 ``actor/model_state_dict/full_weights.pt``。配置使用普通 SFT 权重（``omni.net``），加载时忽略 EMA 副本；推理调用与训练共用的原生 Edge 模型。
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_edge_eval_hf
+         export HF_HOME=${HF_HOME:-~/.cache/huggingface}
+         export HF_ENDPOINT=https://hf-mirror.com
+         hf download Qwen/Qwen3-VL-8B-Instruct
+         hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
 
 准备数据
-----------------------------------------
+--------
 
-训练数据用\ **原始** LeRobot v3 布局（含 ``meta/``、``data/``）的 LIBERO，通过 ``data.train_data_paths`` 指定。
-
-``frame_wise_relative`` + ``rot6d`` + ``quantile_rot`` 这套动作转换\ **不需要预处理数据集**：``rlinf/data/datasets/cosmos3/dataloader.py`` 调 cosmos-framework 的 experiment ``action_policy_libero_all_nano``，加载时在线把原始 7 维动作转成 10 维 rot6d 并做 quantile 归一化。归一化统计文件 ``libero_native_frame_wise_relative_rot6d.json`` 由 cosmos-framework 一次性算好，评测侧用 ``action_stats_path`` 引用。**训练与评测必须用同一套 recipe + 同一个 stats 文件**，否则去归一化错位。
+将 ``data.train_data_paths`` 指向原始 LIBERO LeRobot v3 目录（``data_type: libero_all`` 要求目录下包含 ``libero_spatial``、``libero_object``、``libero_goal`` 和 ``libero_10``）。数据加载器会在训练时在线把 LIBERO 的 7 维 axis-angle 动作转为 10 维 rot6d，并用 ``libero_native_frame_wise_relative_rot6d.json`` 完成 quantile 归一化。
 
 .. code-block:: yaml
 
    data:
-     train_data_paths: /path/to/LIBERO_LeRobot
-     data_type: "libero_all"          # LIBERO 全部 task suite， 可以单独训练 "libero_10" 这个任务
-     num_workers: 4
-     prefetch_factor: 4
-     val_ratio: 0.01
+     train_data_paths: ./data/LIBERO_LeRobot_v3
+     data_type: "libero_all"   # 也可设为 "libero_10" 仅训练单个套件
 
-拉起训练
-----------------------------------------
+训练与评测必须使用相同的 ``action_normalization``\ （``quantile_rot``）和同一份 ``action_stats_path`` 统计文件。
 
-在 RLinf 仓库根目录执行：
+动作表示说明
+~~~~~~~~~~~~
+
+Cosmos3 模型内部预测 10 维 rot6d 动作，LIBERO 环境接收 7 维 axis-angle 动作：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 16 60
+
+   * - 表示
+     - 维度
+     - 组成
+   * - ``raw_action_dim``\ （模型侧）
+     - 10
+     - 3 平移 + 6 rot6d + 1 夹爪
+   * - ``action_dim``\ （环境侧）
+     - 7
+     - 3 平移 + 3 axis-angle + 1 夹爪
+
+训练时数据加载器在线将 7 维 LIBERO 动作转为 10 维 rot6d；评测和 RL rollout 阶段再把 10 维输出反归一化并转回 7 维送入 LIBERO。
+
+Cosmos3-Nano SFT
+----------------
+
+Nano SFT 从 DCP 格式的 ``nvidia/Cosmos3-Nano`` 基座权重热启动。先下载 Hugging Face Diffusers 快照：
+
+.. tab-set::
+
+   .. tab-item:: 海外源
+
+      .. code-block:: bash
+
+         hf download nvidia/Cosmos3-Nano --local-dir ./assets/Cosmos3-Nano
+
+   .. tab-item:: 国内镜像
+
+      .. code-block:: bash
+
+         export HF_ENDPOINT=https://hf-mirror.com
+         hf download nvidia/Cosmos3-Nano --local-dir ./assets/Cosmos3-Nano
+
+在训练用虚拟环境中将 Diffusers 快照转为 DCP，确保 DCP 元数据与训练 Python 版本一致：
+
+.. code-block:: bash
+
+   export HF_HUB_OFFLINE=1
+   export TRANSFORMERS_OFFLINE=1
+   python -m cosmos_framework.scripts.convert_model_to_dcp \
+     --checkpoint-path ./assets/Cosmos3-Nano \
+     --no-use-ema-weights \
+     -o ./assets/Cosmos3-Nano-DCP-py311
+
+编辑 ``examples/sft/config/libero_sft_cosmos3.yaml``，填写本地模型、tokenizer、VAE、统计文件与数据路径：
+
+.. code-block:: yaml
+
+   data:
+     train_data_paths: ./data/LIBERO_LeRobot_v3
+
+   actor:
+     model:
+       model_path: ./assets/Cosmos3-Nano-DCP-py311
+       tokenizer_path: ./assets/Qwen3-VL-8B-Instruct-tokenizer
+       wan_vae_path: ./assets/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+       action_stats_path: ./cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+
+在仓库根目录启动 Nano SFT：
 
 .. code-block:: bash
 
    bash examples/sft/run_vla_sft.sh libero_sft_cosmos3
 
-读取 ``examples/sft/config/libero_sft_cosmos3.yaml``，在每张 GPU 上用 FSDP2 分片 Cosmos3 模型并训练，checkpoint 每 ``save_interval`` 步存入 ``.../checkpoints/global_step_<N>/``，日志写到 ``logs/<时间戳>-libero_sft_cosmos3/run_embodiment.log``。
+脚本使用 FSDP2 在各 GPU 上分片训练，日志写入 ``logs/<时间戳>-libero_sft_cosmos3/run_embodiment.log``，每隔 ``runner.save_interval`` 步将 checkpoint 存至 ``checkpoints/global_step_<N>/``。断点续训时设置 ``runner.resume_dir`` 即可。
 
 .. warning::
 
-   **初始化必设** ``actor.model.load_to_device: false``。Cosmos3 构建时 ``net``\ （bf16 ~27GB）+ ``net_ema``\ （fp32 ~54GB）≈ 81GB，单张 80GB 卡上默认的 eager ``model.to(device)`` 会在 FSDP2 ``fully_shard`` 分片\ **之前**\ 就 OOM。设为 ``false`` 让模型留在 CPU，由 ``fully_shard`` 直接分片上卡。
+   SFT 配置必须保持 ``actor.model.load_to_device: false``。Cosmos3 初始化时会同时构建在线网络与 FP32 EMA 副本，若在 FSDP2 分片前直接搬到单张 80 GB GPU 上会触发 OOM。
 
-断点续训：设 ``runner.resume_dir`` 指向某个 ``global_step_<N>`` 目录后重跑。
+Cosmos3-Edge SFT
+----------------
 
-关键配置
-----------------------------------------
+Edge SFT 使用 ``examples/sft/config/libero_sft_cosmos3_edge.yaml``，采用 Nemotron 主干和 Edge processor。先下载完整 Edge 快照与 Wan2.2 VAE：
 
-大多数字段照抄 ``libero_sft_cosmos3.yaml`` 即可。真正需要关注的：
+.. tab-set::
+
+   .. tab-item:: 海外源
+
+      .. code-block:: bash
+
+         hf download nvidia/Cosmos3-Edge \
+           --revision 344d602b128d1bbdacb43b08d0a3626f46343e29 \
+           --local-dir ./assets/Cosmos3-Edge
+         hf download Wan-AI/Wan2.2-TI2V-5B Wan2.2_VAE.pth \
+           --local-dir ./assets/Wan2.2-TI2V-5B
+
+   .. tab-item:: 国内镜像
+
+      .. code-block:: bash
+
+         export HF_ENDPOINT=https://hf-mirror.com
+         hf download nvidia/Cosmos3-Edge \
+           --revision 344d602b128d1bbdacb43b08d0a3626f46343e29 \
+           --local-dir ./assets/Cosmos3-Edge
+         hf download Wan-AI/Wan2.2-TI2V-5B Wan2.2_VAE.pth \
+           --local-dir ./assets/Wan2.2-TI2V-5B
+
+在同一训练虚拟环境中将 Edge 快照转为 DCP（清空 VAE bucket 和凭据字段以直接读取本地 VAE 文件）：
+
+.. code-block:: bash
+
+   COSMOS_DEVICE=cpu python -m cosmos_framework.scripts.convert_model_to_dcp \
+     --checkpoint-path "$PWD/assets/Cosmos3-Edge" \
+     --config-file "$COSMOS_FRAMEWORK_PATH/cosmos_framework/inference/configs/model/Cosmos3-Edge.yaml" \
+     --output-path "$PWD/assets/Cosmos3-Edge-DCP-py311" \
+     --experiment-overrides \
+       'model.config.tokenizer.bucket_name=""' \
+       'model.config.tokenizer.object_store_credential_path_pretrained=""' \
+       "model.config.tokenizer.vae_path=$PWD/assets/Wan2.2-TI2V-5B/Wan2.2_VAE.pth" \
+       model.config.vlm_config.tokenizer.repository=null \
+       "model.config.vlm_config.tokenizer.tokenizer_type=$PWD/assets/Cosmos3-Edge"
+
+保留原始 ``./assets/Cosmos3-Edge`` 目录供 ``actor.model.tokenizer_path`` 读取 Edge processor 元数据与 tokenizer。
+
+在 ``examples/sft/config/libero_sft_cosmos3_edge.yaml`` 中配置本地路径（``data_type: libero_all`` 至少需要 4 张 GPU）：
+
+.. code-block:: yaml
+
+   data:
+     train_data_paths: ./data/LIBERO_LeRobot_v3
+
+   actor:
+     model:
+       model_path: ./assets/Cosmos3-Edge-DCP-py311
+       tokenizer_path: ./assets/Cosmos3-Edge
+       wan_vae_path: ./assets/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+       action_stats_path: ./cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+
+在仓库根目录启动 Edge SFT：
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh libero_sft_cosmos3_edge
+
+SFT 关键配置
+~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
@@ -243,150 +256,103 @@ Edge 使用 ``examples/sft/config/libero_sft_cosmos3_edge.yaml``\ ，引入 ``mo
    * - 字段
      - 说明
    * - ``actor.model.model_path``
-     - Cosmos3-Nano 或 Cosmos3-Edge 基座权重目录（DCP）。
+     - Cosmos3-Nano 或 Cosmos3-Edge 基座 DCP 目录。
+   * - ``actor.model.tokenizer_path``
+     - Nano 指向 Qwen3-VL tokenizer 目录；Edge 指向完整 Edge 快照目录。
    * - ``actor.model.wan_vae_path``
-     - Wan2.2 VAE 权重（``Wan2.2_VAE.pth``）。
+     - ``Wan2.2_VAE.pth`` 路径。
    * - ``actor.model.load_to_device``
-     - **必须** ``false`` （见上方 warning）。
+     - 必须设为 ``false``，让 FSDP2 直接从 CPU 分片上卡。
    * - ``actor.model.ema_enabled``
-     - Cosmos3 power-EMA（rate=0.1），每个优化步更新 ``net_ema``；占一份 fp32 网络显存，若仍 OOM 可临时设 ``false``。
+     - 开启 Cosmos3 power-EMA（rate 为 0.1）；显存紧张时可设为 ``false``。
    * - ``actor.micro_batch_size`` / ``global_batch_size``
-     - 每卡微批与全局批（Nano：32 / 2048；Edge：64 / 256）。梯度累积次数 = 全局批 /（每卡微批 × actor rank 数）。
-   * - ``actor.optim.lr`` / ``lr_warmup_steps``
-     - 学习率与 warmup（示例 5e-5 / 500）。动作头额外有 5× LR 倍率（``model/cosmos3.yaml`` 的 ``lr_multipliers``）。
+     - 每卡微批与全局批大小（Nano：32 / 2048；Edge：64 / 256）。
    * - ``runner.max_steps`` / ``save_interval``
-     - 训练步数与存档间隔（示例 5000 / 500）。
-
-
-特殊说明：action 转换 rot6d 10 维 vs axis-angle 7 维
----------------------------------------------------------
-
-Cosmos3 内部用 **10 维 rot6d** 表示动作，LIBERO 环境用 **7 维 axis-angle**。这是理解整条链路的关键：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 20 56
-
-   * - 表示
-     - 维度
-     - 组成
-   * - ``raw_action_dim`` （模型侧）
-     - 10
-     - 3 平移 + 6 rot6d + 1 夹爪
-   * - ``action_dim`` （环境侧）
-     - 7
-     - 3 平移 + 3 axis-angle + 1 夹爪
-
-用 rot6d 是因为 axis-angle 在 ±π 处不连续，扩散模型难以回归；rot6d（旋转矩阵前两列）连续、更易学。
-
-训练时 cosmos 的数据加载器会在线把 LIBERO 的 7 维动作转成 10 维 rot6d（见下方「准备数据」）；推理时再把模型输出的 10 维 rot6d 转回 7 维喂环境，详见 :doc:`SGLang 评测 <../../evaluations/guides/cosmos3_sglang>`。
-
+     - 总训练步数与保存间隔。
 
 转换 Checkpoint
-----------------------------------------
+---------------
 
-SFT 产出的 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` 是 RLinf 保存的完整 state dict。SGLang 评测使用 diffusers 组件目录 ``model_diffusers``\ ，其中包含 ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer/`` / ``scheduler/``，可通过下面两种方式导出。
-
-使用匹配模型直接导出
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Nano 和 Edge 都可以使用 ``--base-model-path``，在 SGLang 环境中用 torch 和 safetensors 完成转换。模板必须是完整的 HF/Diffusers 组件目录，且 transformer 架构和模态开关与 SFT 一致；例如关闭音频头的 ``sound_gen=false`` 权重不能使用 ``sound_gen=true`` 的模板。也可以使用满足这些条件的已导出动作模型作为模板，其 transformer 权重会被全部替换。
+SFT 产出的权重位于 ``checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。SGLang 评测和 NFT 训练都需要 Diffusers 组件目录 ``model_diffusers``。使用架构匹配的 Diffusers 目录作为模板即可同时支持 Nano 与 Edge 导出：
 
 .. code-block:: bash
 
    python -m toolkits.cosmos3.convert_checkpoint \
-     --src /path/to/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt \
-     --base-model-path /path/to/matching_cosmos3_model \
-     --out /path/to/converted
+     --src ./results/checkpoints/global_step_10000/actor/model_state_dict/full_weights.pt \
+     --base-model-path ./assets/Cosmos3-Edge \
+     --out ./assets/cosmos3-edge-policy-liberoall-10k
 
-脚本映射原生参数名并逐项校验 transformer 参数的名称和形状，用 SFT 权重替换全部 transformer 参数，保留模板的 tokenizer、VAE、scheduler 和配置。输出 ``/path/to/converted/model_diffusers`` 必须尚不存在，且位于模板目录之外。默认选择 ``omni.net``；checkpoint 中包含 EMA 时，可加 ``--use-ema-weights`` 选择 ``omni.net_ema``。
+转换脚本会校验全部 transformer 权重键名与形状，将 SFT 权重写入 ``./assets/cosmos3-edge-policy-liberoall-10k/model_diffusers``，并保留模板的 tokenizer、VAE、scheduler 和配置文件。输出目录必须尚不存在且位于模板目录之外。默认导出在线权重；传入 ``--use-ema-weights`` 可导出 EMA 权重。
 
-通过 cosmos-framework 导出
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. note::
 
-已有 cosmos-framework 导出环境时，也可使用四步转换：去掉 ``omni.`` 前缀、存成 DCP、导出 HF、拆成 diffusers 组件并修 ``_class_name``。不传 ``--base-model-path`` 时，``toolkits/cosmos3/convert_checkpoint.py`` 执行这条路径：
-
-.. code-block:: bash
-
-   # SFT 产出的 RLinf checkpoint（omni.net.* 前缀）
-   export SRC="/path/to/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt"
-   # 转换工作目录
-   export OUT="/path/to/converted"
-   # cosmos_framework export_model 需要 LIBERO 数据集路径
-   export LIBERO_ROOT=/path/to/LIBERO_LeRobot_v3
-   mkdir -p "$OUT"
-
-   python toolkits/cosmos3/convert_checkpoint.py --src "$SRC" --out "$OUT"
-
-脚本完成 checkpoint 转换过程（``--use-ema-weights`` 保留 EMA 权重，默认丢弃）；使用见 ``python toolkits/cosmos3/convert_checkpoint.py --help``。
-
-.. warning::
-
-   此四步转换须在 **cosmos-framework 环境** 下进行：``transformers 4.57.x`` + ``diffusers 0.39.0``\ ，提供 ``Cosmos3OmniTransformer``。更高版本 transformers 会在 ``save_pretrained`` 处崩溃、且其 diffusers 缺 cosmos3 类。转换还需 Wan2.2 VAE（diffusers 格式）与离线 HF 缓存（``HF_HUB_OFFLINE=1``）。具体路径与版本以你的 cosmos-framework 部署为准。
-
-转换得到的 ``model_diffusers`` 即 :doc:`Cosmos3 SGLang 评测 <../../evaluations/guides/cosmos3_sglang>` 的 ``rollout.model.model_path``。
+   若没有匹配的 Diffusers 模板且已配置 ``cosmos-framework`` 导出环境（``transformers 4.57.x`` + ``diffusers 0.39.0``），可省略 ``--base-model-path`` 并设置 ``LIBERO_ROOT`` 走四步转换。参数说明见 ``python -m toolkits.cosmos3.convert_checkpoint --help``。
 
 .. _cosmos3-sglang-install:
 
-安装 RLinf 和 SGLang 环境
-----------------------------------------
+安装 SGLang 推理与 RL 环境
+--------------------------
 
-安装 LIBERO 环境和带 ``diffusion`` extra 的 SGLang 0.5.19。``sglang`` model 会固定 torch 2.13.0，并按驱动支持的版本选择 CUDA 12 或 CUDA 13 的 wheel：
+若要在单个环境中同时运行 Cosmos3-Edge NFT 训练与 SGLang 评测，使用 ``--engine sglang`` 一次性安装 Cosmos3、LIBERO 以及 SGLang 0.5.19 Diffusion 运行时（自动包含固定版本 ``FxxxxU/sglang@cf565fa`` 的 Cosmos3 扩展）：
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model sglang --env libero
-   source .venv/bin/activate
+   .. tab-item:: 海外源
 
-随后安装基于 SGLang 0.5.19 的 Cosmos3 扩展，源码来自 `<https://github.com/FxxxxU/sglang/commit/cf565fafbcb833d7f156f08ff29bd9e5e65c2b3a>`_。该版本提供 Cosmos3 Edge 动作推理和 rollout 支持，用于评测及 NFT 训练。在 RLinf 仓库根目录运行：
+      .. code-block:: bash
 
-.. code-block:: bash
+         unset PYTHONPATH
+         bash requirements/install.sh embodied --model cosmos3 --env libero --engine sglang --venv .venv-sglang
+         source .venv-sglang/bin/activate
 
-   git clone https://github.com/FxxxxU/sglang.git ../sglang-cosmos3
-   git -C ../sglang-cosmos3 checkout cf565fafbcb833d7f156f08ff29bd9e5e65c2b3a
-   uv pip install "setuptools>=61.0" "setuptools-scm>=8.0" wheel
-   SGLANG_BUILD_RUST_EXTS=none uv pip install --no-deps --no-build-isolation -e ../sglang-cosmos3/python
+   .. tab-item:: 国内镜像
 
-安装后保留该源码目录，可编辑安装会直接从中导入代码。
+      .. code-block:: bash
 
-继续训练 Edge NFT
-----------------------------------------
+         unset PYTHONPATH
+         bash requirements/install.sh embodied --model cosmos3 --env libero --engine sglang --venv .venv-sglang --use-mirror
+         source .venv-sglang/bin/activate
 
-导出 Edge LIBERO policy 后，使用 ``examples/embodiment/config/libero_spatial_nft_cosmos3_edge_sglang.yaml`` 启动 NFT 训练，由 SGLang 采样、FSDP 更新 actor。将 ``algorithm.loss_type`` 设为 ``embodied_nft``\ ，保留 ``algorithm.adv_type: grpo`` 计算组内相对优势。NFT 根据采样得到的动作与视觉终态训练，使用 ``nft_xcur_source: resample`` 和 ``nft_target_space: x0``\ 。
+.. note::
 
-启动前修改示例中的权重路径：``actor.model.model_path`` 指向导出的 Edge LIBERO ``model_diffusers`` 目录，``actor.model.wan_vae_path`` 指向对应的原生 VAE 权重，``actor.model.action_stats_path`` 指向 SFT 使用的 LIBERO 统计文件。
+   若仅运行 SGLang 评测而不需要训练侧依赖，可省略 ``--model cosmos3``，直接运行 ``bash requirements/install.sh embodied --env libero --engine sglang --venv .venv-sglang``。如需复用本地已有的 ``FxxxxU/sglang`` 目录而非自动克隆到 ``.venv-sglang/sglang-cosmos3``，在运行 ``install.sh`` 前导出 ``SGLANG_COSMOS3_PATH`` 即可。
 
-训练和评测使用相同的 SGLang rollout worker。每个 rollout worker 在初始化时启动自己的 server，使用其所在 node group 分配给该 worker 的 GPU。运行结束后，入口脚本停止 rollout worker，由各 worker 关闭自己的 server。Hugging Face rollout 保留原有生命周期。
+Cosmos3-Edge NFT 训练
+---------------------
 
-在仓库根目录启动 NFT 训练：
+导出 ``model_diffusers`` 后，在 LIBERO-Spatial 上使用 Diffusion-NFT 与 SGLang rollout 启动 Cosmos3-Edge 训练。先编辑 ``examples/embodiment/config/libero_spatial_nft_cosmos3_edge_sglang.yaml`` 中的本地路径：
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_path: ./assets/cosmos3-edge-policy-liberoall-10k/model_diffusers
+       wan_vae_path: ./assets/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+       action_stats_path: ./cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+
+在仓库根目录启动训练：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_nft_cosmos3_edge_sglang
 
-示例使用 patch 权重同步：首次同步初始化推理权重，后续发送变化的参数元素。
+每个 rollout worker 会在初始化时于分配的 GPU 上启动专属 SGLang Diffusion server，训练结束时自动关闭。权重同步采用 patch 模式：第 0 步建立完整基线权重，后续步骤仅同步发生变化的权重元素。若 actor 与 rollout 同卡部署显存紧张，可同时开启 ``rollout.enable_offload: true`` 与 ``actor.enable_offload: true``。
 
-如需使用原生 Hugging Face rollout，在 ``examples/embodiment/config/libero_spatial_nft_cosmos3_edge_hf.yaml`` 中设置相同的模型路径，然后运行：
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh libero_spatial_nft_cosmos3_edge_hf
-
-两个配置都使用 SDE 采样。将 ``noise_level`` 设为正数。训练后的 checkpoint 可按 :doc:`Cosmos3 SGLang 评测 <../../evaluations/guides/cosmos3_sglang>` 验证。
+训练完成后，按 :doc:`Cosmos3 SGLang 评测 <../../evaluations/guides/cosmos3_sglang>` 导出并评测最终 checkpoint。
 
 可视化与结果
-----------------------------------------
+------------
 
-查看训练日志与曲线：
+使用 TensorBoard 查看训练曲线与日志：
 
 .. code-block:: bash
 
    tensorboard --logdir ./logs --port 6006
 
-训练指标含义见 :doc:`训练指标 </rst_source/reference/metrics>`。
+各项指标定义见 :doc:`训练指标 </rst_source/reference/metrics>`。
 
 常见问题
-----------------------------------------
+--------
 
 .. list-table::
    :header-rows: 1
@@ -394,11 +360,13 @@ Nano 和 Edge 都可以使用 ``--base-model-path``，在 SGLang 环境中用 to
 
    * - 现象
      - 处理
-   * - 初始化 OOM（单卡 80GB 也爆）
-     - 设 ``actor.model.load_to_device: false``。
-   * - 加载报动作头 shape 不匹配
-     - 确认 ``keys_to_skip_loading`` 跳过了基座 DROID 8 维动作头（``model/cosmos3.yaml`` 默认已配）。
-   * - HuggingFace 拉取卡住
-     - 离线 + 本地缓存：``HF_HUB_OFFLINE=1``、``TRANSFORMERS_OFFLINE=1``，``HF_HOME`` 指向本地缓存。
-   * - 动作乱 / loss 异常
-     - 核对训练与评测两侧 ``action_normalization``\ （``quantile_rot``）与统计文件同源。
+   * - 80 GB GPU 初始化即 OOM
+     - 保持 ``actor.model.load_to_device: false``；同卡运行 SGLang NFT 时同时开启 ``rollout.enable_offload: true`` 和 ``actor.enable_offload: true``。
+   * - 报 ``sglang version 0.0.0.dev... is not supported``
+     - 带 ``SETUPTOOLS_SCM_PRETEND_VERSION=0.5.19`` 重新安装 ``../sglang-cosmos3/python``。
+   * - SFT 热启动报动作头形状不匹配
+     - 确认 ``keys_to_skip_loading`` 已跳过基座 DROID 8 维动作头（``examples/embodiment/config/model/cosmos3.yaml`` 默认已配置）。
+   * - 离线环境卡在 Hugging Face 下载
+     - 预先下载到 ``HF_HOME`` 并导出 ``HF_HUB_OFFLINE=1`` 与 ``TRANSFORMERS_OFFLINE=1``。
+   * - 动作异常或成功率为 0
+     - 核对训练与推理两侧的 ``action_normalization``\ （``quantile_rot``）、``action_stats_path``、``num_inference_steps``、``num_frames`` 与 ``size`` 是否一致。

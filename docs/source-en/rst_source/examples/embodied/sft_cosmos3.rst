@@ -1,10 +1,10 @@
-Cosmos3 Supervised Fine-Tuning (LIBERO)
-========================================
+Cosmos3 Supervised Fine-Tuning and NFT Training (LIBERO)
+========================================================
 
-Fine-tune the NVIDIA Cosmos3-Nano (OmniMoT video world model) via SFT to adapt it to the LIBERO action space, fitting the libero simulator.
+Fine-tune NVIDIA Cosmos3-Nano or Cosmos3-Edge on LIBERO demonstrations with FSDP2, export the checkpoint to Diffusers format, and run Diffusion-NFT reinforcement learning with SGLang rollout.
 
 Overview
-----------------------------------------
+--------
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -17,224 +17,237 @@ Overview
    .. grid-item-card:: Method
       :text-align: center
 
-      SFT on the Libero simulator
+      SFT · Diffusion-NFT (GRPO)
 
    .. grid-item-card:: Data
       :text-align: center
 
-      LIBERO (LeRobot)
+      LIBERO (LeRobot v3)
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      8× A800 80GB GPU
+      4–8× A800 / A100 80 GB GPU
 
-| **You will:** install → prepare base model & data → train with ``run_vla_sft.sh`` → obtain a Cosmos3 model adapted for the libero simulator.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Cosmos3-Nano base weights (DCP) · Wan2.2 VAE · a downloaded LIBERO LeRobot dataset.
+| **You will:** install dependencies → prepare base weights and LIBERO data → run SFT → export ``model_diffusers`` → evaluate or continue with Edge NFT training.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Cosmos3 base checkpoint (DCP) · Wan2.2 VAE · LIBERO LeRobot v3 dataset.
 
 Installation
-----------------------------------------
+------------
 
 .. include:: _setup_common.rst
 
-Install Cosmos3 (add ``--env libero`` if you also need simulation eval):
+Install the Cosmos3 training environment (``--env libero`` adds the LIBERO simulator):
+
+.. tab-set::
+
+   .. tab-item:: Global
+
+      .. code-block:: bash
+
+         unset PYTHONPATH
+         bash requirements/install.sh embodied --model cosmos3 --env libero
+         source .venv/bin/activate
+
+   .. tab-item:: China Mirror
+
+      .. code-block:: bash
+
+         unset PYTHONPATH
+         bash requirements/install.sh embodied --model cosmos3 --env libero --use-mirror
+         source .venv/bin/activate
+
+Clone ``cosmos-framework`` and export its path so RLinf can load the Cosmos3 data transforms and normalization statistics:
 
 .. code-block:: bash
 
-   unset PYTHONPATH
-   # Users in China can add --use-mirror to speed up downloads.
-   bash requirements/install.sh embodied --model cosmos3 --env libero
-   source .venv/bin/activate
+   git clone https://github.com/NVIDIA/cosmos-framework.git ./cosmos-framework
+   export COSMOS_FRAMEWORK_PATH="$PWD/cosmos-framework"
 
-Cosmos3's data transforms and normalization stats depend on cosmos-framework; clone it and set the path before training:
+Offline Cache for Nano SFT
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: bash
+Nano SFT and base DCP conversion read ``Qwen3-VL-8B-Instruct`` and ``Wan2.2-TI2V-5B`` from the Hugging Face cache. On offline machines, pre-download them into ``HF_HOME`` and set ``HF_HUB_OFFLINE=1`` and ``TRANSFORMERS_OFFLINE=1`` before running:
 
-   git clone https://github.com/NVIDIA/cosmos-framework.git /path/to/cosmos-framework
-   export COSMOS_FRAMEWORK_PATH=/path/to/cosmos-framework
+.. tab-set::
 
-Offline Cache: Qwen3-VL-8B-Instruct and Wan2.2 Models
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   .. tab-item:: Global
 
-Nano SFT and base checkpoint conversion pull three model files from Hugging Face. On offline machines, pre-download them into the HF cache and enable offline mode (``HF_HUB_OFFLINE=1``) so ``from_pretrained`` / ``hf download`` read directly from cache, otherwise workers hang on network retries:
+      .. code-block:: bash
 
-- **Qwen3-VL-8B-Instruct** (tokenizer / VLM config): used at SFT startup and when ``convert_model_to_dcp`` rebuilds the model.
-- **Wan2.2-TI2V-5B** and **Wan2.2-TI2V-5B-Diffusers**: downloaded only when ``convert_model_to_dcp`` rebuilds the model.
+         export HF_HOME=${HF_HOME:-~/.cache/huggingface}
+         hf download Qwen/Qwen3-VL-8B-Instruct
+         hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
 
-Download directly into the HF cache (recommended; cache layout is automatically correct):
+   .. tab-item:: China Mirror
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   export HF_HOME=${HF_HOME:-~/.cache/huggingface}
-   # Use a mirror in China: export HF_ENDPOINT=https://hf-mirror.com
-   hf download Qwen/Qwen3-VL-8B-Instruct
-   hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
-   hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
-
-Prepare Base Model
-----------------------------------------
-
-Cosmos3 SFT **warm-starts from the Cosmos3-Nano base model, training the generation branch and action heads**. ``actor.model.model_path`` must point to a **DCP-format** base weights directory, and ``wan_vae_path`` to the Wan2.2 VAE:
-
-.. code-block:: yaml
-
-   defaults:
-     - model/cosmos3@actor.model      # pulls in examples/embodiment/config/model/cosmos3.yaml
-
-   hydra:
-     searchpath:
-       - file://${oc.env:REPO_PATH}/examples/embodiment/config/
-
-   actor:
-     model:
-       model_path: /path/to/Cosmos3-Nano-DCP
-       wan_vae_path: /path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
-       load_to_device: false          # see warning below
-
-Prepare Base DCP Weights
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Step 1: Download Cosmos3-Nano (diffusers format)**
-
-Download ``nvidia/Cosmos3-Nano`` from Hugging Face. It is in **diffusers/safetensors format** (``model_index.json`` + ``transformer/*.safetensors`` shards + ``vae/`` + ``text_tokenizer/`` etc.), **not DCP** — SFT cannot use it directly yet; it must be converted to DCP in Step 2.
-
-.. code-block:: bash
-
-   # Use a mirror in China: export HF_ENDPOINT=https://hf-mirror.com
-   hf download nvidia/Cosmos3-Nano \
-     --local-dir /path/to/Cosmos3-Nano
-
-.. note::
-
-   The base model can be downloaded with ``--local-dir`` to a **plain directory**.
-
-**Step 2: Convert to DCP**
-
-SFT cannot load the base from a diffusers directory directly: the cosmos3 base loader ``_load_base_weights`` uses ``_is_safetensors_checkpoint`` to detect format — it only checks whether ``*.safetensors`` files exist at the **top level** of the path (non-recursive). The diffusers directory places shards in ``transformer/`` subdirectories with nothing at the top level, so the check returns ``False``, falling through to the DCP loading branch, but the diffusers directory is not DCP, so loading fails. Therefore you must first convert the diffusers weights to DCP via cosmos-framework's ``convert_model_to_dcp.py`` before using them as ``model_path``.
-
-.. note::
-
-   This step rebuilds the entire OmniMoTModel and downloads ``Qwen3-VL-8B-Instruct`` (tokenizer) and ``Wan2.2-TI2V-5B``'s ``Wan2.2_VAE.pth`` (VAE) via cosmos's ``hf_cli`` — on offline machines, pre-download both into the HF cache (see above), then run with ``HF_HUB_OFFLINE=1``.
-
-.. code-block:: bash
-
-   # Run in the training venv (ensures DCP metadata matches the training Python version)
-   export HF_HOME=/path/to/hf-cache
-   export HF_HUB_OFFLINE=1          # read from cache; requires the two models above pre-downloaded
-   export TRANSFORMERS_OFFLINE=1
-   python -m cosmos_framework.scripts.convert_model_to_dcp \
-     --checkpoint-path /path/to/Cosmos3-Nano \
-     --no-use-ema-weights \
-     -o /path/to/Cosmos3-Nano-DCP
-
-.. note::
-
-   - ``--checkpoint-path`` accepts either a model name (triggers HF download) or a local diffusers directory; on offline machines, download first and point to the local path.
-   - The DCP ``.metadata`` is pickle and **tied to the Python version it was saved with**, so ``convert_model_to_dcp`` must run in the **same venv** as training for the DCP to load (the ``-py311`` directory suffix means exactly this).
-
-Cosmos3-Edge SFT
-----------------------------------------
-
-Edge uses ``examples/sft/config/libero_sft_cosmos3_edge.yaml``, which imports ``model/cosmos3_edge``. It replaces Nano's Qwen3-VL backbone and tokenizer with the native Nemotron backbone and Edge processor, while sharing the LIBERO data pipeline and native flow-matching SFT loss. Edge also trains ``k_norm_und_for_gen`` and restores its nonpersistent RoPE buffers during model construction.
-
-Use the Cosmos3 training environment installed above and a framework checkout containing ``EDGE_MODEL_CONFIG`` and the Edge processor. From the RLinf repository root, download the complete HF snapshot and convert it to DCP in the same environment:
-
-.. code-block:: bash
-
-   export REPO_PATH="$PWD"
-   export COSMOS3_ASSET_ROOT=/path/to/cosmos3-assets
-   hf download nvidia/Cosmos3-Edge \
-     --revision 344d602b128d1bbdacb43b08d0a3626f46343e29 \
-     --local-dir "$COSMOS3_ASSET_ROOT/Cosmos3-Edge"
-   hf download Wan-AI/Wan2.2-TI2V-5B Wan2.2_VAE.pth \
-     --local-dir "$COSMOS3_ASSET_ROOT/Wan2.2-TI2V-5B"
-
-   cd "$COSMOS_FRAMEWORK_PATH"
-   COSMOS_DEVICE=cpu CUDA_VISIBLE_DEVICES="" \
-   python -m cosmos_framework.scripts.convert_model_to_dcp \
-     --checkpoint-path "$COSMOS3_ASSET_ROOT/Cosmos3-Edge" \
-     --config-file cosmos_framework/inference/configs/model/Cosmos3-Edge.yaml \
-     --output-path "$COSMOS3_ASSET_ROOT/Cosmos3-Edge-DCP-py311" \
-     --experiment-overrides \
-       'model.config.tokenizer.bucket_name=""' \
-       'model.config.tokenizer.object_store_credential_path_pretrained=""' \
-       "model.config.tokenizer.vae_path=$COSMOS3_ASSET_ROOT/Wan2.2-TI2V-5B/Wan2.2_VAE.pth" \
-       model.config.vlm_config.tokenizer.repository=null \
-       "model.config.vlm_config.tokenizer.tokenizer_type=$COSMOS3_ASSET_ROOT/Cosmos3-Edge"
-   cd "$REPO_PATH"
-
-Note: During checkpoint conversion, clear the VAE bucket and credentials fields to load the local file; otherwise the inference YAML turns the local VAE path into an S3 URI and requests ``credentials/gcp_training.secret``.
-
-Keep the complete original Edge snapshot for its processor metadata and tokenizer; the DCP output supplies model weights and cannot replace the processor directory.
-
-Set the paths in ``examples/sft/config/libero_sft_cosmos3_edge.yaml``. LIBERO-all requires the parent directory containing ``libero_spatial``, ``libero_object``, ``libero_goal``, and ``libero_10``, with at least four actor ranks:
-
-.. code-block:: yaml
-
-   data:
-     train_data_paths: /path/to/LIBERO_LeRobot_v3
-     data_type: libero_all
-
-   actor:
-     micro_batch_size: 64
-     global_batch_size: 256
-     model:
-       checkpoint_format: native
-       model_path: /path/to/cosmos3-assets/Cosmos3-Edge-DCP-py311
-       tokenizer_path: /path/to/cosmos3-assets/Cosmos3-Edge
-       wan_vae_path: /path/to/cosmos3-assets/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
-       action_stats_path: /path/to/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
-       load_to_device: false
-
-Launch Edge with its own config name:
-
-.. code-block:: bash
-
-   bash examples/sft/run_vla_sft.sh libero_sft_cosmos3_edge
-
-After training, evaluate with ``evaluations/libero/libero_spatial_cosmos3_edge_eval_hf.yaml``. Set the base DCP, Edge processor, VAE, and action statistics paths under ``rollout.model`` to the paths used for training. Point ``runner.ckpt_path`` to the target step's ``actor/model_state_dict/full_weights.pt``. This config uses the online SFT weights (``omni.net``), discards the EMA replica during loading, and runs inference through the native Edge model shared with training.
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_edge_eval_hf
+         export HF_HOME=${HF_HOME:-~/.cache/huggingface}
+         export HF_ENDPOINT=https://hf-mirror.com
+         hf download Qwen/Qwen3-VL-8B-Instruct
+         hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e Wan2.2_VAE.pth
+         hf download Wan-AI/Wan2.2-TI2V-5B-Diffusers --include "vae/*"
 
 Prepare Data
-----------------------------------------
+------------
 
-Training data can be the **original** LeRobot v3 layout (containing ``meta/``, ``data/``) of LIBERO, specified via ``data.train_data_paths``.
-
-The ``frame_wise_relative`` + ``rot6d`` + ``quantile_rot`` action transform **does not require pre-processing the dataset**: ``rlinf/data/datasets/cosmos3/dataloader.py`` calls cosmos-framework's experiment ``action_policy_libero_all_nano``, which converts the original 7-D actions to 10-D rot6d at load time and applies quantile normalization. The normalization stats file ``libero_native_frame_wise_relative_rot6d.json`` is computed once by cosmos-framework and referenced via ``action_stats_path`` on the eval side. **Training and eval must use the same recipe + the same stats file**, otherwise de-normalization will be misaligned.
+Point ``data.train_data_paths`` at the raw LIBERO LeRobot v3 directory (containing ``libero_spatial``, ``libero_object``, ``libero_goal``, and ``libero_10`` for ``data_type: libero_all``). The Cosmos3 dataloader converts LIBERO's 7-D axis-angle actions into 10-D rot6d online and applies quantile normalization using ``libero_native_frame_wise_relative_rot6d.json``.
 
 .. code-block:: yaml
 
    data:
-     train_data_paths: /path/to/LIBERO_LeRobot
-     data_type: "libero_all"          # all LIBERO task suites; can also train just "libero_10"
-     num_workers: 4
-     prefetch_factor: 4
-     val_ratio: 0.01
+     train_data_paths: ./data/LIBERO_LeRobot_v3
+     data_type: "libero_all"   # or "libero_10" for a single suite
 
-Launch Training
-----------------------------------------
+Training and evaluation must use the same ``action_normalization`` (``quantile_rot``) and the same ``action_stats_path`` file.
 
-Run from the RLinf repo root:
+Action Representation
+~~~~~~~~~~~~~~~~~~~~~
+
+Cosmos3 predicts 10-D rot6d actions internally, while LIBERO expects 7-D axis-angle actions:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 16 60
+
+   * - Representation
+     - Dim
+     - Composition
+   * - ``raw_action_dim`` (model)
+     - 10
+     - 3 translation + 6 rot6d + 1 gripper
+   * - ``action_dim`` (env)
+     - 7
+     - 3 translation + 3 axis-angle + 1 gripper
+
+The dataloader maps 7-D LIBERO actions to 10-D rot6d during training; evaluation and RL rollout convert the 10-D predictions back to 7-D before stepping LIBERO.
+
+Cosmos3-Nano SFT
+----------------
+
+Nano SFT warm-starts from a DCP-format ``nvidia/Cosmos3-Nano`` base checkpoint. First download the Hugging Face Diffusers snapshot:
+
+.. tab-set::
+
+   .. tab-item:: Global
+
+      .. code-block:: bash
+
+         hf download nvidia/Cosmos3-Nano --local-dir ./assets/Cosmos3-Nano
+
+   .. tab-item:: China Mirror
+
+      .. code-block:: bash
+
+         export HF_ENDPOINT=https://hf-mirror.com
+         hf download nvidia/Cosmos3-Nano --local-dir ./assets/Cosmos3-Nano
+
+Convert the Diffusers snapshot to DCP inside the training virtualenv so the pickled DCP metadata matches the training Python version:
+
+.. code-block:: bash
+
+   export HF_HUB_OFFLINE=1
+   export TRANSFORMERS_OFFLINE=1
+   python -m cosmos_framework.scripts.convert_model_to_dcp \
+     --checkpoint-path ./assets/Cosmos3-Nano \
+     --no-use-ema-weights \
+     -o ./assets/Cosmos3-Nano-DCP-py311
+
+Edit ``examples/sft/config/libero_sft_cosmos3.yaml`` to set the local model, tokenizer, VAE, statistics, and dataset paths:
+
+.. code-block:: yaml
+
+   data:
+     train_data_paths: ./data/LIBERO_LeRobot_v3
+
+   actor:
+     model:
+       model_path: ./assets/Cosmos3-Nano-DCP-py311
+       tokenizer_path: ./assets/Qwen3-VL-8B-Instruct-tokenizer
+       wan_vae_path: ./assets/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+       action_stats_path: ./cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+
+Launch Nano SFT from the repository root:
 
 .. code-block:: bash
 
    bash examples/sft/run_vla_sft.sh libero_sft_cosmos3
 
-**What this command does:** reads ``examples/sft/config/libero_sft_cosmos3.yaml``, shards the Cosmos3 model with FSDP2 on each GPU and trains, saving checkpoints every ``save_interval`` steps to ``.../checkpoints/global_step_<N>/``, with logs to ``logs/<timestamp>-libero_sft_cosmos3/run_embodiment.log``.
+The script shards the model across GPUs with FSDP2, writes logs to ``logs/<timestamp>-libero_sft_cosmos3/run_embodiment.log``, and saves checkpoints every ``runner.save_interval`` steps under ``checkpoints/global_step_<N>/``. Set ``runner.resume_dir`` to resume from a saved step.
 
 .. warning::
 
-   **Initialization must set** ``actor.model.load_to_device: false``. When Cosmos3 is built, ``net`` (bf16 ~27GB) + ``net_ema`` (fp32 ~54GB) ≈ 81GB; the default eager ``model.to(device)`` on a single 80GB GPU will OOM **before** FSDP2 ``fully_shard`` sharding runs. Setting it to ``false`` keeps the model on CPU and lets ``fully_shard`` shard it directly onto the GPU.
+   Keep ``actor.model.load_to_device: false`` in SFT configs. Cosmos3 builds both the online network and the FP32 EMA replica on CPU before FSDP2 sharding; eager GPU placement OOMs on an 80 GB GPU.
 
-To resume from a checkpoint: set ``runner.resume_dir`` to a ``global_step_<N>`` directory and re-run.
+Cosmos3-Edge SFT
+----------------
 
-Key Configuration
-----------------------------------------
+Edge SFT uses ``examples/sft/config/libero_sft_cosmos3_edge.yaml`` with the Nemotron backbone and Edge processor. Download the complete Edge snapshot and Wan2.2 VAE:
 
-Most fields can be copied from ``libero_sft_cosmos3.yaml``. The ones that really matter:
+.. tab-set::
+
+   .. tab-item:: Global
+
+      .. code-block:: bash
+
+         hf download nvidia/Cosmos3-Edge \
+           --revision 344d602b128d1bbdacb43b08d0a3626f46343e29 \
+           --local-dir ./assets/Cosmos3-Edge
+         hf download Wan-AI/Wan2.2-TI2V-5B Wan2.2_VAE.pth \
+           --local-dir ./assets/Wan2.2-TI2V-5B
+
+   .. tab-item:: China Mirror
+
+      .. code-block:: bash
+
+         export HF_ENDPOINT=https://hf-mirror.com
+         hf download nvidia/Cosmos3-Edge \
+           --revision 344d602b128d1bbdacb43b08d0a3626f46343e29 \
+           --local-dir ./assets/Cosmos3-Edge
+         hf download Wan-AI/Wan2.2-TI2V-5B Wan2.2_VAE.pth \
+           --local-dir ./assets/Wan2.2-TI2V-5B
+
+Convert the Edge snapshot to DCP in the same virtualenv (clear the VAE bucket and credentials overrides so the local VAE file is read directly):
+
+.. code-block:: bash
+
+   COSMOS_DEVICE=cpu python -m cosmos_framework.scripts.convert_model_to_dcp \
+     --checkpoint-path "$PWD/assets/Cosmos3-Edge" \
+     --config-file "$COSMOS_FRAMEWORK_PATH/cosmos_framework/inference/configs/model/Cosmos3-Edge.yaml" \
+     --output-path "$PWD/assets/Cosmos3-Edge-DCP-py311" \
+     --experiment-overrides \
+       'model.config.tokenizer.bucket_name=""' \
+       'model.config.tokenizer.object_store_credential_path_pretrained=""' \
+       "model.config.tokenizer.vae_path=$PWD/assets/Wan2.2-TI2V-5B/Wan2.2_VAE.pth" \
+       model.config.vlm_config.tokenizer.repository=null \
+       "model.config.vlm_config.tokenizer.tokenizer_type=$PWD/assets/Cosmos3-Edge"
+
+Keep the original ``./assets/Cosmos3-Edge`` directory for ``actor.model.tokenizer_path`` because it holds the Edge processor metadata and tokenizer.
+
+Set the local paths in ``examples/sft/config/libero_sft_cosmos3_edge.yaml`` (``data_type: libero_all`` requires at least 4 GPUs):
+
+.. code-block:: yaml
+
+   data:
+     train_data_paths: ./data/LIBERO_LeRobot_v3
+
+   actor:
+     model:
+       model_path: ./assets/Cosmos3-Edge-DCP-py311
+       tokenizer_path: ./assets/Cosmos3-Edge
+       wan_vae_path: ./assets/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+       action_stats_path: ./cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+
+Launch Edge SFT from the repository root:
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh libero_sft_cosmos3_edge
+
+Key SFT Configuration
+~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
@@ -243,161 +256,94 @@ Most fields can be copied from ``libero_sft_cosmos3.yaml``. The ones that really
    * - Field
      - Description
    * - ``actor.model.model_path``
-     - Cosmos3-Nano or Cosmos3-Edge base weights directory (DCP).
+     - Cosmos3-Nano or Cosmos3-Edge DCP base checkpoint directory.
+   * - ``actor.model.tokenizer_path``
+     - Qwen3-VL tokenizer directory (Nano) or full Edge snapshot directory (Edge).
    * - ``actor.model.wan_vae_path``
-     - Wan2.2 VAE weights (``Wan2.2_VAE.pth``).
+     - Path to ``Wan2.2_VAE.pth``.
    * - ``actor.model.load_to_device``
-     - **Must be ``false``** (see warning above).
+     - Must be ``false`` so FSDP2 shards directly from CPU.
    * - ``actor.model.ema_enabled``
-     - Cosmos3 power-EMA (rate=0.1); updates ``net_ema`` each optimizer step; occupies an fp32 copy of the network in memory; if still OOM, temporarily set ``false``.
+     - Enables Cosmos3 power-EMA (rate 0.1); set ``false`` if GPU memory is tight.
    * - ``actor.micro_batch_size`` / ``global_batch_size``
-     - Per-GPU micro batch and global batch (Nano: 32 / 2048; Edge: 64 / 256). Accumulation steps = global batch / (micro batch × actor ranks).
-   * - ``actor.optim.lr`` / ``lr_warmup_steps``
-     - Learning rate and warmup (example 5e-5 / 500). Action heads have an additional 5× LR multiplier (``lr_multipliers`` in ``model/cosmos3.yaml``).
+     - Per-GPU micro-batch and global batch (Nano: 32 / 2048; Edge: 64 / 256).
    * - ``runner.max_steps`` / ``save_interval``
-     - Training steps and checkpoint interval (example 5000 / 500).
-
-
-Special Note: Action Representation — rot6d 10-D vs axis-angle 7-D
-------------------------------------------------------------------------
-
-Cosmos3 internally represents actions as **10-D rot6d**; the LIBERO environment uses **7-D axis-angle**. This is key to understanding the whole pipeline:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 20 56
-
-   * - Representation
-     - Dim
-     - Composition
-   * - ``raw_action_dim`` (model side)
-     - 10
-     - 3 translation + 6 rot6d + 1 gripper
-   * - ``action_dim`` (env side)
-     - 7
-     - 3 translation + 3 axis-angle + 1 gripper
-
-rot6d is used because axis-angle is discontinuous at ±π, making it hard for diffusion models to regress; rot6d (the first two columns of a rotation matrix) is continuous and easier to learn.
-
-At training time, the cosmos data loader converts LIBERO's 7-D actions to 10-D rot6d online (see "Prepare Data" above); at inference time, the model's 10-D rot6d output is converted back to 7-D for the environment. See :doc:`SGLang Evaluation <../../evaluations/guides/cosmos3_sglang>`.
-
+     - Total optimizer steps and checkpoint save frequency.
 
 Checkpoint Conversion
-----------------------------------------
+---------------------
 
-The SFT output ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` contains the full state dict saved by RLinf. SGLang evaluation uses a diffusers component directory ``model_diffusers`` (containing ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer/`` / ``scheduler/``). Export it using either method below.
-
-Export Using a Matching Model
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Both Nano and Edge support ``--base-model-path`` to convert weights using torch and safetensors in the SGLang environment. The template must be a complete HF/Diffusers component directory whose transformer architecture and modality settings match SFT. For example, weights trained with audio heads disabled (``sound_gen=false``) require a template with ``sound_gen=false``. An already exported action model that meets these conditions also works as a template; all its transformer weights are replaced.
+SFT saves ``checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``. SGLang evaluation and NFT training load a Diffusers component directory (``model_diffusers``). Export it using a matching Diffusers template directory (works for both Nano and Edge):
 
 .. code-block:: bash
 
    python -m toolkits.cosmos3.convert_checkpoint \
-     --src /path/to/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt \
-     --base-model-path /path/to/matching_cosmos3_model \
-     --out /path/to/converted
+     --src ./results/checkpoints/global_step_10000/actor/model_state_dict/full_weights.pt \
+     --base-model-path ./assets/Cosmos3-Edge \
+     --out ./assets/cosmos3-edge-policy-liberoall-10k
 
-The script maps native parameter names, validates every transformer key and shape, and replaces all transformer tensors with SFT weights while retaining the template's tokenizer, VAE, scheduler, and configuration. The output ``/path/to/converted/model_diffusers`` must not exist and must be outside the template directory. It selects ``omni.net`` by default; add ``--use-ema-weights`` to select ``omni.net_ema`` when the checkpoint contains EMA weights.
+The converter checks every transformer tensor name and shape, writes the SFT weights into ``./assets/cosmos3-edge-policy-liberoall-10k/model_diffusers``, and copies the template's tokenizer, VAE, scheduler, and config. The output directory must be new and outside the template. By default it exports the online weights; pass ``--use-ema-weights`` to export the EMA weights instead.
 
-Export Through cosmos-framework
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. note::
 
-With a cosmos-framework export environment, you can also use the four-step conversion: strip the ``omni.`` prefix, save as DCP, export to HF, split into diffusers components, and fix ``_class_name``. Without ``--base-model-path``, ``toolkits/cosmos3/convert_checkpoint.py`` follows this path:
-
-.. code-block:: bash
-
-   # RLinf SFT checkpoint (omni.net.* prefix)
-   export SRC="/path/to/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt"
-   # Conversion working directory
-   export OUT="/path/to/converted"
-   # cosmos_framework export_model needs the LIBERO dataset path
-   export LIBERO_ROOT=/path/to/LIBERO_LeRobot_v3
-   mkdir -p "$OUT"
-
-   python toolkits/cosmos3/convert_checkpoint.py --src "$SRC" --out "$OUT"
-
-The script runs all four steps in order (``--use-ema-weights`` keeps the EMA weights, default drops them); see ``python toolkits/cosmos3/convert_checkpoint.py --help``.
-
-.. warning::
-
-   This four-step conversion must be run in a **cosmos-framework environment**: ``transformers 4.57.x`` + ``diffusers 0.39.0`` (which has ``Cosmos3OmniTransformer``). Higher transformers versions crash at ``save_pretrained`` and their diffusers lacks the cosmos3 classes. The conversion also needs the Wan2.2 VAE (diffusers format) and an offline HF cache (``HF_HUB_OFFLINE=1``). Specific paths and versions depend on your cosmos-framework deployment.
-
-The resulting ``model_diffusers`` is the ``rollout.model.model_path`` for :doc:`Cosmos3 SGLang Evaluation <../../evaluations/guides/cosmos3_sglang>`.
+   If you do not have a matching Diffusers template and have a ``cosmos-framework`` export environment (``transformers 4.57.x`` + ``diffusers 0.39.0``), omit ``--base-model-path`` and set ``LIBERO_ROOT`` to run the four-step export path. See ``python -m toolkits.cosmos3.convert_checkpoint --help``.
 
 .. _cosmos3-sglang-install:
 
-Install RLinf and SGLang
-----------------------------------------
+Install SGLang Serving and RL Environment
+-----------------------------------------
 
-Install the LIBERO environment and SGLang 0.5.19 with its ``diffusion`` extra. The ``sglang`` model pins torch 2.13.0 and picks the CUDA 12 or CUDA 13 build that the driver supports:
+For Cosmos3-Edge NFT training and SGLang evaluation in a single environment, install Cosmos3, LIBERO, and the SGLang 0.5.19 Diffusion runtime (including the pinned ``FxxxxU/sglang@cf565fa`` Cosmos3 extension) together with ``--engine sglang``:
 
-.. code-block:: bash
+.. tab-set::
 
-   bash requirements/install.sh embodied --model sglang --env libero
-   source .venv/bin/activate
+   .. tab-item:: Global
 
-Then install the Cosmos3 extension of SGLang 0.5.19 from
-`<https://github.com/FxxxxU/sglang/commit/cf565fafbcb833d7f156f08ff29bd9e5e65c2b3a>`_.
-This checkout supplies Cosmos3 Edge action inference and rollout support for
-evaluation and NFT training. From the RLinf repository root, run:
+      .. code-block:: bash
 
-.. code-block:: bash
+         unset PYTHONPATH
+         bash requirements/install.sh embodied --model cosmos3 --env libero --engine sglang --venv .venv-sglang
+         source .venv-sglang/bin/activate
 
-   git clone https://github.com/FxxxxU/sglang.git ../sglang-cosmos3
-   git -C ../sglang-cosmos3 checkout cf565fafbcb833d7f156f08ff29bd9e5e65c2b3a
-   uv pip install "setuptools>=61.0" "setuptools-scm>=8.0" wheel
-   SGLANG_BUILD_RUST_EXTS=none uv pip install --no-deps --no-build-isolation -e ../sglang-cosmos3/python
+   .. tab-item:: China Mirror
 
-Keep this checkout in place: the editable installation imports its source files.
+      .. code-block:: bash
 
-Continue With Edge NFT Training
-----------------------------------------
+         unset PYTHONPATH
+         bash requirements/install.sh embodied --model cosmos3 --env libero --engine sglang --venv .venv-sglang --use-mirror
+         source .venv-sglang/bin/activate
 
-After exporting an Edge LIBERO policy, use
-``examples/embodiment/config/libero_spatial_nft_cosmos3_edge_sglang.yaml``
-for NFT training with SGLang rollout. Train the actor with FSDP. Set
-``algorithm.loss_type: embodied_nft`` and keep ``algorithm.adv_type: grpo``
-for group-relative advantages. NFT trains from sampled action and visual
-endpoints with ``nft_xcur_source: resample`` and ``nft_target_space: x0``.
+.. note::
 
-Set the paths in the example before launching. ``actor.model.model_path``
-points to the exported Edge LIBERO ``model_diffusers`` directory;
-``actor.model.wan_vae_path`` points to the corresponding native VAE weights;
-``actor.model.action_stats_path`` points to the LIBERO statistics used during
-SFT.
+   If you only need standalone SGLang evaluation without actor training dependencies, omit ``--model cosmos3`` and run ``bash requirements/install.sh embodied --env libero --engine sglang --venv .venv-sglang``. To reuse a local checkout of ``FxxxxU/sglang`` instead of cloning into ``.venv-sglang/sglang-cosmos3``, export ``SGLANG_COSMOS3_PATH`` before running ``install.sh``.
 
-Training and evaluation use the same SGLang rollout worker. During initialization,
-each rollout worker starts its own server on the GPUs assigned to that worker
-in its node group. When the run ends, the entry script stops the rollout
-workers, which shut down their servers. Hugging Face rollout retains its
-existing lifecycle.
+Cosmos3-Edge NFT Training
+-------------------------
 
-Launch NFT training from the repository root:
+After exporting ``model_diffusers``, train Cosmos3-Edge on LIBERO-Spatial with Diffusion-NFT and SGLang rollout. Edit the local asset paths in ``examples/embodiment/config/libero_spatial_nft_cosmos3_edge_sglang.yaml``:
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_path: ./assets/cosmos3-edge-policy-liberoall-10k/model_diffusers
+       wan_vae_path: ./assets/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+       action_stats_path: ./cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+
+Launch training from the repository root:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_nft_cosmos3_edge_sglang
 
-The example uses patch weight synchronization. The first update initializes
-the serving weights; subsequent updates send changed parameter elements.
+Each rollout worker launches its own SGLang Diffusion server on its assigned GPUs during initialization and shuts it down when training ends. Patch weight synchronization initializes the full serving baseline on step 0 and transfers only changed parameter elements on subsequent steps. If GPU memory is tight when collocating actor and rollout on the same GPUs, set ``rollout.enable_offload: true`` and ``actor.enable_offload: true``.
 
-For native Hugging Face rollout, set the same model paths in
-``examples/embodiment/config/libero_spatial_nft_cosmos3_edge_hf.yaml`` and run:
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh libero_spatial_nft_cosmos3_edge_hf
-
-Both configurations use SDE sampling. Set ``noise_level`` to a positive value.
-Evaluate the trained checkpoint using
-:doc:`Cosmos3 SGLang Evaluation <../../evaluations/guides/cosmos3_sglang>`.
+After training, evaluate the exported checkpoint following :doc:`Cosmos3 SGLang Evaluation <../../evaluations/guides/cosmos3_sglang>`.
 
 Visualization and Results
-----------------------------------------
+-------------------------
 
-View training logs and curves:
+Monitor training metrics and loss curves with TensorBoard:
 
 .. code-block:: bash
 
@@ -406,7 +352,7 @@ View training logs and curves:
 See :doc:`Training Metrics </rst_source/reference/metrics>` for metric definitions.
 
 FAQ
-----------------------------------------
+---
 
 .. list-table::
    :header-rows: 1
@@ -414,11 +360,13 @@ FAQ
 
    * - Symptom
      - Fix
-   * - OOM at initialization (even on a single 80GB GPU)
-     - Set ``actor.model.load_to_device: false``.
-   * - Loading reports action head shape mismatch
-     - Confirm ``keys_to_skip_loading`` skips the base DROID 8-D action head (``model/cosmos3.yaml`` has this by default).
-   * - HuggingFace download hangs
-     - Offline + local cache: ``HF_HUB_OFFLINE=1``, ``TRANSFORMERS_OFFLINE=1``, and ``HF_HOME`` pointing to the local cache.
-   * - Actions are wrong / loss is abnormal
-     - Verify ``action_normalization`` (``quantile_rot``) and the stats file are the same source on both training and eval sides.
+   * - OOM during model initialization on an 80 GB GPU
+     - Keep ``actor.model.load_to_device: false``; for collocated SGLang NFT training, also enable ``rollout.enable_offload: true`` and ``actor.enable_offload: true``.
+   * - ``sglang version 0.0.0.dev... is not supported``
+     - Reinstall ``../sglang-cosmos3/python`` with ``SETUPTOOLS_SCM_PRETEND_VERSION=0.5.19``.
+   * - Action head shape mismatch during SFT warm-start
+     - Confirm ``keys_to_skip_loading`` skips the base DROID 8-D action head (configured by default in ``examples/embodiment/config/model/cosmos3.yaml``).
+   * - Hugging Face download hangs on an offline machine
+     - Pre-download into ``HF_HOME`` and export ``HF_HUB_OFFLINE=1`` and ``TRANSFORMERS_OFFLINE=1``.
+   * - Actions look wrong or success rate is near zero
+     - Verify ``action_normalization`` (``quantile_rot``), ``action_stats_path``, ``num_inference_steps``, ``num_frames``, and ``size`` match between SFT and rollout.

@@ -280,7 +280,7 @@ class SGLangServerBackend(RolloutBackend):
         except BaseException:
             # start() already succeeded: without this the sglang process
             # tree would linger until the actor teardown path reaps it.
-            self.shutdown()
+            await self.async_shutdown()
             raise
 
     async def _initialize_entry_frontend(self) -> None:

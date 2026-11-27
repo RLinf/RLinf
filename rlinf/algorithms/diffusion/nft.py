@@ -75,7 +75,10 @@ def init_nft_ema_state(
     for name, value in state.items():
         if torch.is_tensor(value):
             dtype = value.dtype
-            if name in update_names:
+            normalized = name.replace("_checkpoint_wrapped_module.", "").replace(
+                "_orig_mod.", ""
+            )
+            if normalized in update_names:
                 matched += 1
                 if use_fp32 and dtype in (torch.float16, torch.bfloat16):
                     dtype = torch.float32

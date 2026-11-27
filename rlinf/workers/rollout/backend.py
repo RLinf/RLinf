@@ -141,3 +141,7 @@ class RolloutBackend(ABC):
     @abstractmethod
     def shutdown(self) -> None:
         """Tear the backend down (processes, connections)."""
+
+    async def async_shutdown(self) -> None:
+        """Asynchronously tear the backend down inside a running event loop."""
+        self.shutdown()

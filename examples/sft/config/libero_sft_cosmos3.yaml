@@ -1,6 +1,6 @@
 defaults:
   - hybrid_engines/fsdp@actor.fsdp_config
-  - model/cosmos3@actor.model
+  - model/cosmos3_nano@actor.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -85,7 +85,7 @@ actor:
     mixed_precision:
       param_dtype: bf16
       reduce_dtype: fp32
-      buffer_dtype: bf16
+      buffer_dtype: null
       cast_forward_inputs: false
     amp_autocast:
       enabled: False

@@ -36,12 +36,12 @@ env:
   group_name: "EnvGroup"
 
   eval:
-    rollout_epoch: 8
-    total_num_envs: 64
+    rollout_epoch: 1
+    total_num_envs: 128
     auto_reset: True
     ignore_terminations: True
     max_episode_steps: 480
-    max_steps_per_rollout_epoch: 480
+    max_steps_per_rollout_epoch: 1920
     group_size: 1
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True

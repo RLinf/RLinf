@@ -270,7 +270,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model cosmos3 --env libero
-          bash requirements/install.sh embodied --model sglang --env libero --venv .venv-sglang
+          bash requirements/install.sh embodied --env libero --engine sglang --venv .venv-sglang
 
       - name: Cosmos3 LIBERO SFT test
         timeout-minutes: 40

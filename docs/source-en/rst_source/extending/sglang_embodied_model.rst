@@ -11,8 +11,7 @@ The document is divided into two parts:
 
 .. note::
 
-   This document only covers the **eval rollout / sglang-serve** path. This path is responsible for converting environment observations
-   into actions during evaluation and does not include training-side model registration, FSDP Policy, or SFT adaptation. For training-side adaptation, refer to
+   This document covers the **SGLang embodied rollout** path for evaluation and RL rollout. For FSDP actor or SFT model registration, refer to
    :doc:`Adding a New Model with FSDP <new_model_fsdp>` and
    :doc:`Adding a New SFT Model <new_model_sft>`.
 
@@ -23,28 +22,15 @@ Part One: Adapting a New Model
 Overall Architecture
 --------------------
 
-The SGLang embodied evaluation path separates general logic from model-specific logic:
+The SGLang embodied path separates general orchestration from model-specific logic:
 
-- The driver script (e.g. ``eval_embodied_agent.py``) starts one or more sglang
-  server processes via :func:`launch_sglang_router_and_server` and pushes each
-  server's URL to the rollout workers; server startup, ``/health`` polling, and
-  port allocation are handled by ``SGLangServerWorker`` (driver side) — the
-  rollout worker itself no longer owns a server subprocess;
-- ``SGLangEmbodiedWorker`` picks the driver-assigned server URL for its own rank,
-  uses it to create an :class:`InferenceHTTPClient`, loads the model's **sglang
-  adapter**, and exchanges observations and actions with the environment Worker
-  through channels. **The HTTP request to the server (msgpack encoding + retries)
-  is performed by the worker itself**;
-- The **sglang adapter** (a plain standalone class, e.g. ``DreamZeroSGLangAdapter``)
-  only holds model-specific pure logic: ``build_request`` turns an env
-  observation into the request payload, ``parse_response`` turns the server
-  response into actions, and ``action_path`` declares the action endpoint. It
-  **does not hold an HTTP client and does not send requests itself**.
+- ``EmbodiedComponentPlacement`` groups the rollout hardware ranks into one process per SGLang Diffusion server instance, deriving each instance's GPU width automatically from ``dp_size * tp_size * sp_degree * cfg_parallel_degree``;
+- Each ``SGLangEmbodiedWorker`` launches and owns one ``SGLangServerBackend`` (``server_type="embodied"``) on its assigned GPUs during ``init_worker()``, creates its direct loopback control/inference client, loads the model's **sglang adapter**, and exchanges observations and actions with ``EnvWorker`` through channels. When ``rollout.sglang.launch_router: true`` and the adapter sets ``supports_router = True``, the driver launches an optional router via ``launch_embodied_sglang_router`` and routes generation requests through it while keeping control/weight-sync requests on loopback;
+- The **sglang adapter** subclasses ``SGLangEmbodiedAdapter`` (e.g. ``DreamZeroSGLangAdapter`` or ``Cosmos3SGLangAdapter``) and owns model-specific request building (``build_request``), response parsing (``parse_response``), and optional training rollout and weight mapping hooks (``supports_training``, ``validate_training``, ``create_weight_target``, ``map_weight_name``, ``parse_rollout_response``). The base class dispatches asynchronous HTTP requests through the worker's ``InferenceHTTPClient``.
 
 Therefore, integrating a new model usually **does not require modifying**
-``rlinf/workers/rollout/sglang/sglang_embodied_worker.py``, and you do not need to
-care how the server is started — server parameters come entirely from the YAML
-``rollout.sglang.server`` block passed straight to the sglang server process. The
+``rlinf/workers/rollout/sglang/sglang_embodied_worker.py``. Server parameters come from the YAML
+``rollout.sglang.server`` block passed directly to ``ServerArgs.from_kwargs``. The
 model is selected by ``rollout.model.model_type``, and the call flow is as follows:
 
 .. code-block:: text
@@ -52,57 +38,43 @@ model is selected by ``rollout.model.model_type``, and the call flow is as follo
    rollout.model.model_type: "<your_model>"
                  │
                  ▼
-   driver: launch_sglang_router_and_server()
-                 │  (rollout.sglang.server_type == "embodied" → SGLangServerWorker)
-                 ▼
-   each SGLangServerWorker.init_server()
-                 │  (rollout.sglang.server → ServerArgs.from_kwargs → dispatch_launch)
+   EmbodiedComponentPlacement  (groups GPUs per server: dp * tp * sp * cfg)
+                 │
                  ▼
    SGLangEmbodiedWorker.init_worker()
                  │
-                 ├── get_sglang_adapter_cls("<your_model>")
-                 ├── pick this rank's server URL, create InferenceHTTPClient
-                 └── create YourSglangAdapter(cfg, rank)
-
-   SGLangEmbodiedWorker.predict(env_obs)   # driven by EmbodiedEvalRunner
+                 ├── get_sglang_adapter_cls("<your_model>") → YourSglangAdapter(cfg, rank)
+                 └── SGLangServerBackend(server_type="embodied").initialize()
+                       (rollout.sglang.server → ServerArgs.from_kwargs → dispatch_launch)
                  │
-                 ├── adapter.build_request(env_obs)  → (payload, state)
-                 ├── http_client.post(adapter.action_path, payload, msgpack=True, ...)
-                 └── adapter.parse_response(resp, state)  → [N, H, D] actions
+                 ▼ (optional, when rollout.sglang.launch_router: true)
+   driver: launch_embodied_sglang_router() → rollout_group.set_sglang_router_url()
+
+   SGLangEmbodiedWorker.predict(env_obs, mode)   # driven by EmbodiedEvalRunner / EmbodiedRunner
+                 │
+                 ├── adapter.async_build_request(env_obs, mode) → (payload, state)
+                 └── adapter.async_send_request(client, payload, state, mode) → [N, H, D] actions
 
 
-To enter this call flow, the following conditions must all be satisfied in the
-configuration:
+To enter this call flow, satisfy the following configuration fields:
 
 .. code-block:: yaml
 
    runner:
-     task_type: embodied_eval
-     only_eval: true
+     task_type: embodied_eval   # or embodied for RL training
+     only_eval: true            # false for RL training
 
    rollout:
      rollout_backend: sglang
      sglang:
-       serving_mode: embodied      # rollout worker = SGLangEmbodiedWorker
-       server_type: embodied      # server dispatch = embodied (via dispatch_launch)
-       launch_server: true        # driver launches the server group
+       serving_mode: embodied   # rollout worker = SGLangEmbodiedWorker
+       backend_type: server
+       launch_server: true      # worker launches its own server subprocess
+       launch_router: false     # set true to front workers with an SGLang router
      model:
        model_type: "<your_model>"
 
-Note that ``rollout.sglang.server_type`` and ``rollout.model.model_type`` are two
-**orthogonal** fields with different names and different responsibilities:
-
-- ``rollout.sglang.server_type`` decides **which sglang dispatch branch the
-  server subprocess runs** (within the same ``SGLangServerWorker`` class:
-  ``srt`` = language model via
-  ``sglang.srt.entrypoints.http_server.launch_server``; ``embodied`` = VLA /
-  diffusion via ``sglang.multimodal_gen.runtime.launch_server.dispatch_launch``,
-  serving the ``/v1/actions/generations`` endpoint);
-- ``rollout.model.model_type`` decides **which sglang adapter the rollout worker
-  loads** (the adapter registry lookup key).
-
-``serving_mode: embodied`` also cannot be omitted — otherwise RLinf creates a
-regular ``SGLangWorker`` instead of ``SGLangEmbodiedWorker``.
+``rollout.sglang.serving_mode`` selects ``SGLangEmbodiedWorker`` (which always launches ``server_type="embodied"`` via ``sglang.multimodal_gen.runtime.launch_server.dispatch_launch``), while ``rollout.model.model_type`` selects which adapter class the worker loads from the adapter registry.
 
 
 Adaptation Steps
@@ -161,17 +133,19 @@ next to the training-side model code):
 
    rlinf/models/embodiment/<your_model>/sglang_adapter.py
 
-The adapter is a **plain standalone class** (it does not need to inherit any base
-class) with the constructor signature ``(cfg, rank)``. It must implement
-``build_request`` / ``parse_response`` and declare ``action_path``:
+The adapter subclasses :class:`SGLangEmbodiedAdapter` from
+``rlinf/models/embodiment/sglang_adapter.py`` with the constructor signature
+``(cfg, rank)``. Implement ``build_request`` and ``parse_response`` and declare
+``action_path`` (and set ``supports_router = False`` if the adapter relies on
+per-server session state):
 
 .. code-block:: python
 
-   import numpy as np
    import torch
+   from rlinf.models.embodiment.sglang_adapter import SGLangEmbodiedAdapter
 
 
-   class YourSglangAdapter:
+   class YourSglangAdapter(SGLangEmbodiedAdapter):
        action_path = "/v1/actions/generations"
 
        def __init__(self, cfg, rank):
@@ -201,10 +175,11 @@ class) with the constructor signature ``(cfg, rank)``. It must implement
 
 Interface contract:
 
-- **HTTP is handled by the worker** — the adapter does not hold an HTTP client
-  and does not send requests. The worker calls ``build_request`` to get the
-  payload, sends it via ``http_client.post(adapter.action_path, payload,
-  msgpack=True, ...)``, then hands the response to ``parse_response``;
+- **HTTP transport lives on ``SGLangEmbodiedAdapter``** — the worker hands its
+  ``InferenceHTTPClient`` to ``adapter.async_request_actions`` (or
+  ``async_build_request`` + ``async_send_request`` when ``request_groups`` splits
+  a batch), which runs ``build_request`` off the event loop, posts to
+  ``action_path`` (or ``rollout_path`` for training), and parses the response;
 - The ``env_obs`` passed to ``build_request`` is a dictionary of environment
   observations organized by batch; general fields include ``main_images`` and
   ``task_descriptions``, and the model can also use ``wrist_images``, ``states``
@@ -212,14 +187,13 @@ Interface contract:
   body sent to the server, and ``state`` is any intermediate value to be reused
   in ``parse_response``;
 - ``parse_response`` returns ``(actions, info)``: ``actions`` must be a Tensor
-  with shape ``[N, num_action_chunks, action_dim]``; ``info`` is an additional
-  information dictionary reserved for future training extensions — currently it
-  can return ``prev_logprobs``, ``prev_values`` and ``forward_inputs`` as
-  DreamZero does;
-- The current SGLang embodied Worker is used only for evaluation. If the adapter
-  does not support training mode, it should explicitly raise
-  ``NotImplementedError`` when ``mode != "eval"``. Support for using SGLang as a
-  rollout worker for embodied model training is planned.
+  with shape ``[N, num_action_chunks, action_dim]``; ``info`` carries
+  ``prev_logprobs``, ``prev_values``, and ``forward_inputs``;
+- For eval-only adapters, leave ``supports_training = False`` (the default on
+  ``SGLangEmbodiedAdapter``). To enable RL training rollout and live weight sync
+  (as in ``Cosmos3SGLangAdapter``), set ``supports_training = True`` and
+  implement ``validate_training``, ``map_weight_name``, ``create_weight_target``,
+  and ``parse_rollout_response``.
 
 .. important::
 
@@ -626,11 +600,8 @@ Cluster and Runner Configuration
 Field descriptions:
 
 - ``component_placement`` specifies how env and rollout are placed;
-- ``task_type: embodied_eval`` selects ``EmbodiedEvalRunner``;
-- ``only_eval: True`` is required, and ``SGLangEmbodiedWorker`` asserts it;
-- ``ckpt_path`` can be ``null`` in this path, and the Server loads weights from
-  ``rollout.model.model_path``;
-- The current script supports evaluation only, not training.
+- ``task_type: embodied_eval`` selects ``EmbodiedEvalRunner`` (RL training uses ``task_type: embodied`` and ``only_eval: false``);
+- ``ckpt_path`` can be ``null`` when the server loads weights directly from ``rollout.model.model_path``; set it to overlay an RLinf checkpoint onto the server during evaluation.
 
 
 Environment Parallelism and Evaluation Steps
@@ -681,24 +652,19 @@ SGLang Worker Dispatch
 
      sglang:
        serving_mode: "embodied"      # rollout worker = SGLangEmbodiedWorker
-       server_type: "embodied"      # server dispatch = embodied (via dispatch_launch)
-       launch_server: true          # driver launches the server group
-       launch_router: false         # no router (action endpoint not forwarded by router)
-       group_name: SGLangServerGroup
+       backend_type: server
+       launch_server: true           # each worker owns its server subprocess
+       launch_router: false          # set true to front workers with an SGLang router
        router_group_name: SGLangRouterGroup
 
 - ``rollout_backend: sglang`` selects the SGLang backend;
-- ``serving_mode: embodied`` selects the rollout worker = ``SGLangEmbodiedWorker``;
-- ``server_type: embodied`` selects the server dispatch branch = ``embodied``
-  (VLA / diffusion, via ``sglang.multimodal_gen``'s ``dispatch_launch``).
-  ``serving_mode`` and ``server_type`` are orthogonal: the former controls how
-  the worker connects, the latter which sglang dispatch the server subprocess
-  runs; both take effect within the same ``SGLangServerWorker`` class — there
-  is no longer a separate server class;
-- ``launch_router: false`` is required: the sglang router only forwards fixed
-  LLM endpoints (``/generate``, ``/v1/chat/completions``), not the dreamzero
-  ``/v1/actions/generations``, so the embodied path disables the router and
-  rollout workers hit their rank-assigned server URL directly.
+- ``serving_mode: embodied`` selects ``SGLangEmbodiedWorker``, which launches an
+  embodied SGLang Diffusion server (via ``sglang.multimodal_gen``'s
+  ``dispatch_launch``) on the GPUs assigned to that worker;
+- ``launch_router: false`` sends generation requests directly to each worker's
+  local loopback server. Adapters that do not depend on per-server session state
+  can enable ``launch_router: true`` when using a router build that forwards
+  ``/v1/actions/generations`` and ``/rollout/generate``.
 
 ``pipeline_stage_num`` participates in calculating the eval batch size for each rollout rank;
 ``return_logprobs: false`` indicates that policy probabilities are not needed for evaluation.
@@ -707,9 +673,9 @@ SGLang Worker Dispatch
 Server Startup and Parallel Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``rollout.sglang`` top level holds RLinf-private keys (HTTP client, parallelism,
-launch toggles); the ``server`` sub-block holds the ``ServerArgs`` fields
-forwarded to sglang:
+``rollout.sglang`` top level holds RLinf-private keys (HTTP client, launch
+toggles, router settings); the ``server`` sub-block holds the ``ServerArgs``
+fields forwarded to SGLang:
 
 .. code-block:: yaml
 
@@ -719,14 +685,12 @@ forwarded to sglang:
        pipeline_parallel_size: 1
        launch_server: true
        launch_router: false
-       server_type: embodied
        seed: 1140
 
        server:                       # → ServerArgs.from_kwargs
          backend: sglang
          pipeline_class_name: DreamZeroPipeline
          tp_size: ${..tensor_parallel_size}
-         num_gpus: 1
          attention_backend: TORCH_SDPA
          dit_cpu_offload: false
          cfg_parallel_degree: 1
@@ -744,33 +708,24 @@ Top-level private-key fields:
 
    * - Field
      - Meaning
-   * - ``tensor_parallel_size``
-     - TP size per server engine; the launcher packs hardware ranks into engines
-       of ``tp×pp`` (4 GPUs tp=2 → two 2-GPU servers; tp=4 → one 4-GPU server)
-   * - ``pipeline_parallel_size``
-     - PP size per server engine
    * - ``launch_server`` / ``launch_router``
-     - Whether the driver launches the server group / router
-   * - ``server_type``
-     - server dispatch branch: ``srt`` / ``embodied``
+     - Whether each rollout worker launches its server subprocess (must be ``true``) and whether the driver launches an optional router
    * - ``seed``
-     - Random seed used for each action request
+     - Random seed used for each action evaluation request
 
 The ``server`` sub-block fields are ``ServerArgs`` fields (``backend``,
-``attention_backend``, ``tp_size``, ``num_gpus``, ``dit_cpu_offload``,
-``cfg_parallel_degree``, ``sp_degree``, ...); the ``pipeline_config`` sub-block
-holds ``DreamZeroPipelineConfig`` fields (``cfg_scale``,
-``default_num_inference_steps``, ``dreamzero_*``, ...). Refer to the
-``ServerArgs`` / ``DreamZeroPipelineConfig`` of the SGLang version in use for
-the exact field meanings.
+``attention_backend``, ``dp_size``, ``tp_size``, ``sp_degree``,
+``cfg_parallel_degree``, ``dit_cpu_offload``, ...); the ``pipeline_config``
+sub-block holds ``DreamZeroPipelineConfig`` fields (``cfg_scale``,
+``default_num_inference_steps``, ``dreamzero_*``, ...). Omit ``server.num_gpus``:
+``EmbodiedComponentPlacement`` derives each server's GPU width automatically from
+``dp_size * tp_size * sp_degree * cfg_parallel_degree`` and packs the rollout
+hardware ranks into one worker/server per instance.
 
-With multiple rollout ranks, ``launch_sglang_router_and_server`` packs the
-hardware ranks into multiple server engines of
-``tensor_parallel_size × pipeline_parallel_size`` and launches them in parallel.
-**The HTTP port and master_port are allocated by the worker's PortLock as free
-ports serially** — do not set ``host`` / ``port`` / ``port_base`` /
+**The HTTP port, master_port, and scheduler_ports are allocated by the worker's
+PortLock as free ports** — do not set ``host`` / ``port`` / ``port_base`` /
 ``master_port_base`` in YAML; this avoids concurrent ranks grabbing the same
-port (an EADDRINUSE on master_port=30005 was seen before).
+port.
 
 
 HTTP Client Configuration

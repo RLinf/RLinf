@@ -129,7 +129,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple" "robolab" "dexjoco")
 
 #=======================Utility Functions=======================
@@ -158,13 +158,15 @@ Common options:
                            --platform amd, defaults to the lowest torch version with a matching
                            +rocm<version> wheel on https://download.pytorch.org/whl/torch/.
     --engine <name>        Rollout engine: sglang or vllm for target=agentic (default: sglang),
-                           or phyai for target=embodied (requires --model openpi --env libero).
+                           or sglang / phyai for target=embodied (phyai requires
+                           --model openpi --env libero; sglang supports standalone
+                           --env libero|maniskill_libero or --model cosmos3).
                            One venv holds one engine -- they pin the
                            same kernel libraries to different versions, so run install.sh
                            twice with different --venv to get both.
     --sglang <version>     Override sglang version (e.g., 0.5.4). Must be one of the
                            versions in requirements/agentic/; torch is derived from it.
-                           Applies to target agentic and to --model sglang / qwen3_vl.
+                           Applies to target agentic, embodied --engine sglang, and --model qwen3_vl.
     --vllm <version>       Override vllm version (e.g., 0.23.0). Must be one of the
                            versions in requirements/agentic/.
     --transformers <version> Override transformers version (e.g., 4.57.1). Patches
@@ -376,24 +378,41 @@ validate_engine() {
     [ -z "$ENGINE" ] && return 0
 
     if [ "$TARGET" = "embodied" ]; then
-        if [ "$ENGINE" != "phyai" ]; then
-            echo "target=embodied supports only --engine phyai." >&2
-            exit 1
-        fi
-        if [ "$MODEL" != "openpi" ] || [ "$ENV_NAME" != "libero" ]; then
-            echo "--engine phyai currently requires --model openpi --env libero." >&2
-            exit 1
-        fi
-        if [ "$PLATFORM" != "nvidia" ]; then
-            echo "--engine phyai currently requires --platform nvidia." >&2
-            exit 1
-        fi
-        local py_major py_minor _py_patch
-        IFS='.' read -r py_major py_minor _py_patch <<< "$PYTHON_VERSION"
-        if [ "$py_major" -lt 3 ] || { [ "$py_major" -eq 3 ] && [ "$py_minor" -lt 12 ]; }; then
-            echo "--engine phyai requires Python >=3.12 (got ${PYTHON_VERSION})." >&2
-            exit 1
-        fi
+        case "$ENGINE" in
+            phyai)
+                if [ "$MODEL" != "openpi" ] || [ "$ENV_NAME" != "libero" ]; then
+                    echo "--engine phyai currently requires --model openpi --env libero." >&2
+                    exit 1
+                fi
+                if [ "$PLATFORM" != "nvidia" ]; then
+                    echo "--engine phyai currently requires --platform nvidia." >&2
+                    exit 1
+                fi
+                local py_major py_minor _py_patch
+                IFS='.' read -r py_major py_minor _py_patch <<< "$PYTHON_VERSION"
+                if [ "$py_major" -lt 3 ] || { [ "$py_major" -eq 3 ] && [ "$py_minor" -lt 12 ]; }; then
+                    echo "--engine phyai requires Python >=3.12 (got ${PYTHON_VERSION})." >&2
+                    exit 1
+                fi
+                ;;
+            sglang)
+                if [ -n "$MODEL" ] && [ "$MODEL" != "cosmos3" ]; then
+                    echo "--engine sglang under target=embodied currently supports --model cosmos3 or no --model (got --model ${MODEL})." >&2
+                    exit 1
+                fi
+                case "$ENV_NAME" in
+                    libero|maniskill_libero) ;;
+                    *)
+                        echo "--engine sglang under target=embodied currently requires --env libero or --env maniskill_libero (got '${ENV_NAME}')." >&2
+                        exit 1
+                        ;;
+                esac
+                ;;
+            *)
+                echo "target=embodied supports only --engine sglang or --engine phyai." >&2
+                exit 1
+                ;;
+        esac
     elif [ "$TARGET" = "agentic" ]; then
         if [ "$ENGINE" = "phyai" ]; then
             echo "--engine phyai is supported only with target=embodied." >&2
@@ -1525,7 +1544,7 @@ restore_pyproject() {
 }
 
 AGENTIC_DEFAULT_ENGINE="sglang"
-# agentic is validated with 0.5.12.post1 (torch 2.11); `--model sglang` uses 0.5.19 (torch 2.13).
+# agentic is validated with 0.5.12.post1 (torch 2.11); embodied `--engine sglang` uses 0.5.19 (torch 2.13).
 AGENTIC_DEFAULT_SGLANG_VERSION="0.5.12.post1"
 EMBODIED_SGLANG_VERSION="0.5.19"
 
@@ -1612,7 +1631,23 @@ install_engine_requirements() {
             "$req" > "$rewritten_req"
         pip_req="$rewritten_req"
     fi
-    env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" -r "$pip_req"
+    # Keep the venv's already-installed torch stack pinned so extra-index
+    # resolution cannot silently downgrade torch/torchvision/triton.
+    local constraint_file="" constraint_args=()
+    constraint_file=$(mktemp)
+    python - <<'EOF' > "$constraint_file"
+import importlib.metadata as md
+for pkg in ("torch", "torchvision", "torchaudio", "torchcodec", "triton"):
+    try:
+        print(f"{pkg}=={md.version(pkg)}")
+    except md.PackageNotFoundError:
+        pass
+EOF
+    if [ -s "$constraint_file" ]; then
+        constraint_args=(-c "$constraint_file")
+    fi
+    env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" "${constraint_args[@]}" -r "$pip_req"
+    rm -f "$constraint_file"
     [ -n "$rewritten_req" ] && rm -f "$rewritten_req"
     if [ -n "$engine_specs" ]; then
         engine_req=$(mktemp)
@@ -1672,7 +1707,7 @@ apply_agentic_torch_default() {
     local torch_ver
     torch_ver=$(agentic_torch_for_engine)
     if [ "$torch_ver" = "2.13.0" ]; then
-        echo "[install.sh] $(effective_engine) $(effective_engine_version) runs on torch ${torch_ver}, which the agentic Megatron stack is not built for; it is installed by 'embodied --model sglang'." >&2
+        echo "[install.sh] $(effective_engine) $(effective_engine_version) runs on torch ${torch_ver}, which the agentic Megatron stack is not built for; it is installed by 'embodied --engine sglang'." >&2
         exit 1
     fi
     # --torch wins; on AMD, configure_amd derives torch from the ROCm version.
@@ -1688,18 +1723,21 @@ apply_model_default_torch() {
     [ "$TARGET" = "embodied" ] || return 0
     [ -z "$TORCH_VERSION" ] || return 0
     local model_torch="-"
-    case "$MODEL" in
-        openpi)
-            if [ "$ENV_NAME" = "yam" ]; then
-                # OpenPI 0.1.1 requires torch 2.7.1; sync its matching vision/codec stack.
-                model_torch="2.7.1"
-            fi
-            ;;
-        sglang) model_torch=$(sglang_torch_version "${SGLANG_VERSION:-$EMBODIED_SGLANG_VERSION}") ;;
-    esac
+    if [ "$ENGINE" = "sglang" ]; then
+        model_torch=$(sglang_torch_version "${SGLANG_VERSION:-$EMBODIED_SGLANG_VERSION}")
+    else
+        case "$MODEL" in
+            openpi)
+                if [ "$ENV_NAME" = "yam" ]; then
+                    # OpenPI 0.1.1 requires torch 2.7.1; sync its matching vision/codec stack.
+                    model_torch="2.7.1"
+                fi
+                ;;
+        esac
+    fi
     [ "$model_torch" != "-" ] || return 0
     TORCH_VERSION="$model_torch"
-    echo "[install.sh] Model '${MODEL}' pins torch ${TORCH_VERSION}; overriding the project default (pass --torch to override)."
+    echo "[install.sh] Embodied target (${MODEL:-env-only}${ENGINE:+, engine=${ENGINE}}) pins torch ${TORCH_VERSION}; overriding the project default (pass --torch to override)."
 }
 
 apply_torch_override() {
@@ -2233,7 +2271,6 @@ install_natten() {
     # torch x cuda x python combo. Build the wheel name from the installed
     # torch / cuda / python, like install_apex / install_flash_attn.
     # Example: natten-0.21.6+torch2110cu130-cp311-cp311-linux_x86_64.whl
-    local natten_version="0.21.6"
     local py_major py_minor
     py_major=$(python - <<'EOF'
 import sys
@@ -2254,6 +2291,10 @@ import torch
 print(torch.__version__.split("+")[0].replace(".", ""))
 EOF
 )
+    local natten_version="0.21.6"
+    if [ "${torch_full:-0}" -ge 2130 ] 2>/dev/null; then
+        natten_version="0.21.7"
+    fi
     cu_full=$(python - <<'EOF'
 import torch
 v = (torch.version.cuda or "").split(".")
@@ -3414,13 +3455,23 @@ install_fastwam_model() {
 
 install_cosmos3_deps() {
     local cosmos_path
-    cosmos_path=$(clone_or_reuse_repo COSMOS_FRAMEWORK_PATH "$VENV_DIR/cosmos-framework" https://github.com/NVIDIA/cosmos-framework.git)
+    # Skip Git LFS demo media (assets/, *.mp4, *.png); training only uses Python code and JSON stats.
+    cosmos_path=$(GIT_LFS_SKIP_SMUDGE=1 clone_or_reuse_repo COSMOS_FRAMEWORK_PATH "$VENV_DIR/cosmos-framework" https://github.com/NVIDIA/cosmos-framework.git)
     if [ -z "${COSMOS_FRAMEWORK_PATH:-}" ]; then
-        # Revision the Cosmos3 examples are validated with.
-        git -C "$cosmos_path" checkout "${COSMOS3_GIT_REF:-0460be81f16883aa380e716dc6f58c1189481172}" >&2
+        # Revision the Cosmos3 Nano and Edge examples are validated with.
+        GIT_LFS_SKIP_SMUDGE=1 git -C "$cosmos_path" checkout "${COSMOS3_GIT_REF:-09f23119ea92c707207bba55565e7a09d16896a2}" >&2
     fi
 
-    uv pip install -r "$SCRIPT_DIR/embodied/models/cosmos3.txt"
+    if [ "$ENGINE" = "sglang" ]; then
+        # lerobot==0.3.3 caps torch<2.8.0 in metadata; install it --no-deps
+        # alongside its non-torch runtime deps so the SGLang torch stack stays intact.
+        sed '/^lerobot==/d' "$SCRIPT_DIR/embodied/models/cosmos3.txt" \
+            | uv pip install -r -
+        uv pip install "datasets<=3.6.0,>=2.19.0" "draccus==0.10.0" "jsonlines>=4.0.0" "deepdiff<9.0.0,>=7.0.1"
+        uv pip install --no-deps "lerobot==0.3.3"
+    else
+        uv pip install -r "$SCRIPT_DIR/embodied/models/cosmos3.txt"
+    fi
     python -m pip install -e "$cosmos_path" --no-deps --ignore-requires-python
 
     # Cosmos3 targets Python 3.12; on 3.11 `from typing import override` fails
@@ -3454,19 +3505,20 @@ install_cosmos3_model() {
             install_common_embodied_deps
             install_${ENV_NAME}_env
             install_cosmos3_deps
-            install_flash_attn
             ;;
         "")
             create_and_sync_venv
             install_common_embodied_deps
             install_cosmos3_deps
-            install_flash_attn
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for Cosmos3 model." >&2
             exit 1
             ;;
     esac
+    if [ "$ENGINE" != "sglang" ]; then
+        install_flash_attn
+    fi
 }
 
 install_diffusion_model() {
@@ -3507,22 +3559,20 @@ install_qwen3_vl_model() {
     install_flash_attn
 }
 
-# SGLang server venv for embodied evaluation and action RL.
-install_sglang_model() {
-    create_and_sync_venv
-    install_common_embodied_deps
-
-    case "$ENV_NAME" in
-        maniskill_libero|libero)
-            install_${ENV_NAME}_env
-            ;;
-        *)
-            echo "Environment '$ENV_NAME' is not supported for the SGLang model server." >&2
-            exit 1
-            ;;
-    esac
-
-    install_sglang "${SGLANG_VERSION:-$EMBODIED_SGLANG_VERSION}" diffusion
+# SGLang Diffusion runtime for embodied evaluation and action RL (--engine sglang).
+install_embodied_sglang_runtime() {
+    local version="${SGLANG_VERSION:-$EMBODIED_SGLANG_VERSION}"
+    install_sglang "$version" diffusion
+    if [ "$MODEL" = "cosmos3" ] || [ -z "$MODEL" ]; then
+        local sglang_path
+        sglang_path=$(clone_or_reuse_repo SGLANG_COSMOS3_PATH "$VENV_DIR/sglang-cosmos3" https://github.com/FxxxxU/sglang.git)
+        if [ -z "${SGLANG_COSMOS3_PATH:-}" ]; then
+            git -C "$sglang_path" checkout "${SGLANG_COSMOS3_GIT_REF:-cf565fafbcb833d7f156f08ff29bd9e5e65c2b3a}" >&2
+        fi
+        uv pip install "setuptools>=61.0" "setuptools-scm>=8.0" wheel
+        SETUPTOOLS_SCM_PRETEND_VERSION="$version" SGLANG_BUILD_RUST_EXTS=none \
+            uv pip install --no-deps --no-build-isolation -e "$sglang_path/python"
+    fi
     uv pip uninstall pynvml || true
 }
 
@@ -4916,9 +4966,6 @@ main() {
                 qwen3_vl)
                     install_qwen3_vl_model
                     ;;
-                sglang)
-                    install_sglang_model
-                    ;;
                 diffusion)
                     install_diffusion_model
                     ;;
@@ -4931,6 +4978,8 @@ main() {
             esac
             if [ "$ENGINE" = "phyai" ]; then
                 install_phyai_runtime
+            elif [ "$ENGINE" = "sglang" ]; then
+                install_embodied_sglang_runtime
             fi
             ;;
         agentic)

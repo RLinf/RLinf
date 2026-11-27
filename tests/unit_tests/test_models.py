@@ -5330,6 +5330,7 @@ def test_cosmos3_sglang_training_returns_nft_endpoints_without_logprobs():
     assert torch.isfinite(inputs["nft_joint_noise"]).all()
     assert info["prev_logprobs"].shape == (2, 2, 7)
     assert not info["prev_logprobs"].any()
+    assert info["prev_values"] is None
     assert not {"latent", "next_latent", "step"}.intersection(inputs)
 
 
@@ -7192,3 +7193,159 @@ def test_prefix_eval_config_validates_without_actor(monkeypatch, config_name):
     del cfg.actor
     validate_embodied_cfg(cfg)
     assert isinstance(get_model(cfg.rollout.model), PrefixPolicy)
+
+
+def test_cosmos3_action_codec_validation_and_1d_array():
+    from rlinf.models.embodiment.cosmos3.action_codec import Cosmos3ActionCodec
+
+    with pytest.raises(ValueError, match="Invalid Cosmos3 size"):
+        Cosmos3ActionCodec.parse_size("bogus")
+    with pytest.raises(ValueError, match="positive"):
+        Cosmos3ActionCodec.parse_size("0x192")
+
+    codec = Cosmos3ActionCodec(
+        {
+            "size": "320x192",
+            "raw_action_dim": 10,
+            "num_action_chunks": 2,
+            "action_normalization": "unknown_norm",
+        }
+    )
+    codec.stats = {
+        "q01": np.zeros(10, dtype=np.float32),
+        "q99": np.ones(10, dtype=np.float32),
+    }
+    with pytest.raises(ValueError, match="Unsupported Cosmos3 action_normalization"):
+        codec.denormalize(np.zeros((2, 10), dtype=np.float32))
+
+    valid_codec = Cosmos3ActionCodec(
+        {"size": "320x192", "raw_action_dim": 10, "num_action_chunks": 2}
+    )
+    one_d = np.array(
+        [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0], dtype=np.float32
+    )
+    env_action = valid_codec.action_to_env(one_d)
+    assert env_action.shape == (2, 7)
+    with pytest.raises(ValueError, match="at least 10 action channels"):
+        valid_codec.action_to_env(np.zeros((2, 7), dtype=np.float32))
+    with pytest.raises(ValueError, match="non-finite"):
+        valid_codec.action_to_env(np.full((2, 10), np.nan, dtype=np.float32))
+
+    obs_mismatch = {
+        "main_images": np.zeros((1, 8, 8, 3), dtype=np.uint8),
+        "wrist_images": np.zeros((1, 4, 4, 3), dtype=np.uint8),
+    }
+    with pytest.raises(ValueError, match="matching shapes"):
+        Cosmos3ActionCodec.prepare_images(obs_mismatch, 1, 16, 16)
+
+
+def test_cosmos3_action_model_load_state_dict_normalizes_wrapper_prefixes():
+    from rlinf.models.embodiment.cosmos3.cosmos3_action_model import Cosmos3ActionModel
+
+    class _WrappedLayer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self._checkpoint_wrapped_module = torch.nn.Linear(2, 2, bias=False)
+
+    class _FakeOmni(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.net = torch.nn.ModuleDict({"layer": _WrappedLayer()})
+
+    model = Cosmos3ActionModel(_FakeOmni(), ema_enabled=False)
+    expected = torch.full((2, 2), 5.0)
+    incompatible = model.load_state_dict(
+        {"omni.net.layer.weight": expected, "omni.net_ema.layer.weight": expected},
+        strict=True,
+    )
+    assert not incompatible.missing_keys
+    assert not incompatible.unexpected_keys
+    torch.testing.assert_close(
+        model.omni.net["layer"]._checkpoint_wrapped_module.weight, expected
+    )
+    model.omni.tensor_kwargs = {"device": 0}
+    assert model._compute_device() == torch.device("cuda", 0)
+    model.omni.tensor_kwargs = {"device": "0"}
+    assert model._compute_device() == torch.device("cuda", 0)
+    model.omni.tensor_kwargs = {"device": torch.device("cpu")}
+    assert model._compute_device() == torch.device("cpu")
+
+
+def test_cosmos3_convert_checkpoint_export_from_template_handles_wrapped_keys(tmp_path):
+    from safetensors.torch import load_file, save_file
+
+    from toolkits.cosmos3.convert_checkpoint import export_from_template
+
+    template = tmp_path / "template"
+    for subdir in ("transformer", "text_tokenizer", "vae", "scheduler"):
+        (template / subdir).mkdir(parents=True)
+    (template / "model_index.json").write_text('{"_class_name": "Cosmos3"}')
+    (template / "transformer" / "config.json").write_text("{}")
+    save_file(
+        {
+            "layers.0.self_attn.add_q_proj.weight": torch.zeros(
+                2, 2, dtype=torch.bfloat16
+            ),
+            "scale": torch.tensor(0.0, dtype=torch.float32),
+        },
+        template / "transformer" / "diffusion_pytorch_model.safetensors",
+    )
+    src = tmp_path / "full_weights.pt"
+    torch.save(
+        {
+            "omni.net.language_model.model.layers.0._checkpoint_wrapped_module.self_attn.q_proj_moe_gen.weight": torch.full(
+                (2, 2), 3.0, dtype=torch.float32
+            ),
+            "omni.net.scale": torch.tensor([2.5], dtype=torch.float32),
+        },
+        src,
+    )
+    out = tmp_path / "exported"
+    exported = export_from_template(src, template, out, use_ema=False)
+    tensors = load_file(
+        exported / "transformer" / "diffusion_pytorch_model.safetensors"
+    )
+    assert tensors["layers.0.self_attn.add_q_proj.weight"].dtype == torch.bfloat16
+    torch.testing.assert_close(
+        tensors["layers.0.self_attn.add_q_proj.weight"],
+        torch.full((2, 2), 3.0, dtype=torch.bfloat16),
+    )
+    assert tensors["scale"].shape == ()
+    assert tensors["scale"].item() == 2.5
+
+
+def test_cosmos3_sglang_adapter_preserves_seed_zero_and_independent_nft_seed():
+    from rlinf.models.embodiment.cosmos3.sglang_adapter import Cosmos3SGLangAdapter
+
+    cfg = OmegaConf.create(
+        {
+            "env": {"eval": {"env_type": "libero"}},
+            "rollout": {
+                "sglang": {"seed": 0, "server": {"batching_max_size": 4}},
+                "model": {
+                    "model_type": "cosmos3",
+                    "size": "320x192",
+                    "num_action_chunks": 16,
+                    "num_frames": 17,
+                    "raw_action_dim": 10,
+                    "action_dim": 7,
+                    "domain_name": "libero",
+                },
+            },
+        }
+    )
+    adapter = Cosmos3SGLangAdapter(cfg, rank=0)
+    obs = {
+        "task_descriptions": ["pick up cup"],
+        "main_images": np.zeros((1, 16, 16, 3), dtype=np.uint8),
+    }
+    payload, _ = adapter.build_request(obs, mode="eval")
+    assert payload["parameters"]["seed"] == 0
+
+    ctx = adapter.prepare_request_context(obs, mode="train")
+    assert "seed" in ctx and "nft_noise_seed" in ctx
+    train_payload, state = adapter.build_request_with_context(
+        obs, mode="train", request_context={"seed": 11, "nft_noise_seed": 22}
+    )
+    assert train_payload["seed"] == 11
+    assert state["nft_noise_seed"] == 22

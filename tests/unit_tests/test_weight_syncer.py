@@ -13,11 +13,9 @@
 # limitations under the License.
 
 import asyncio
-import base64
 import copy
 import inspect
 import logging
-import pickle
 import unittest
 from collections import OrderedDict
 from types import MethodType
@@ -2650,7 +2648,7 @@ def test_embodied_control_reaches_all_dp_replicas(
             else manager.sync_hf_weight
         )
         if failure:
-            with pytest.raises((HTTPException, RuntimeError)):
+            with pytest.raises(HTTPException):
                 await asyncio.wait_for(call(request, None), timeout=2)
         else:
             assert await asyncio.wait_for(call(request, None), timeout=2) == {
@@ -2774,115 +2772,216 @@ def test_sglang_weight_target_propagates_serving_weight_update_failure(tmp_path)
         target.finish_sync()
 
 
-@pytest.mark.parametrize(
-    "method", ["run_task_method", "sync_hf_weight", "abort_generation"]
-)
-@pytest.mark.parametrize("token", [None, "wrong-server-token"])
-def test_sglang_control_routes_reject_before_unpickling(method, token):
-    fastapi = pytest.importorskip("fastapi")
-    testclient = pytest.importorskip("fastapi.testclient")
-    FastAPI = fastapi.FastAPI
-    TestClient = testclient.TestClient
+def test_receive_hf_weights_drains_remaining_buckets_on_error():
+    from rlinf.hybrid_engines.sglang.common.weight_target import receive_hf_weights
 
-    from rlinf.hybrid_engines.sglang.common.http_routes import add_rlinf_routes
+    buckets = [
+        {"bucket_length": 3, "weight_version": 5, "w0": torch.ones(2)},
+        {"w1": torch.ones(2)},
+        {"w2": torch.ones(2)},
+    ]
+    log: list[str] = []
 
-    manager = AsyncMock()
-    app = FastAPI()
-    add_rlinf_routes(app, control_token="server-token", manager=manager)
-    headers = {} if token is None else {"X-RLinf-Control-Token": token}
-    # An unauthenticated decode would raise and produce HTTP 500, not 401.
-    body = {"payload_b64": base64.b64encode(b"not a pickle").decode()}
-    with TestClient(app, raise_server_exceptions=False) as client:
-        response = client.post(f"/rlinf/{method}", json=body, headers=headers)
-    assert response.status_code == 401
-    getattr(manager, method).assert_not_called()
+    class _Handle:
+        def __init__(self, idx, payload):
+            self._idx = idx
+            self._payload = payload
+
+        def wait(self):
+            log.append(f"wait:{self._idx}")
+            return self._payload
+
+    class _FakeWorker:
+        def __init__(self):
+            self._index = 0
+
+        def recv(self, *, src_group_name, src_rank, async_op=False):
+            del src_group_name, src_rank
+            idx = self._index
+            self._index += 1
+            log.append(f"recv:{idx}:async={async_op}")
+            payload = buckets[idx]
+            return _Handle(idx, payload) if async_op else payload
+
+    loaded: list[dict] = []
+
+    def fail_on_first(bucket):
+        loaded.append(bucket)
+        raise RuntimeError("boom on bucket 0")
+
+    with pytest.raises(RuntimeError, match="boom on bucket 0"):
+        receive_hf_weights(_FakeWorker(), "ActorGroup", 0, fail_on_first)
+    assert len(loaded) == 1
+    assert log == [
+        "recv:0:async=False",
+        "recv:1:async=True",
+        "wait:1",
+        "recv:2:async=True",
+        "wait:2",
+    ]
 
 
-@pytest.mark.parametrize(
-    "method", ["run_task_method", "sync_hf_weight", "abort_generation"]
-)
-def test_sglang_control_routes_accept_authenticated_requests(method):
-    fastapi = pytest.importorskip("fastapi")
-    testclient = pytest.importorskip("fastapi.testclient")
-    FastAPI = fastapi.FastAPI
-    TestClient = testclient.TestClient
+def test_sglang_weight_target_bind_patch_model_edge_cases(tmp_path):
+    from safetensors.torch import save_file
 
-    from rlinf.hybrid_engines.sglang.common.http_routes import add_rlinf_routes
+    pytest.importorskip("sglang.multimodal_gen.runtime.loader.utils")
+    from rlinf.hybrid_engines.sglang.common.weight_target import SGLangWeightTarget
 
-    manager = AsyncMock()
-    getattr(manager, method).return_value = {"version": 7}
-    app = FastAPI()
-    add_rlinf_routes(app, control_token="server-token", manager=manager)
-    obj = {"actor_rank": 2}
-    body = {"payload_b64": base64.b64encode(pickle.dumps(obj)).decode()}
-    with TestClient(app) as client:
-        response = client.post(
-            f"/rlinf/{method}",
-            json=body,
-            headers={"X-RLinf-Control-Token": "server-token"},
-        )
-    assert response.status_code == 200
-    getattr(manager, method).assert_awaited_once()
-    assert getattr(manager, method).call_args.args[0] == obj
-    if method == "run_task_method":
-        assert pickle.loads(base64.b64decode(response.json()["payload_b64"])) == {
-            "version": 7
+    class _TopFused(torch.nn.Module):
+        param_names_mapping = {
+            r"^q\.weight$": ("w", 0, None),
+            r"^k\.weight$": ("w", 1, None),
         }
-    elif method == "sync_hf_weight":
-        assert response.json() == {"status": "ok", "version": 7}
+
+        def __init__(self):
+            super().__init__()
+            self.output_sizes = [2, 3]
+            self.w = torch.nn.Parameter(torch.zeros(5, 4))
+            self.w.output_dim = 0
+
+    ckpt_dir = tmp_path / "top_fused"
+    ckpt_dir.mkdir()
+    save_file(
+        {"q.weight": torch.ones(2, 4), "k.weight": torch.ones(3, 4)},
+        ckpt_dir / "model.safetensors",
+    )
+    target = SGLangWeightTarget(
+        lambda m, t: None,
+        checkpoint_dir=ckpt_dir,
+        target_module="transformer",
+        name_mapper=lambda n: n,
+    )
+    mod = _TopFused()
+    target.bind_patch_model(mod)
+    views = target.state_dict()
+    assert views["q.weight"].shape == (2, 4)
+    assert views["k.weight"].shape == (3, 4)
+    views["k.weight"].fill_(7.0)
+    torch.testing.assert_close(mod.w[2:], torch.full((3, 4), 7.0))
+
+    class _BoolShard(torch.nn.Module):
+        param_names_mapping = {
+            r"^q\.weight$": ("w", True, None),
+            r"^k\.weight$": ("w", 1, None),
+        }
+
+        def __init__(self):
+            super().__init__()
+            self.output_sizes = [2, 3]
+            self.w = torch.nn.Parameter(torch.zeros(5, 4))
+            self.w.output_dim = 0
+
+    with pytest.raises(ValueError, match="Unsupported fused patch parameter"):
+        target.bind_patch_model(_BoolShard())
+
+    class _AliasedShard(torch.nn.Module):
+        param_names_mapping = {
+            r"^q\.weight$": ("w", 0, None),
+            r"^k\.weight$": ("w", 0, None),
+        }
+
+        def __init__(self):
+            super().__init__()
+            self.output_sizes = [2, 2]
+            self.w = torch.nn.Parameter(torch.zeros(4, 4))
+            self.w.output_dim = 0
+
+    alias_dir = tmp_path / "alias"
+    alias_dir.mkdir()
+    save_file(
+        {"q.weight": torch.ones(2, 4), "k.weight": torch.ones(2, 4)},
+        alias_dir / "model.safetensors",
+    )
+    alias_target = SGLangWeightTarget(
+        lambda m, t: None,
+        checkpoint_dir=alias_dir,
+        target_module="transformer",
+        name_mapper=lambda n: n,
+    )
+    with pytest.raises(ValueError, match="Overlapping fused patch slices"):
+        alias_target.bind_patch_model(_AliasedShard())
 
 
-def test_sglang_control_routes_require_token_at_registration():
-    fastapi = pytest.importorskip("fastapi")
-    FastAPI = fastapi.FastAPI
+def test_prepare_sglang_patch_state_reshapes_promoted_scalars():
+    from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
-    from rlinf.hybrid_engines.sglang.common.http_routes import add_rlinf_routes
+    actor = EmbodiedFSDPActor.__new__(EmbodiedFSDPActor)
+    actor._sglang_patch_keys = ["scale", "weight"]
+    actor._sglang_patch_shapes = {"scale": (), "weight": (2, 2)}
+    prepared = actor._prepare_sglang_patch_state(
+        {"scale": torch.tensor([3.0]), "weight": torch.ones(2, 2)}
+    )
+    assert prepared["scale"].shape == ()
+    assert prepared["scale"].item() == 3.0
+    assert prepared["weight"].shape == (2, 2)
 
-    with pytest.raises(ValueError, match="nonempty authentication token"):
-        add_rlinf_routes(FastAPI(), control_token="")
+
+def test_sglang_server_process_terminate_closes_pipe_and_health_uses_control_url(
+    monkeypatch,
+):
+    import multiprocessing as mp
+    from types import SimpleNamespace
+
+    from rlinf.workers.rollout.sglang import process as process_mod
+
+    parent_pipe, child_pipe = mp.Pipe(duplex=False)
+    child_pipe.close()
+    proc = process_mod.SGLangServerProcess(
+        server_args_kwargs={},
+        acquire_free_port=lambda *_: 0,
+        server_type="embodied",
+        bind_host="127.0.0.1",
+        advertise_host="10.0.0.5",
+        apply_rlinf_patch=False,
+    )
+    proc._ready_pipe = parent_pipe
+    proc._server_proc = None
+    proc.terminate()
+    assert proc._ready_pipe is None
+    assert parent_pipe.closed
+
+    requested_urls: list[str] = []
+    monkeypatch.setattr(
+        process_mod.requests,
+        "get",
+        lambda url, **kwargs: (
+            requested_urls.append(url) or SimpleNamespace(status_code=200)
+        ),
+    )
+    proc._server_proc = SimpleNamespace(is_alive=lambda: True)
+    proc._server_port = 31234
+    assert proc.is_healthy()
+    assert requested_urls == ["http://127.0.0.1:31234/health"]
 
 
-def test_sglang_control_client_limits_token_to_direct_control_requests():
-    from aiohttp import web
+def test_validate_embodied_sglang_weight_sync_cfg():
+    from rlinf.config import validate_embodied_sglang_weight_sync_cfg
 
-    from rlinf.utils.http_client import InferenceHTTPClient
+    valid_cfg = OmegaConf.create(
+        {
+            "rollout": {
+                "rollout_backend": "sglang",
+                "sglang": {"server": {"tp_size": 1}},
+            },
+            "weight_syncer": {
+                "type": "patch",
+                "patch": {"init_sync": {"enabled": True, "prefixes": None}},
+            },
+        }
+    )
+    validate_embodied_sglang_weight_sync_cfg(valid_cfg)
 
-    async def run():
-        requests = []
+    bad_tp = OmegaConf.merge(
+        valid_cfg, {"rollout": {"sglang": {"server": {"tp_size": 2}}}}
+    )
+    with pytest.raises(ValueError, match="tp_size=1"):
+        validate_embodied_sglang_weight_sync_cfg(bad_tp)
 
-        async def handle(request):
-            requests.append(
-                (request.path, request.headers.get("X-RLinf-Control-Token"))
-            )
-            if request.path == "/rlinf/run_task_method":
-                return web.json_response(await request.json())
-            return web.json_response({"status": "ok"})
-
-        app = web.Application()
-        app.router.add_route("*", "/{path:.*}", handle)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        try:
-            site = web.TCPSite(runner, "127.0.0.1", 0)
-            await site.start()
-            url = f"http://127.0.0.1:{runner.addresses[0][1]}"
-            async with InferenceHTTPClient(url, control_token="server-token") as client:
-                assert await client.async_run_task_method({"version": 7}) == {
-                    "version": 7
-                }
-                assert await client.async_sync_hf_weight() == {"status": "ok"}
-                await client.async_abort_generation()
-                await client.async_generate(prompt="hello")
-                assert requests == [
-                    ("/rlinf/run_task_method", "server-token"),
-                    ("/rlinf/sync_hf_weight", "server-token"),
-                    ("/rlinf/abort_generation", "server-token"),
-                    ("/generate", None),
-                ]
-        finally:
-            await runner.cleanup()
-
-    asyncio.run(run())
+    bad_quant = OmegaConf.merge(
+        valid_cfg, {"rollout": {"sglang": {"server": {"quantization": "fp8"}}}}
+    )
+    with pytest.raises(ValueError, match="unquantized"):
+        validate_embodied_sglang_weight_sync_cfg(bad_quant)
 
 
 def test_sglang_server_sync_forwards_pause_mode():
@@ -3029,6 +3128,96 @@ def test_embodied_sglang_patch_hooks_checked_before_launch(monkeypatch, has_hook
     else:
         with pytest.raises(RuntimeError, match="dispatch_launch"):
             SGLangServerProcess(**kwargs)
+
+
+def test_sglang_router_verify_routes_and_embodied_paths():
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from types import SimpleNamespace
+
+    from rlinf.workers.rollout.sglang.launcher import attach_workers_to_router
+    from rlinf.workers.rollout.sglang.router_worker import SGLangRouterWorker
+    from rlinf.workers.rollout.sglang.sglang_embodied_worker import (
+        SGLangEmbodiedWorker,
+    )
+
+    registered_routes = {"/v1/actions/generations", "/rollout/generate"}
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            code = 405 if self.path in registered_routes else 404
+            self.send_response(code)
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        router = SGLangRouterWorker.__new__(SGLangRouterWorker)
+        router._router_url = f"http://127.0.0.1:{server.server_port}"
+
+        router.verify_routes(["/v1/actions/generations", "/rollout/generate"])
+
+        with pytest.raises(RuntimeError, match=r"/missing_route.*HTTP 404"):
+            router.verify_routes(["/v1/actions/generations", "/missing_route"])
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    worker = SGLangEmbodiedWorker.__new__(SGLangEmbodiedWorker)
+    worker.sglang_adapter = SimpleNamespace(
+        action_path="/v1/actions/generations",
+        rollout_path="/rollout/generate",
+    )
+    worker.only_eval = True
+    assert worker.get_required_router_paths() == ["/v1/actions/generations"]
+    worker.only_eval = False
+    assert worker.get_required_router_paths() == [
+        "/v1/actions/generations",
+        "/rollout/generate",
+    ]
+
+    events: list[tuple] = []
+
+    class _Done:
+        def __init__(self, value=None):
+            self._value = value
+
+        def wait(self):
+            return self._value
+
+    class _FakeRouterGroup:
+        def init_router(self):
+            events.append(("init_router",))
+            return _Done()
+
+        def verify_routes(self, paths):
+            events.append(("verify_routes", list(paths)))
+            raise RuntimeError("missing embodied route")
+
+        def register_server(self, url):
+            events.append(("register_server", url))
+            return _Done()
+
+    class _FakeWorkerGroup:
+        def get_server_url(self):
+            events.append(("get_server_url",))
+            return _Done(["http://127.0.0.1:9000"])
+
+    with pytest.raises(RuntimeError, match="missing embodied route"):
+        attach_workers_to_router(
+            _FakeRouterGroup(),
+            _FakeWorkerGroup(),
+            init_router=True,
+            required_routes=["/v1/actions/generations"],
+        )
+    assert events == [
+        ("init_router",),
+        ("verify_routes", ["/v1/actions/generations"]),
+    ]
 
 
 if __name__ == "__main__":

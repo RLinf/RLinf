@@ -195,6 +195,15 @@ class SGLangEmbodiedWorker(Worker):
             raise RuntimeError("Initialize the SGLang server before requesting its URL")
         return self.sglang_server_url
 
+    def get_required_router_paths(self) -> list[str]:
+        """Return the router HTTP paths required by the active adapter and mode."""
+        paths = [self.sglang_adapter.action_path]
+        if not self.only_eval:
+            rollout_path = getattr(self.sglang_adapter, "rollout_path", None)
+            if rollout_path and rollout_path not in paths:
+                paths.append(rollout_path)
+        return paths
+
     async def set_sglang_router_url(self, url: str) -> None:
         """Route generation through the router; retain direct control requests."""
         from rlinf.utils.http_client import InferenceHTTPClient

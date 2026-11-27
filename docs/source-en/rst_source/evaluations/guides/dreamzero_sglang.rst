@@ -1,98 +1,111 @@
 DreamZero SGLang Evaluation
 ===========================
 
-This guide runs DreamZero LIBERO evaluation through the RLinf SGLang embodied backend. Use this path for inference-only evaluation with an SGLang-native DreamZero checkpoint layout.
+Evaluate DreamZero on LIBERO through the RLinf SGLang embodied backend using an SGLang-native DreamZero Diffusers checkpoint.
 
-Compared with the original DreamZero eval path in :doc:`../../examples/embodied/sft_dreamzero`, this backend runs the large DreamZero network in a separately launched ``sglang serve`` process instead of loading it in the rollout worker. The worker still needs the DreamZero transform stack installed, though: ``rlinf.models.embodiment.dreamzero.sglang_adapter`` imports ``rlinf.data.datasets.dreamzero.data_transforms``, which pulls in the ``groot`` package installed by ``install_dreamzero_deps``. The eval driver launches the SGLang server group and pushes each server URL to the rollout workers; each worker is a thin client that posts batched observations to the URL assigned to its rank over the VLA action API, then denormalizes the returned action chunks before stepping LIBERO.
+Compared with the native evaluation path in :doc:`../../examples/embodied/sft_dreamzero`, each rollout worker launches and owns a dedicated SGLang Diffusion server process on its assigned GPUs instead of loading the large DreamZero network inside the worker. The rollout worker retains the DreamZero data transforms, posts batched observations to its local server over the VLA action API, and denormalizes the returned action chunks before stepping LIBERO.
 
 Install the Test Environment
 ----------------------------
 
-DreamZero SGLang evaluation requires CUDA 13.0 or later. Ensure this requirement is met before installing the dependencies below.
+DreamZero SGLang evaluation requires CUDA 13.0 or later.
 
-Create a separate checkout pinned to RLinf v0.4:
+Clone RLinf and install the embodied, LIBERO, and DreamZero dependencies:
+
+.. tab-set::
+
+   .. tab-item:: Global
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git ./RLinf-dreamzero
+         cd ./RLinf-dreamzero
+         bash requirements/install.sh embodied --env libero --model dreamzero --venv .venv-dreamzero
+         source .venv-dreamzero/bin/activate
+
+   .. tab-item:: China Mirror
+
+      .. code-block:: bash
+
+         git clone https://gh-proxy.com/github.com/RLinf/RLinf.git ./RLinf-dreamzero
+         cd ./RLinf-dreamzero
+         bash requirements/install.sh embodied --env libero --model dreamzero --venv .venv-dreamzero --use-mirror
+         source .venv-dreamzero/bin/activate
+
+Clone ``RLinf/dreamzero`` and export ``DREAMZERO_PATH`` if it is not already present in the virtualenv:
 
 .. code-block:: bash
 
-   git clone --branch v0.4 --single-branch https://github.com/RLinf/RLinf.git /path/to/RLinf-dreamzero
-   cd /path/to/RLinf-dreamzero
-   git describe --tags --exact-match
+   git clone https://github.com/RLinf/dreamzero.git ../dreamzero
+   export DREAMZERO_PATH="$PWD/../dreamzero"
 
-The last command should print ``v0.4``.
-
-Install the embodied, LIBERO, and DreamZero dependencies:
+DreamZero serving support is tracked in `sgl-project/sglang#30679 <https://github.com/sgl-project/sglang/pull/30679>`_. Clone that branch and install it with the ``diffusion`` extra:
 
 .. code-block:: bash
 
-   cd /path/to/RLinf-dreamzero
-   bash requirements/install.sh embodied --env libero --model dreamzero \
-     --venv /path/to/dreamzero_test
-
-DreamZero support is still under review in SGLang, so use SGLang code that
-includes `sgl-project/sglang#30679 <https://github.com/sgl-project/sglang/pull/30679>`_
-and install it with the ``diffusion`` extra:
-
-.. code-block:: bash
-
-   source /path/to/dreamzero_test/bin/activate
-   cd /path/to/sglang_dreamzero
-   pip install -e "python[diffusion]"
+   git clone https://github.com/sgl-project/sglang.git ../sglang-dreamzero
+   git -C ../sglang-dreamzero fetch origin pull/30679/head:pr-30679
+   git -C ../sglang-dreamzero checkout pr-30679
+   uv pip install -e "../sglang-dreamzero/python[diffusion]"
 
 Prepare the Checkpoint
 ----------------------
 
-Download the LIBERO SFT Diffusers checkpoint from
-`RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers>`_.
-Point ``rollout.model.model_path`` at the downloaded checkpoint directory.
+Download the LIBERO SFT Diffusers checkpoint from `RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers>`_ and point ``rollout.model.model_path`` at the downloaded directory:
 
-.. code-block:: bash
+.. tab-set::
 
-   hf download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
-     --local-dir /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
+   .. tab-item:: Global
 
-The checkpoint should contain ``experiment_cfg/metadata.json``. If metadata is not available in the checkpoint, generate it from the LIBERO dataset and set ``rollout.model.metadata_json_path`` explicitly:
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
+           --local-dir ./assets/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
+
+   .. tab-item:: China Mirror
+
+      .. code-block:: bash
+
+         export HF_ENDPOINT=https://hf-mirror.com
+         hf download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
+           --local-dir ./assets/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
+
+The checkpoint should contain ``experiment_cfg/metadata.json``. If metadata is missing, generate it from the LIBERO dataset and set ``rollout.model.metadata_json_path`` explicitly:
 
 .. code-block:: bash
 
    python toolkits/lerobot/generate_dreamzero_metadata.py \
      --preset libero_sim \
-     --dataset-root /path/to/libero \
-     --output-metadata /path/to/metadata.json
+     --dataset-root ./data/libero \
+     --output-metadata ./assets/metadata.json
 
 Run LIBERO-Spatial
 ------------------
 
-The default SGLang eval config is ``evaluations/libero/libero_spatial_dreamzero_eval_sglang.yaml``.
+Set ``rollout.model.model_path`` in ``evaluations/libero/libero_spatial_dreamzero_eval_sglang.yaml`` (or pass it on the command line) and launch evaluation:
 
 .. code-block:: bash
 
-   cd /path/to/RLinf-dreamzero
    bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
-     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
+     rollout.model.model_path=./assets/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
-For a custom metadata file, add:
-
-.. code-block:: bash
-
-   rollout.model.metadata_json_path=/path/to/metadata.json
+For a custom metadata file, append ``rollout.model.metadata_json_path=./assets/metadata.json``.
 
 Important Config Fields
 -----------------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 34 66
+   :widths: 36 64
 
    * - Field
      - Purpose
    * - ``rollout.rollout_backend: sglang``
      - Selects the SGLang rollout backend.
    * - ``rollout.sglang.serving_mode: embodied``
-     - Selects ``SGLangEmbodiedWorker``; the SGLang serve group is launched by the
-       driver script (``launch_sglang_router_and_server``), and the worker connects
-       to the driver-assigned server URL for inference.
+     - Runs the embodied SGLang rollout worker, which launches and owns its local server process on its assigned GPUs.
    * - ``rollout.sglang.server.pipeline_config.default_num_inference_steps``
-     - Controls the DreamZero denoising steps used by the server.
+     - Number of DreamZero denoising steps executed on the server.
    * - ``rollout.sglang.server.pipeline_config.cfg_scale``
      - Classifier-free guidance scale for action inference.
    * - ``rollout.sglang.server.cfg_parallel_degree``
@@ -106,30 +119,29 @@ Important Config Fields
    * - ``rollout.model.metadata_json_path``
      - Normalization statistics used before and after action inference.
    * - ``rollout.model.num_action_chunks``
-     - Number of actions returned per model request; ``env.eval.max_steps_per_rollout_epoch`` must be divisible by this value.
+     - Actions returned per request; ``env.eval.max_steps_per_rollout_epoch`` must be divisible by this value.
 
 Parallel Overrides
 ------------------
 
-The supported DreamZero SGLang evaluation entry is ``libero_spatial_dreamzero_eval_sglang``. For local experiments, adjust parallelism by overriding fields on this config instead of switching to a different YAML:
+RLinf derives GPUs per server instance automatically from ``dp_size * tp_size * sp_degree * cfg_parallel_degree``. To run with 2-way CFG parallelism on ``libero_spatial_dreamzero_eval_sglang``, override ``cfg_parallel_degree`` directly:
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
-     rollout.sglang.server.num_gpus=2 \
      rollout.sglang.server.cfg_parallel_degree=2 \
-     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
+     rollout.model.model_path=./assets/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
 Validation
 ----------
 
-Evaluation logs are written under ``logs/<timestamp>-<config>/``. Check ``eval_embodiment.log`` for the SGLang server command, endpoint readiness, per-episode results, and the final ``eval/success_once`` metric.
+Evaluation logs are written under ``logs/<timestamp>-<config>/``. Check ``eval_embodiment.log`` for server startup, readiness, per-episode outcomes, and the final ``eval/success_once`` metric.
 
-The LIBERO-Spatial SGLang config uses ``auto_reset: True`` and ordered reset states to cover the full suite with fewer parallel environments. See :ref:`libero-eval-config` for the LIBERO trajectory accounting rules.
+The LIBERO-Spatial SGLang config uses ``auto_reset: True`` and ordered reset states to cover the full suite with fewer parallel environments. See :ref:`libero-eval-config` for LIBERO trajectory accounting rules.
 
 Troubleshooting
 ---------------
 
 - If SGLang cannot find model components, confirm that ``rollout.model.model_path`` points to the downloaded Diffusers checkpoint directory.
 - If metadata loading fails, set ``rollout.model.metadata_json_path`` to an existing ``metadata.json`` generated for ``libero_sim``.
-- If local HTTP requests unexpectedly use a proxy, set ``NO_PROXY=127.0.0.1,localhost`` before launching evaluation.
+- If local HTTP requests unexpectedly use a proxy, export ``NO_PROXY=127.0.0.1,localhost`` before launching evaluation.

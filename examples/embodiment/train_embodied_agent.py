@@ -22,6 +22,7 @@ from omegaconf.omegaconf import OmegaConf
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
+from rlinf.utils.logging import get_logger
 from rlinf.utils.placement import EmbodiedComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.reward import EmbodiedAPIRewardWorker, EmbodiedRewardWorker
@@ -146,82 +147,92 @@ def main(cfg) -> None:
 
         runner_cls = ReFLRunner
 
-    # Create rollout worker group
-    rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = rollout_worker_cls.create_group(cfg).launch(
-        cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
-    )
-
-    # Create env worker group
-    env_placement = component_placement.get_strategy("env")
-    env_group = EnvWorker.create_group(cfg).launch(
-        cluster, name=cfg.env.group_name, placement_strategy=env_placement
-    )
-
-    # Create reward worker group
+    logger = get_logger()
+    rollout_group = None
+    rollout_router_group = None
     server_group = None
     router_group = None
     reward_group = None
-    reward_cfg = cfg.get("reward", {})
-    api_base = str(reward_cfg.get("api", {}).get("api_base") or "").strip()
-    if (
-        reward_cfg.get("use_reward_model", False)
-        and str(reward_cfg.get("worker_type", "model")).lower() == "api"
-        and not api_base
-    ):
-        from rlinf.workers.rollout.sglang import launch_sglang_api
-
-        api_base, server_group, router_group = launch_sglang_api(
-            config=cfg,
-            cluster=cluster,
-            rollout_hardware_ranks=None,
-            router_server_args=cfg.router_server_args,
-            placement_strategy=component_placement.get_strategy(
-                _REWARD_SERVER_COMPONENT_NAME
-            ),
-        )
-        with open_dict(cfg.reward):
-            if "api" not in cfg.reward:
-                cfg.reward.api = {}
-            cfg.reward.api.api_base = api_base
-
-    if reward_cfg.get("use_reward_model", False) and not reward_cfg.get(
-        "standalone_realworld", False
-    ):
-        reward_placement = component_placement.get_strategy("reward")
-        reward_worker_cls = (
-            EmbodiedAPIRewardWorker
-            if str(cfg.reward.get("worker_type", "model")).lower() == "api"
-            else EmbodiedRewardWorker
-        )
-        reward_group = reward_worker_cls.create_group(cfg).launch(
-            cluster,
-            name=cfg.reward.group_name,
-            placement_strategy=reward_placement,
+    try:
+        # Create rollout worker group
+        rollout_placement = component_placement.get_strategy("rollout")
+        rollout_group = rollout_worker_cls.create_group(cfg).launch(
+            cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
         )
 
-    runner = runner_cls(
-        cfg=cfg,
-        actor=actor_group,
-        rollout=rollout_group,
-        env=env_group,
-        reward=reward_group,
-    )
+        # Create env worker group
+        env_placement = component_placement.get_strategy("env")
+        env_group = EnvWorker.create_group(cfg).launch(
+            cluster, name=cfg.env.group_name, placement_strategy=env_placement
+        )
 
-    runner.init_workers()
-    rollout_router_group = launch_embodied_sglang_router(cfg, cluster, rollout_group)
-    runner.run()
+        # Create reward worker group
+        reward_cfg = cfg.get("reward", {})
+        api_base = str(reward_cfg.get("api", {}).get("api_base") or "").strip()
+        if (
+            reward_cfg.get("use_reward_model", False)
+            and str(reward_cfg.get("worker_type", "model")).lower() == "api"
+            and not api_base
+        ):
+            from rlinf.workers.rollout.sglang import launch_sglang_api
 
-    if rollout_router_group is not None:
-        rollout_router_group.stop().wait()
-    if cfg.rollout.get("rollout_backend") == "sglang":
-        rollout_group.stop().wait()
-    if reward_group is not None:
-        reward_group.stop().wait()
-    if router_group is not None:
-        router_group.stop().wait()
-    if server_group is not None:
-        server_group.stop().wait()
+            api_base, server_group, router_group = launch_sglang_api(
+                config=cfg,
+                cluster=cluster,
+                rollout_hardware_ranks=None,
+                router_server_args=cfg.router_server_args,
+                placement_strategy=component_placement.get_strategy(
+                    _REWARD_SERVER_COMPONENT_NAME
+                ),
+            )
+            with open_dict(cfg.reward):
+                if "api" not in cfg.reward:
+                    cfg.reward.api = {}
+                cfg.reward.api.api_base = api_base
+
+        if reward_cfg.get("use_reward_model", False) and not reward_cfg.get(
+            "standalone_realworld", False
+        ):
+            reward_placement = component_placement.get_strategy("reward")
+            reward_worker_cls = (
+                EmbodiedAPIRewardWorker
+                if str(cfg.reward.get("worker_type", "model")).lower() == "api"
+                else EmbodiedRewardWorker
+            )
+            reward_group = reward_worker_cls.create_group(cfg).launch(
+                cluster,
+                name=cfg.reward.group_name,
+                placement_strategy=reward_placement,
+            )
+
+        runner = runner_cls(
+            cfg=cfg,
+            actor=actor_group,
+            rollout=rollout_group,
+            env=env_group,
+            reward=reward_group,
+        )
+
+        runner.init_workers()
+        rollout_router_group = launch_embodied_sglang_router(
+            cfg, cluster, rollout_group
+        )
+        runner.run()
+    finally:
+        for group in (
+            rollout_router_group,
+            rollout_group if cfg.rollout.get("rollout_backend") == "sglang" else None,
+            reward_group,
+            router_group,
+            server_group,
+        ):
+            if group is not None:
+                try:
+                    group.stop().wait()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to stop worker group during cleanup: %s", exc
+                    )
 
 
 if __name__ == "__main__":

@@ -150,8 +150,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             placement = self._component_placement
             self._sglang_weight_targets = (
                 DisaggRankMapper.get_actor_rank_to_rollout_rank_map(
-                    actor_tp_size=1,
-                    actor_pp_size=1,
                     actor_world_size=self._world_size,
                     rollout_tp_size=placement.rollout_tp_size,
                     rollout_world_size=placement.rollout_world_size,

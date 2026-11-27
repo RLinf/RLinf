@@ -79,7 +79,7 @@ env:
     rollout_epoch: 1
     total_num_envs: 64
     auto_reset: true
-    ignore_terminations: false
+    ignore_terminations: true
     use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: true
     specific_reset_id: null
@@ -95,6 +95,9 @@ rollout:
   enable_offload: false
   pipeline_stage_num: 1
   model: ${actor.model}
+  recompute_logprobs: false
+  collect_prev_infos: true
+  collect_final_values: false
   sglang:
     serving_mode: embodied
     backend_type: server
@@ -148,8 +151,8 @@ actor:
     save_full_model_weights: true
     mixed_precision:
       param_dtype: bf16
-      reduce_dtype: bf16
-      buffer_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: null
       cast_forward_inputs: false
 reward:
   use_reward_model: false

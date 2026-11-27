@@ -38,7 +38,10 @@ def cosmos_framework_root() -> Path:
 
 def _configure_tokenizer(native_cfg: Any, model_cfg: DictConfig, variant: str) -> None:
     tokenizer_path = model_cfg.get("tokenizer_path") or None
-    if tokenizer_path is None and model_cfg.get("checkpoint_format") == "diffusers":
+    if (
+        tokenizer_path is None
+        and str(model_cfg.get("checkpoint_format", "")).lower() == "diffusers"
+    ):
         tokenizer_path = Path(str(model_cfg.model_path))
         if variant == "nano":
             tokenizer_path /= "text_tokenizer"

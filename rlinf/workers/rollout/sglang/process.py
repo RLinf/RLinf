@@ -138,19 +138,19 @@ def _run_sglang_server(
     # Bypass user proxies for sglang's local HTTP calls; otherwise router
     # metadata discovery hangs.
     with no_proxy_env():
-        if server_type == "embodied":
-            from sglang.multimodal_gen.runtime.launch_server import dispatch_launch
-            from sglang.multimodal_gen.runtime.server_args import (
-                ServerArgs,
-                set_global_server_args,
-            )
+        try:
+            if server_type == "embodied":
+                from sglang.multimodal_gen.runtime.launch_server import dispatch_launch
+                from sglang.multimodal_gen.runtime.server_args import (
+                    ServerArgs,
+                    set_global_server_args,
+                )
 
-            server_args_kwargs["master_port"] = dist_port
-            server_args = ServerArgs.from_kwargs(**server_args_kwargs)
-            server_args.scheduler_ports = server_args_kwargs["scheduler_ports"]
-            server_args.scheduler_port = server_args.scheduler_ports[0]
-            set_global_server_args(server_args)
-            try:
+                server_args_kwargs["master_port"] = dist_port
+                server_args = ServerArgs.from_kwargs(**server_args_kwargs)
+                server_args.scheduler_ports = server_args_kwargs["scheduler_ports"]
+                server_args.scheduler_port = server_args.scheduler_ports[0]
+                set_global_server_args(server_args)
                 if apply_rlinf_patch:
                     from rlinf.hybrid_engines.sglang.common import embodied_scheduler
 
@@ -163,70 +163,63 @@ def _run_sglang_server(
                     )
                 else:
                     dispatch_launch(server_args)
-            except Exception as e:  # pragma: no cover — surface to parent
-                try:
-                    ready_pipe.send(repr(e))
-                except Exception:
-                    pass
-                raise
-        else:
-            if apply_rlinf_patch:
-                # Must precede the launch_server import below: the Patcher
-                # rewrites module-level bindings as sglang's import chain
-                # loads them (TokenizerManager etc.).
-                from rlinf.hybrid_engines.sglang.common import (  # noqa: F401
-                    sgl_engine,
-                    sgl_scheduler,
-                )
-
-            from sglang.srt.entrypoints import http_server
-            from sglang.srt.entrypoints.http_server import launch_server
-            from sglang.srt.server_args import ServerArgs
-
-            from rlinf.workers.rollout.sglang.video_processor import (
-                install_reward_video_support,
-            )
-
-            install_reward_video_support(http_server)
-
-            # Multi-node: the rendezvous address negotiated by the entry
-            # node is authoritative (identical on every node of the model
-            # instance); single-node uses the loopback address.
-            if dist_init_addr is not None:
-                server_args_kwargs["dist_init_addr"] = dist_init_addr
             else:
-                server_args_kwargs["dist_init_addr"] = f"127.0.0.1:{dist_port}"
-            server_args = ServerArgs(**server_args_kwargs)
-            # sglang dropped pipe_finish_writer after 0.5.4; readiness is established by
-            # polling /health either way, so the pipe is only used to surface exceptions.
-            launch_kwargs = {}
-            if "pipe_finish_writer" in inspect.signature(launch_server).parameters:
-                launch_kwargs["pipe_finish_writer"] = ready_pipe
-            if apply_rlinf_patch:
-                from sglang.srt.entrypoints import http_server as sgl_http_server
+                if apply_rlinf_patch:
+                    # Must precede the launch_server import below: the Patcher
+                    # rewrites module-level bindings as sglang's import chain
+                    # loads them (TokenizerManager etc.).
+                    from rlinf.hybrid_engines.sglang.common import (  # noqa: F401
+                        sgl_engine,
+                        sgl_scheduler,
+                    )
 
-                from rlinf.hybrid_engines.sglang.common import http_routes
-                from rlinf.hybrid_engines.sglang.common.peer_whitelist import (
-                    PeerWhitelistMiddleware,
+                from sglang.srt.entrypoints import http_server
+                from sglang.srt.entrypoints.http_server import launch_server
+                from sglang.srt.server_args import ServerArgs
+
+                from rlinf.workers.rollout.sglang.video_processor import (
+                    install_reward_video_support,
                 )
 
-                sgl_http_server.app.add_middleware(PeerWhitelistMiddleware)
+                install_reward_video_support(http_server)
 
-                http_routes.add_rlinf_routes(
-                    sgl_http_server.app, control_token=control_token
-                )
-                launch_kwargs["run_scheduler_process_func"] = (
-                    sgl_scheduler.run_scheduler_process
-                )
-                get_logger().info("RLinf patch applied to sglang server subprocess")
-            try:
+                # Multi-node: the rendezvous address negotiated by the entry
+                # node is authoritative (identical on every node of the model
+                # instance); single-node uses the loopback address.
+                if dist_init_addr is not None:
+                    server_args_kwargs["dist_init_addr"] = dist_init_addr
+                else:
+                    server_args_kwargs["dist_init_addr"] = f"127.0.0.1:{dist_port}"
+                server_args = ServerArgs(**server_args_kwargs)
+                # sglang dropped pipe_finish_writer after 0.5.4; readiness is established by
+                # polling /health either way, so the pipe is only used to surface exceptions.
+                launch_kwargs = {}
+                if "pipe_finish_writer" in inspect.signature(launch_server).parameters:
+                    launch_kwargs["pipe_finish_writer"] = ready_pipe
+                if apply_rlinf_patch:
+                    from sglang.srt.entrypoints import http_server as sgl_http_server
+
+                    from rlinf.hybrid_engines.sglang.common import http_routes
+                    from rlinf.hybrid_engines.sglang.common.peer_whitelist import (
+                        PeerWhitelistMiddleware,
+                    )
+
+                    sgl_http_server.app.add_middleware(PeerWhitelistMiddleware)
+
+                    http_routes.add_rlinf_routes(
+                        sgl_http_server.app, control_token=control_token
+                    )
+                    launch_kwargs["run_scheduler_process_func"] = (
+                        sgl_scheduler.run_scheduler_process
+                    )
+                    get_logger().info("RLinf patch applied to sglang server subprocess")
                 launch_server(server_args, **launch_kwargs)
-            except Exception as e:  # pragma: no cover — surface to parent
-                try:
-                    ready_pipe.send(repr(e))
-                except Exception:
-                    pass
-                raise
+        except Exception as e:  # pragma: no cover — surface to parent
+            try:
+                ready_pipe.send(repr(e))
+            except Exception:
+                pass
+            raise
 
 
 def _wait_for_http_health(
@@ -414,10 +407,15 @@ class SGLangServerProcess:
             },
             daemon=False,
         )
-        proc.start()
-        # We hand the write end to the child; close ours so the read end
-        # signals EOF if the child dies before sending anything.
-        child_pipe.close()
+        try:
+            proc.start()
+        except BaseException:
+            self.terminate()
+            raise
+        finally:
+            # We hand the write end to the child; close ours so the read end
+            # signals EOF if the child dies before sending anything.
+            child_pipe.close()
 
         self._server_proc = proc
         self._server_port = http_port
@@ -428,14 +426,14 @@ class SGLangServerProcess:
                     port=http_port,
                     is_alive=lambda: self._server_proc.is_alive(),
                 )
-            except RuntimeError as e:
+            except BaseException as e:
                 # If the child exited, include the error it wrote to the
                 # pipe (launch_server level only; scheduler tracebacks are
                 # in this log).
                 child_failure = self.poll_child_failure()
                 self._log_error(f"sglang server failed to become healthy: {e!r}")
                 self.terminate()
-                if child_failure is not None:
+                if isinstance(e, RuntimeError) and child_failure is not None:
                     exitcode, child_error = child_failure
                     raise RuntimeError(
                         f"{e} Child process exited with code {exitcode}: "
@@ -448,15 +446,18 @@ class SGLangServerProcess:
 
         # Non-entry: launch_server never returns here and readiness is the
         # entry's /health; only check that the child survived spawn.
-        time.sleep(2.0)
-        if not proc.is_alive():
-            msg = (
-                f"sglang server subprocess on node_rank {self._node_rank} of "
-                f"{self._nnodes} exited during spawn; see the worker log."
-            )
-            self._log_error(msg)
+        try:
+            time.sleep(2.0)
+            if not proc.is_alive():
+                msg = (
+                    f"sglang server subprocess on node_rank {self._node_rank} of "
+                    f"{self._nnodes} exited during spawn; see the worker log."
+                )
+                self._log_error(msg)
+                raise RuntimeError(msg)
+        except BaseException:
             self.terminate()
-            raise RuntimeError(msg)
+            raise
         self._log_info(
             f"sglang server node_rank={self._node_rank}/{self._nnodes} spawned; "
             f"readiness is delegated to the entry node's /health."
@@ -520,7 +521,7 @@ class SGLangServerProcess:
             # local signal.
             return True
         try:
-            url = f"http://{self._advertise_host}:{self._server_port}/health"
+            url = f"{self.get_control_url()}/health"
             return (
                 requests.get(
                     url, timeout=2, proxies={"http": None, "https": None}
@@ -533,22 +534,21 @@ class SGLangServerProcess:
     def terminate(self) -> None:
         """Terminate the sglang server subprocess (and its process group)."""
         proc = self._server_proc
-        if proc is None:
-            return
-        self._log_info(f"Shutting down sglang server pid={proc.pid}.")
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            proc.terminate()
-        proc.join(timeout=10)
-        if proc.is_alive():  # pragma: no cover — best-effort kill
+        if proc is not None:
+            self._log_info(f"Shutting down sglang server pid={proc.pid}.")
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
+                os.killpg(proc.pid, signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
-                proc.kill()
-            proc.join(timeout=5)
-        self._server_proc = None
-        self._server_port = None
+                proc.terminate()
+            proc.join(timeout=10)
+            if proc.is_alive():  # pragma: no cover — best-effort kill
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    proc.kill()
+                proc.join(timeout=5)
+            self._server_proc = None
+            self._server_port = None
         if self._ready_pipe is not None:
             try:
                 self._ready_pipe.close()

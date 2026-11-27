@@ -1,137 +1,120 @@
 Cosmos3 SGLang 评测
-=====================
+===================
 
-用 SGLang 后端在 LIBERO 仿真器上评测 Cosmos3：模型放进独立的 SGLang server 进程，rollout worker 作为客户端发观测、收动作、送入仿真。适用于只做推理评测的场景。
+使用 SGLang Diffusion server 或原生 Hugging Face 后端在 LIBERO 仿真器上评测 Cosmos3-Nano 与 Cosmos3-Edge。
 
 工作原理
-----------------------------------------
+--------
 
-每张 GPU 起一个 SGLang server（``server_type: embodied``），运行 ``Cosmos3OmniDiffusersPipeline``，把动作策略暴露成 HTTP 端点 ``POST /v1/actions/generations``。eval driver 把 server URL 下发给 rollout worker，worker 把 N 个环境的一步观测拆成一个或多个请求发出。
+每个 rollout worker 会在分配给自己的 GPU 上独立拉起并管理一个 SGLang Diffusion server，通过 ``POST /v1/actions/generations`` 提供动作推理。每一步仿真中，worker 按 prompt 将并行环境分组，再按 ``rollout.sglang.server.batching_max_size`` 切分成批量请求发出，最后将返回动作按环境顺序拼回。
 
-server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3SGLangAdapter.request_groups`` 先按补全后的 prompt 给环境分组，再把每组按 ``rollout.sglang.server.batching_max_size`` 切成若干份，每份最多这么多个环境。示例配置中该值为 ``8``；不设置时 adapter 采用 SGLang 自身的默认值 ``1``，即每个环境单独发一次请求。worker 逐组发送，再把结果按原来的环境顺序拼回去。
+响应中每个环境对应一段归一化后的 10 维 rot6d 动作块。rollout worker 按 ``input_index`` 排序，用 LIBERO quantile 统计文件去归一化，将 rot6d 转为 3 维 axis-angle，再把 7 维动作送入 LIBERO 执行。
 
-响应中每个环境各占一条记录：``data[i].action.values`` 是该环境的 ``[horizon, raw_action_dim]`` 归一化 rot6d 动作块。adapter 先按 ``input_index`` 排序，再去归一化并转成 7 维 axis-angle 送入 LIBERO。
+.. code-block:: text
 
-.. code:: text
-
-   EnvWorker(libero) --观测(图像+指令)--> Cosmos3SGLangAdapter.request_groups
-     按 prompt 给 N 个环境分组，每组最多 batching_max_size 个环境
-        --每组发一次 POST /v1/actions/generations-->
-   SGLang server（Cosmos3OmniDiffusersPipeline，扩散 num_inference_steps 步）
-        --响应中每个环境一条 data[i].action.values = [horizon, 10]（归一化 rot6d）-->
-   Cosmos3SGLangAdapter 按 input_index 顺序逐条解析：
-     裁前 10 通道 → quantile 去归一化 → rot6d(6) 转 axis-angle(3)
-   worker 把各组结果按环境顺序拼成 [N, 16, 7]
-        --[N, 16, 7]-->
-   EnvWorker.chunk_step 推进仿真
+   LIBERO env worker --观测（图像 + 指令）--> Rollout worker
+     按 prompt 分组，每组最多 batching_max_size 个环境
+        --POST /v1/actions/generations-->
+   Rollout worker 管理的 SGLang Diffusion server
+        --返回归一化 [horizon, 10] rot6d 动作块-->
+   Rollout worker（按 input_index 排序 → 去归一化 → rot6d 转 axis-angle）
+        --[N, 16, 7] 环境动作-->
+   LIBERO env worker 推进仿真
 
 安装
-----------------------------------------
+----
 
-按 SFT 文档中的 :ref:`Cosmos3 SGLang 安装步骤 <cosmos3-sglang-install>` 安装依赖和固定版本源码。
+按 Cosmos3 文档中的 :ref:`安装 SGLang 推理环境 <cosmos3-sglang-install>` 配置 ``.venv-sglang`` 并安装固定版本的 Cosmos3 SGLang 源码。
 
 准备 Checkpoint
-----------------------------------------
+---------------
 
-评测输入是 diffusers 组件目录 ``model_diffusers``。Nano 和 Edge 都可以用 ``--base-model-path`` 和匹配的完整模型目录直接导出 SFT 权重，也可使用 cosmos-framework 的四步转换；两种方式见 :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>` 的「转换 Checkpoint」一节。
+SGLang 评测读取 Diffusers 组件目录 ``model_diffusers``。请按 :doc:`Cosmos3 监督微调与 NFT 训练 <../../examples/embodied/sft_cosmos3>` 中的“转换 Checkpoint”一节导出 RLinf SFT 权重。
 
 .. note::
 
-   评测\ **不需要**\ 联网拉 HuggingFace 或 Qwen3-VL 缓存：转换时 tokenizer 已拷进 ``model_diffusers/text_tokenizer/``，server 直接从该目录读。
+   导出完成后评测可完全离线运行，tokenizer 和 processor 文件已包含在 ``model_diffusers`` 目录中。
 
-运行 LIBERO-Spatial
-----------------------------------------
+评测 Cosmos3-Edge（LIBERO-Spatial）
+-----------------------------------
 
-默认配置 ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.yaml``。开跑前改 YAML 指向本地 ``model_diffusers``：
+编辑 ``evaluations/libero/libero_spatial_cosmos3_edge_eval_sglang.yaml``，填写导出的 ``model_diffusers`` 路径和统计文件：
 
 .. code-block:: yaml
 
    rollout:
      model:
-       model_path: /path/to/model_diffusers          # 评测输入的 diffusers 目录
-       action_stats_path: /path/to/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json  # cosmos-framework 的 rot6d 统计文件
+       model_path: ./assets/cosmos3-edge-policy-liberoall-10k/model_diffusers
+       action_stats_path: ./cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
 
-   env:
-     eval:
-       total_num_envs: 128   # 按 GPU 数 / 显存调整（示例 8 卡用 128）
-
-改好后运行：
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang
-
-每张 GPU 起一个 Cosmos3 SGLang server，逐 episode 打印成功与否，最后汇总成功率；日志写到 ``logs/<时间戳>-<config>/eval_embodiment.log``。
-
-Cosmos3-Edge 评测
-----------------------------------------
-
-Edge 使用 ``evaluations/libero/libero_spatial_cosmos3_edge_eval_sglang.yaml``。在安装好 RLinf 和 LIBERO 的 SGLang 环境中，将 RLinf SFT 权重导出到与其架构匹配的完整 Edge HF 快照：
-
-.. code-block:: bash
-
-   python -m toolkits.cosmos3.convert_checkpoint \
-     --src /path/to/model_path/actor/model_state_dict/full_weights.pt \
-     --base-model-path /path/to/Cosmos3-Edge \
-     --out /path/to/hf_model_path
-
-导出器逐项校验 transformer 参数的键名和形状，用 SFT 权重替换全部 transformer 参数，并保留快照中的 tokenizer、VAE 和配置。默认选择普通权重 ``omni.net``，与 Edge HF eval 配置一致；``--use-ema-weights`` 可选择 EMA。输出目录必须是新目录。
-
-将 YAML 中的 ``rollout.model.model_path`` 指向输出的 ``model_diffusers``，填写训练使用的 ``action_stats_path``，然后运行：
+在仓库根目录启动评测：
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero libero_spatial_cosmos3_edge_eval_sglang
 
-批量冒烟测试可追加 ``cluster.component_placement.env=0 cluster.component_placement.rollout=0 env.eval.total_num_envs=4 env.eval.specific_reset_id=0 env.eval.max_episode_steps=32 env.eval.max_steps_per_rollout_epoch=32``。这会在单卡上给同一任务发送四个环境的 batch；32 步仅验证运行流程。正常评测保留 YAML 中的 episode 长度和任务分布。
+单卡快速验证（4 个并行环境、32 步、1 个 epoch）：
 
-上述固定版本会保留显式设置的 Edge 动作采样参数，包括 ``guidance_scale=1.5``\ ，避免被视频默认值覆盖。
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_edge_eval_sglang \
+     cluster.component_placement.env=0 cluster.component_placement.rollout=0 \
+     env.eval.total_num_envs=4 env.eval.specific_reset_id=0 \
+     env.eval.max_episode_steps=32 env.eval.max_steps_per_rollout_epoch=32
+
+评测 Cosmos3-Nano（LIBERO-Spatial）
+-----------------------------------
+
+使用 SGLang 评测 Cosmos3-Nano 时，编辑 ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.yaml`` 中的 ``rollout.model.model_path`` 和 ``rollout.model.action_stats_path``，然后运行：
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang
 
 关键配置
-----------------------------------------
+--------
 
 .. list-table::
    :header-rows: 1
-   :widths: 40 60
+   :widths: 38 62
 
    * - 字段
      - 说明
    * - ``rollout.model.model_path``
-     - diffusers checkpoint 目录（评测输入）。
+     - 导出的 ``model_diffusers`` 目录。
    * - ``rollout.model.action_stats_path``
-     - 动作去归一化的 quantile 统计文件，须与 SFT 同源（``*_rot6d.json``）。
+     - 与 SFT 同源的 quantile 统计文件（``*_rot6d.json``）。
    * - ``rollout.model.action_normalization``
      - ``quantile_rot``，须与训练一致。
    * - ``rollout.model.raw_action_dim`` / ``action_dim``
-     - 模型侧 10（rot6d）/ 环境侧 7（axis-angle）；**两者都必填** （见常见问题）。
+     - 模型侧 10 维（rot6d）与环境侧 7 维（axis-angle）。
    * - ``rollout.model.num_action_chunks``
-     - 每次请求返回的动作步数（示例 16）；``env.eval.max_steps_per_rollout_epoch`` 须能被其整除。
+     - 单次请求返回的动作步数（16）；``env.eval.max_steps_per_rollout_epoch`` 须能被其整除。
    * - ``rollout.model.num_inference_steps`` / ``num_frames`` / ``size``
-     - 扩散步数与输入视频规格，须与训练一致。
-   * - ``rollout.sglang.server.num_gpus`` / ``tp_size``
-     - 每 server 占用 GPU 与 TP；单卡部署均为 1（每卡一个 server）。
+     - 扩散步数与输入视频尺寸，须与训练一致。
+   * - ``rollout.sglang.server.tp_size`` / ``sp_degree`` / ``dp_size``
+     - 单实例并行度。每个 server 占用的 GPU 数由 ``dp_size * tp_size * sp_degree * cfg_parallel_degree`` 自动推导。
    * - ``rollout.sglang.server.batching_max_size``
-     - 单次请求中 server 最多批处理的环境数（示例为 8）。adapter 按该值切分每个 prompt 分组；不设置时采用 SGLang 默认值 1，即每个环境单独一次请求。
+     - 单次 HTTP 请求最多批处理的环境数（示例默认为 8）。
    * - ``rollout.sglang.http_timeout_s``
-     - HTTP 超时；扩散推理慢，建议 ``600``。
+     - 单次 HTTP 请求超时秒数，建议设为 ``600``。
    * - ``env.eval.total_num_envs``
-     - 并行环境数，按 GPU / 显存调整。
+     - 全部 worker 上的并行 LIBERO 环境总数。
 
 验证
-----------------------------------------
+----
 
-看 ``eval_embodiment.log``，确认这几个节点依次出现：
+查看 ``logs/<时间戳>-<config>/eval_embodiment.log``，确认依次出现以下节点：
 
-1. 起 server：``Launching sglang server (server_type=embodied) ...``
-2. 权重加载完成：``[RunAI Streamer] Overall time to stream 28.3 GiB ... to cpu: <秒数>`` （本地盘通常数十秒内；**缺这行** 说明加载卡住，见常见问题）
-3. server 就绪：``sglang server ready at http://...``
-4. 逐 episode 结果：``[libero eval] task_id=.., trial_id=.., success=..``
-5. 汇总：``success_once`` / ``success_at_end`` / ``num_trajectories``
+1. 启动 server：``Launching sglang server (server_type=embodied) ...``
+2. server 就绪：``sglang server ready at http://...``
+3. 逐 episode 输出：``[libero eval] task_id=.., trial_id=.., success=..``
+4. 汇总表格：``success_once``、``success_at_end`` 与 ``num_trajectories``。
 
 LIBERO 轨迹计数规则见 :ref:`libero-eval-config`。
 
 常见问题
-----------------------------------------
+--------
 
 .. list-table::
    :header-rows: 1
@@ -139,15 +122,15 @@ LIBERO 轨迹计数规则见 :ref:`libero-eval-config`。
 
    * - 现象
      - 处理
-   * - SGLang 找不到 model components
-     - 确认两处 ``model_path`` 都指向含 ``model_index.json`` 的 ``model_diffusers`` 目录。
-   * - 动作乱 / 完全不成功
-     - 核对 ``action_normalization`` / ``action_stats_path`` / ``num_inference_steps`` / ``num_frames`` / ``size`` 与 SFT 一致。
+   * - SGLang 找不到模型组件
+     - 确认 ``rollout.model.model_path`` 指向包含 ``model_index.json`` 的 ``model_diffusers`` 目录。
+   * - 动作异常或成功率为 0
+     - 核对 ``action_normalization``、``action_stats_path``、``num_inference_steps``、``num_frames`` 与 ``size`` 是否与 SFT 一致。
    * - 首批请求 HTTP 超时
-     - 调大 ``rollout.sglang.http_timeout_s`` 与 ``http_max_retries``。
-   * - 本地请求被 proxy 拦截
-     - 启动前设 ``NO_PROXY=127.0.0.1,localhost``。
+     - 调大 ``rollout.sglang.http_timeout_s`` 与 ``rollout.sglang.http_max_retries``。
+   * - 本地请求被代理拦截
+     - 启动前导出 ``NO_PROXY=127.0.0.1,localhost``。
    * - LIBERO 渲染报错
-     - ``run_eval.sh`` 默认使用 EGL 渲染；若机器不支持 EGL，设 ``MUJOCO_GL=osmesa``、``PYOPENGL_PLATFORM=osmesa``。
-   * - 重跑前 GPU 未释放
-     - 确认上次 ``ray stop`` 已彻底、``nvidia-smi`` 全空、无残留 ``ray::SGLangServerGroup`` 进程。
+     - ``run_eval.sh`` 默认使用 EGL；无 EGL 的机器请导出 ``MUJOCO_GL=osmesa`` 与 ``PYOPENGL_PLATFORM=osmesa``。
+   * - 异常退出后 GPU 未释放
+     - 运行 ``ray stop --force``，确认 ``nvidia-smi`` 中无残留 rollout worker 或 server 进程。

@@ -24,6 +24,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from typing import Optional
 
 import ray.util
@@ -296,6 +297,30 @@ class SGLangRouterWorker(Worker):
             )
         except requests.exceptions.RequestException:
             return False
+
+    def verify_routes(self, paths: Sequence[str], timeout: float = 5.0) -> None:
+        """Fail fast if the running router returns 404 for any required route.
+
+        Uses ``GET`` so POST-only routes answer 405 without forwarding to
+        backend workers, while unimplemented routes return 404.
+        """
+        assert self._router_url is not None, "init_router() has not been called."
+        missing: list[str] = []
+        for path in paths:
+            normalized = "/" + str(path).lstrip("/")
+            resp = requests.get(
+                f"{self._router_url}{normalized}",
+                timeout=timeout,
+                proxies={"http": None, "https": None},
+            )
+            if resp.status_code == 404:
+                missing.append(normalized)
+        if missing:
+            raise RuntimeError(
+                f"SGLang router at {self._router_url} does not expose required "
+                f"route(s) {missing} (HTTP 404). Install a router build with "
+                "embodied route support or set rollout.sglang.launch_router=false."
+            )
 
     # ------------------------------------------------------------------
     # Dynamic worker registration

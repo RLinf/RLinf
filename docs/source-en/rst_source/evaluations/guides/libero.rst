@@ -15,7 +15,7 @@ Environment Setup
 
 With ``--env libero``, the installer clones LIBERO into ``.venv/libero`` (or reuses an existing checkout when ``LIBERO_PATH`` is set) and appends it to ``PYTHONPATH`` in ``.venv/bin/activate``.
 
-Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, ``fastwam``, ``molmoact2``, and ``pi0_fast`` — replace ``--model`` accordingly during installation.
+Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, ``cosmos3``, ``fastwam``, ``molmoact2``, and ``pi0_fast`` — replace ``--model`` accordingly during installation.
 
 Example Configs
 ---------------
@@ -41,6 +41,12 @@ Available under ``evaluations/libero/``:
    * - ``libero_spatial_dreamzero_eval_sglang.yaml``
      - Spatial
      - DreamZero (SGLang backend)
+   * - ``libero_spatial_cosmos3_eval_sglang.yaml``
+     - Spatial
+     - Cosmos3-Nano (SGLang backend)
+   * - ``libero_spatial_cosmos3_edge_eval_sglang.yaml``
+     - Spatial
+     - Cosmos3-Edge (SGLang backend)
    * - ``libero_spatial_fastwam_eval.yaml``
      - Spatial
      - FastWAM
