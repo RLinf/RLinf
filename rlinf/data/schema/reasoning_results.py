@@ -15,7 +15,7 @@
 """Reasoning rollout result structures and post-processing helpers."""
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 import torch
 from omegaconf import DictConfig
@@ -941,6 +941,13 @@ class DynamicRolloutResult:
     # extra fields used in training for custom process
     extra_fields_train: dict[str, list] = field(default_factory=dict)
 
+    # Optional per-sequence fields used by merged multi-turn and multimodal
+    # episodes (e.g., SessionServer with merge_continuous_turns=True).
+    response_mask: Optional[list[list[bool]]] = None
+    multi_modal_inputs: Optional[list[dict[str, Any]]] = None
+    rollout_topk_ids: Optional[list[list[list[int]]]] = None
+    rollout_topk_logprobs: Optional[list[list[list[float]]]] = None
+
     # extra fields used in reward / eval. not used in training
     extra_fields_turn: Optional[dict] = None  # [num_sequence]
     extra_fields_traj: Optional[dict] = None  # [group_size]
@@ -982,9 +989,13 @@ class DynamicRolloutResult:
                 torch.as_tensor(ids, dtype=torch.long) for ids in self.input_ids
             ],
             "attention_mask": [torch.ones(n, dtype=torch.bool) for n in lengths],
-            "response_mask": [
-                torch.arange(n) >= p for n, p in zip(lengths, self.prompt_lengths)
-            ],
+            "response_mask": (
+                [torch.as_tensor(mask, dtype=torch.bool) for mask in self.response_mask]
+                if self.response_mask is not None
+                else [
+                    torch.arange(n) >= p for n, p in zip(lengths, self.prompt_lengths)
+                ]
+            ),
             "position_ids": [torch.arange(n) for n in lengths],
             "prompt_lengths": torch.tensor(self.prompt_lengths, dtype=torch.int32),
             "response_lengths": torch.tensor(self.response_lengths, dtype=torch.int32),
@@ -1004,6 +1015,17 @@ class DynamicRolloutResult:
             batch["rollout_logprobs"] = [
                 torch.cat((torch.zeros(p), torch.as_tensor(row, dtype=torch.float32)))
                 for p, row in zip(self.prompt_lengths, self.rollout_logprobs)
+            ]
+        if self.multi_modal_inputs is not None:
+            batch["multi_modal_inputs"] = list(self.multi_modal_inputs)
+        if self.rollout_topk_ids is not None:
+            batch["rollout_topk_ids"] = [
+                torch.as_tensor(row, dtype=torch.long) for row in self.rollout_topk_ids
+            ]
+        if self.rollout_topk_logprobs is not None:
+            batch["rollout_topk_logprobs"] = [
+                torch.as_tensor(row, dtype=torch.float32)
+                for row in self.rollout_topk_logprobs
             ]
         for key in (
             "recomputed_logprobs",
@@ -1027,10 +1049,13 @@ class DynamicRolloutResult:
         result = {}
         for key, value in batch.items():
             if isinstance(value, list) and value and torch.is_tensor(value[0]):
-                padded = batch_pad_to_fixed_len(
-                    value, seq_length, pad_token if key == "input_ids" else 0
-                )
-                result[key] = padded.to(device)
+                if value[0].ndim == 1:
+                    padded = batch_pad_to_fixed_len(
+                        value, seq_length, pad_token if key == "input_ids" else 0
+                    )
+                    result[key] = padded.to(device)
+                else:
+                    result[key] = [item.to(device) for item in value]
             elif torch.is_tensor(value):
                 result[key] = value.to(device)
             else:
@@ -1162,6 +1187,9 @@ class DynamicRolloutResult:
                         pack_map[right] = [*pack_map.pop(left, []), left]
                         passed_as_suffix.add(right)
                         break
+
+        if not pack_map:
+            return batch
 
         num_sequence = len(batch["idx_to_traj"])
         new_idx_to_traj = []
@@ -1384,6 +1412,16 @@ class DynamicRolloutResult:
                 merged_result.rollout_logprobs = (
                     merged_result.rollout_logprobs or []
                 ) + list(res.rollout_logprobs)
+            for opt_list_key in (
+                "response_mask",
+                "multi_modal_inputs",
+                "rollout_topk_ids",
+                "rollout_topk_logprobs",
+            ):
+                opt_val = getattr(res, opt_list_key)
+                if opt_val is not None:
+                    prev = getattr(merged_result, opt_list_key)
+                    setattr(merged_result, opt_list_key, (prev or []) + list(opt_val))
 
             # Merge tensor fields (size: num_sequence)
             for key in ("recomputed_logprobs", "ref_logprobs"):
@@ -1515,6 +1553,20 @@ class DynamicRolloutResult:
                 if rollout_result.returns is not None
                 else None,
                 extra_fields_train=split_extra_fields_train,
+                response_mask=rollout_result.response_mask[start_idx:end_idx]
+                if rollout_result.response_mask is not None
+                else None,
+                multi_modal_inputs=rollout_result.multi_modal_inputs[start_idx:end_idx]
+                if rollout_result.multi_modal_inputs is not None
+                else None,
+                rollout_topk_ids=rollout_result.rollout_topk_ids[start_idx:end_idx]
+                if rollout_result.rollout_topk_ids is not None
+                else None,
+                rollout_topk_logprobs=rollout_result.rollout_topk_logprobs[
+                    start_idx:end_idx
+                ]
+                if rollout_result.rollout_topk_logprobs is not None
+                else None,
             )
 
             split_results.append(split_result)

@@ -2712,6 +2712,9 @@ class TestVoidCleanup:
 
         worker._groups = {}
         worker._metrics = {}
+        worker._group_engine_idx = {}
+        worker._engine_active_groups = []
+        worker._retained_history_bytes = 0
         worker._report_discard = record_discard
         worker._payload_writer = _Writer()
 
@@ -2846,3 +2849,521 @@ class TestPayloadWriterFailures:
 async def _append_async(target, value):
     """Record a group id the way the writer's callback does."""
     target.append(value)
+
+
+class TestMultimodalStreamingSession:
+    """Engine-side SGLang sessions, top-K extraction, and turn merging."""
+
+    @staticmethod
+    def _make_worker(
+        *,
+        router_client=None,
+        engine_clients=None,
+        keep_sessions_on_weight_sync: bool = False,
+        topk_log_probs: int = 2,
+    ):
+        cfg = OmegaConf.create(
+            {
+                "runner": {"seq_length": 4096},
+                "algorithm": {
+                    "group_size": 1,
+                    "sampling_params": {"do_sample": False, "max_new_tokens": 32},
+                },
+                "rollout": {
+                    "return_logprobs": True,
+                    "router": {"max_idle_secs": 600},
+                    "model": {"model_path": None},
+                },
+                "session_server": {
+                    "enable": False,
+                    "host": "127.0.0.1",
+                    "port": 0,
+                    "engine_streaming_session": True,
+                    "keep_sessions_on_weight_sync": keep_sessions_on_weight_sync,
+                    "topk_log_probs": topk_log_probs,
+                },
+            }
+        )
+        cfg = validate_session_server_cfg(cfg)
+        worker = SessionServerWorker.__new__(SessionServerWorker)
+        worker._cfg = cfg
+        worker._server_index = 0
+        worker._expected_group_size = 1
+        worker._sampling_params = {"temperature": 0, "max_new_tokens": 32}
+        worker._return_logprob = True
+        worker._verify_assembly = False
+        worker._engine_streaming_session = True
+        worker._keep_sessions_on_weight_sync = keep_sessions_on_weight_sync
+        worker._topk_log_probs = topk_log_probs
+        worker._engine_session_capacity = 1_000_000
+        worker._generate_timeout_s = 60.0
+        worker._per_task_generate_timeout_s = {}
+        worker._payload_put_timeout_s = 30.0
+        worker._discard_record_ttl_s = 600.0
+        worker._groups = {}
+        worker._sessions = {}
+        worker._reported_groups = {}
+        worker._reported_sessions = {}
+        worker._loaded_versions = [2]
+        worker._router_client = router_client
+        worker._engine_clients = list(engine_clients or [])
+        worker._group_engine_idx = {}
+        worker._engine_active_groups = [0] * len(worker._engine_clients)
+        worker._retained_history_bytes = 0
+        worker._next_payload_shard = 0
+        worker._metrics = {
+            "session_server/prefix_continuous": 0,
+            "session_server/prefix_rewritten": 0,
+            "session_server/prefix_underreported": 0,
+            "session_server/forward_count": 0,
+            "session_server/forward_time_total_s": 0.0,
+            "session_server/payload_write_failed": 0,
+        }
+        emitted_parts: list[PayloadPart] = []
+
+        class _CaptureWriter:
+            num_shards = 1
+            pending_bytes = 0
+
+            async def emit_part(self, shard, part, *, extra_pending_bytes=0):
+                del shard, extra_pending_bytes
+                emitted_parts.append(part)
+                return 64, None
+
+            async def put(self, *args, **kwargs):
+                return True
+
+            def channel_for(self, shard):
+                return SimpleNamespace(name=f"payload_{shard}")
+
+        worker._payload_writer = _CaptureWriter()
+        return worker, emitted_parts
+
+    def test_streaming_session_opens_chains_and_closes(self):
+        """Multimodal turns open a non-streaming SGLang session once, chain
+        turn 2+ via session_params.rid with unique per-turn rids, record
+        prompt_tokens and top-K logprobs, and close the engine session when
+        the trajectory closes."""
+        calls: list[tuple[str, dict, dict]] = []
+
+        class _FakeRouterClient:
+            async def async_post(self, path, body, headers=None, timeout_s=None):
+                del timeout_s
+                calls.append((path, dict(body), dict(headers or {})))
+                if path == "/open_session":
+                    return "eng-sess-1"
+                if path == "/close_session":
+                    return {"status": "ok"}
+                if path == "/generate":
+                    turn_no = sum(1 for p, _, _ in calls if p == "/generate")
+                    out_ids = [100 + turn_no, 200 + turn_no]
+                    return {
+                        "text": f"resp-{turn_no}",
+                        "output_ids": out_ids,
+                        "meta_info": {
+                            "finish_reason": {"type": "stop"},
+                            "weight_version": 2,
+                            "prompt_tokens": 10 * turn_no,
+                            "cached_tokens": 0 if turn_no == 1 else 10,
+                            "output_token_logprobs": [
+                                (-0.2, out_ids[0]),
+                                (-0.4, out_ids[1]),
+                            ],
+                            "output_top_logprobs": [
+                                [(-0.2, out_ids[0]), (-1.5, 9)],
+                                [(-0.4, out_ids[1]), (-1.2, 8)],
+                            ],
+                        },
+                    }
+                raise AssertionError(f"unexpected path {path}")
+
+        worker, emitted_parts = self._make_worker(
+            router_client=_FakeRouterClient(),
+            keep_sessions_on_weight_sync=False,
+            topk_log_probs=2,
+        )
+
+        async def _run():
+            created = await worker._create_session(
+                {
+                    "group_id": 7,
+                    "traj_index": 0,
+                    "group_size": 1,
+                    "task_name": "embodied_vlm",
+                }
+            )
+            sid = json.loads(created.body)["session_id"]
+            resp1 = await worker._generate(
+                sid,
+                {"text": "SYS+U0", "image_data": ["img0a", "img0b"]},
+            )
+            resp2 = await worker._generate(
+                sid,
+                {"text": "+U1", "image_data": ["img1a", "img1b"]},
+            )
+            await worker._close_session(
+                sid, {"kept_lens": {0: 2, 1: 2}, "is_end": {1: True}}
+            )
+            return json.loads(resp1.body), json.loads(resp2.body)
+
+        r1, r2 = asyncio.run(_run())
+        assert r1["prompt_tokens"] == 10 and r1["cached_tokens"] == 0
+        assert r2["prompt_tokens"] == 20 and r2["cached_tokens"] == 10
+
+        open_calls = [(p, b, h) for p, b, h in calls if p == "/open_session"]
+        gen_calls = [(p, b, h) for p, b, h in calls if p == "/generate"]
+        close_calls = [(p, b, h) for p, b, h in calls if p == "/close_session"]
+        assert len(open_calls) == 1
+        assert "streaming" not in open_calls[0][1]
+        assert open_calls[0][2]["X-SMG-Routing-Key"] == "7"
+        assert len(gen_calls) == 2
+        assert gen_calls[0][1]["text"] == "SYS+U0"
+        assert gen_calls[0][1]["image_data"] == ["img0a", "img0b"]
+        assert gen_calls[1][1]["text"] == "+U1"
+        assert gen_calls[1][1]["image_data"] == ["img1a", "img1b"]
+        assert gen_calls[0][1]["session_params"] == {"id": "eng-sess-1"}
+        assert gen_calls[1][1]["session_params"] == {
+            "id": "eng-sess-1",
+            "rid": gen_calls[0][1]["rid"],
+        }
+        assert gen_calls[0][1]["rid"] != gen_calls[1][1]["rid"]
+        assert gen_calls[0][1]["top_logprobs_num"] == 2
+        assert len(close_calls) == 1
+        assert close_calls[0][1] == {"session_id": "eng-sess-1"}
+
+        assert len(emitted_parts) == 2
+        assert emitted_parts[0].delta_text == "SYS+U0"
+        assert emitted_parts[1].delta_text == "+U1"
+        assert emitted_parts[0].prompt_tokens == 10
+        assert emitted_parts[1].prompt_tokens == 20
+        assert emitted_parts[0].topk_ids == [[101, 9], [201, 8]]
+        assert emitted_parts[1].topk_logprobs == [[-0.2, -1.5], [-0.4, -1.2]]
+
+    def test_weight_sync_defers_close_for_inflight_engine_session(self):
+        """set_loaded_versions does not close an engine session mid-/generate;
+        instead it defers the close until the in-flight request finishes, then
+        the next turn reopens cleanly without a stale parent rid."""
+        calls: list[tuple[str, dict]] = []
+        entered_turn2 = asyncio.Event()
+        release_turn2 = asyncio.Event()
+        session_counter = 0
+
+        class _BlockingClient:
+            async def async_post(self, path, body, headers=None, timeout_s=None):
+                del headers, timeout_s
+                nonlocal session_counter
+                calls.append((path, dict(body)))
+                if path == "/open_session":
+                    session_counter += 1
+                    return f"eng-sess-{session_counter}"
+                if path == "/close_session":
+                    return {"status": "ok"}
+                if path == "/generate":
+                    gen_no = sum(1 for p, _ in calls if p == "/generate")
+                    if gen_no == 2:
+                        entered_turn2.set()
+                        await release_turn2.wait()
+                    return {
+                        "text": f"r{gen_no}",
+                        "output_ids": [10 + gen_no],
+                        "meta_info": {
+                            "finish_reason": {"type": "stop"},
+                            "weight_version": 2 if gen_no <= 2 else 3,
+                            "prompt_tokens": 5 * gen_no,
+                            "output_token_logprobs": [(-0.1, 10 + gen_no)],
+                        },
+                    }
+                raise AssertionError(path)
+
+        worker, _ = self._make_worker(
+            engine_clients=[_BlockingClient()],
+            keep_sessions_on_weight_sync=False,
+            topk_log_probs=0,
+        )
+
+        async def _run():
+            created = await worker._create_session(
+                {
+                    "group_id": 11,
+                    "traj_index": 0,
+                    "group_size": 1,
+                    "task_name": "embodied_vlm",
+                }
+            )
+            sid = json.loads(created.body)["session_id"]
+            await worker._generate(sid, {"text": "U0", "image_data": ["i0"]})
+
+            turn2_task = asyncio.create_task(
+                worker._generate(sid, {"text": "+U1", "image_data": ["i1"]})
+            )
+            await entered_turn2.wait()
+
+            # Weight sync arrives while turn 2 is mid-generate.
+            await worker.set_loaded_versions({0: 3})
+            close_before = [b for p, b in calls if p == "/close_session"]
+            assert close_before == []
+
+            release_turn2.set()
+            resp2 = await turn2_task
+            assert resp2.status_code == 200
+            close_after = [b for p, b in calls if p == "/close_session"]
+            assert close_after == [{"session_id": "eng-sess-1"}]
+
+            # Turn 3 reopens a new engine session and resends full history
+            # without carrying the closed session's rid.
+            resp3 = await worker._generate(sid, {"text": "+U2", "image_data": ["i2"]})
+            assert resp3.status_code == 200
+
+        asyncio.run(_run())
+        gen_calls = [b for p, b in calls if p == "/generate"]
+        assert len(gen_calls) == 3
+        assert gen_calls[2]["session_params"] == {"id": "eng-sess-2"}
+        assert gen_calls[2]["image_data"] == ["i0", "i1", "i2"]
+
+    def test_retained_history_skipped_when_engine_session_kept_and_tracked_on_fallback(
+        self,
+    ):
+        """Keeping engine sessions across weight sync retains zero image/text
+        history in SessionServerWorker RAM; the fallback resend path tracks
+        retained_history_bytes in metrics and clears it on close."""
+
+        class _SimpleClient:
+            async def async_post(self, path, body, headers=None, timeout_s=None):
+                del body, headers, timeout_s
+                if path == "/open_session":
+                    return "eng-sess-1"
+                if path == "/close_session":
+                    return {"status": "ok"}
+                return {
+                    "text": "ok",
+                    "output_ids": [42],
+                    "meta_info": {
+                        "finish_reason": {"type": "stop"},
+                        "weight_version": 2,
+                        "prompt_tokens": 5,
+                        "output_token_logprobs": [(-0.1, 42)],
+                    },
+                }
+
+        # Case 1: keep_sessions_on_weight_sync=True -> zero retained history.
+        worker_kept, _ = self._make_worker(
+            engine_clients=[_SimpleClient()],
+            keep_sessions_on_weight_sync=True,
+            topk_log_probs=0,
+        )
+
+        async def _run_kept():
+            created = await worker_kept._create_session(
+                {
+                    "group_id": 21,
+                    "traj_index": 0,
+                    "group_size": 1,
+                    "task_name": "embodied_vlm",
+                }
+            )
+            sid = json.loads(created.body)["session_id"]
+            await worker_kept._generate(sid, {"text": "U0", "image_data": ["x" * 1024]})
+            session = worker_kept._sessions[sid]
+            assert session.committed_text == ""
+            assert session.all_image_data == []
+            metrics = await worker_kept.get_metrics()
+            assert metrics["session_server/retained_history_bytes"] == 0
+
+        asyncio.run(_run_kept())
+
+        # Case 2: keep_sessions_on_weight_sync=False -> tracked & cleared on close.
+        worker_fb, _ = self._make_worker(
+            engine_clients=[_SimpleClient()],
+            keep_sessions_on_weight_sync=False,
+            topk_log_probs=0,
+        )
+
+        async def _run_fallback():
+            created = await worker_fb._create_session(
+                {
+                    "group_id": 22,
+                    "traj_index": 0,
+                    "group_size": 1,
+                    "task_name": "embodied_vlm",
+                }
+            )
+            sid = json.loads(created.body)["session_id"]
+            await worker_fb._generate(sid, {"text": "U0", "image_data": ["y" * 500]})
+            metrics_live = await worker_fb.get_metrics()
+            assert metrics_live["session_server/retained_history_bytes"] == 504
+            await worker_fb._close_session(sid, {"kept_lens": {0: 1}})
+            metrics_after = await worker_fb.get_metrics()
+            assert metrics_after["session_server/retained_history_bytes"] == 0
+
+        asyncio.run(_run_fallback())
+
+    def test_least_loaded_engine_pinning_and_release(self):
+        """Direct engine pinning picks the least-loaded engine and releases the
+        count when a group is voided, avoiding group_id % N load skew."""
+        worker, _ = self._make_worker(
+            router_client=None,
+            engine_clients=["eng-0", "eng-1"],
+            keep_sessions_on_weight_sync=True,
+            topk_log_probs=0,
+        )
+        assert worker._engine_client_for_group(0) == "eng-0"
+        assert worker._engine_client_for_group(1) == "eng-1"
+        assert worker._engine_active_groups == [1, 1]
+
+        # Group 0 finishes; engine 0 now has 0 active groups while engine 1 has 1.
+        worker._release_group_engine(0)
+        assert worker._engine_active_groups == [0, 1]
+
+        # Odd group_id 3 would hash to eng-1 under modulo, but least-loaded
+        # assigns it to idle eng-0 and keeps it pinned there.
+        assert worker._engine_client_for_group(3) == "eng-0"
+        assert worker._engine_client_for_group(3) == "eng-0"
+        assert worker._engine_active_groups == [1, 1]
+
+    def test_multimodal_assembly_rejects_prompt_tokens_mismatch(self):
+        """Read-side multimodal assembly verifies actor processor token count
+        against engine-reported prompt_tokens and raises on mismatch."""
+        import torch
+
+        class _StubProcessor:
+            def __call__(self, text, images=None, **kwargs):
+                del images, kwargs
+                n = 3 if text[0] == "SYS+U0" else 2
+                return {
+                    "input_ids": torch.arange(n, dtype=torch.long).unsqueeze(0),
+                    "pixel_values": torch.zeros((1, 4)),
+                    "image_grid_thw": torch.tensor([[1, 2, 2]]),
+                }
+
+        def _make_payload(turn1_prompt_tokens: int) -> GroupPayload:
+            p0 = PayloadPart(
+                group_id=9,
+                traj_index=0,
+                turn_index=0,
+                input_ids=[],
+                output_ids=[10, 11],
+                logprobs=[-0.1, -0.2],
+                version_start=1,
+                weight_version=1,
+                finish_reason={"type": "stop"},
+                delta_text="SYS+U0",
+                output_text="a0",
+                prompt_tokens=3,
+            )
+            p1 = PayloadPart(
+                group_id=9,
+                traj_index=0,
+                turn_index=1,
+                input_ids=[],
+                output_ids=[12],
+                logprobs=[-0.3],
+                version_start=1,
+                weight_version=1,
+                finish_reason={"type": "stop"},
+                delta_text="+U1",
+                output_text="a1",
+                prompt_tokens=turn1_prompt_tokens,
+            )
+            fin = PayloadPart(
+                group_id=9,
+                traj_index=-1,
+                turn_index=-1,
+                input_ids=[],
+                output_ids=[],
+                logprobs=None,
+                version_start=1,
+                weight_version=1,
+                finish_reason={},
+                last=True,
+                rewards=[1.0],
+                verdicts={
+                    0: {
+                        "kept_lens": {0: 2, 1: 1},
+                        "continues_prev": [False, True],
+                        "is_end": {0: False, 1: True},
+                        "not_training": {},
+                        "extra_fields_train": {},
+                    }
+                },
+            )
+            return GroupPayload(group_id=9, parts=[p0, p1, fin])
+
+        # Matching prompt_tokens (3 + 2 + 2 = 7) succeeds.
+        ok = assemble_group_payload(
+            _make_payload(7),
+            return_logprobs=True,
+            merge_continuous_turns=True,
+            processor=_StubProcessor(),
+        )
+        assert ok.num_sequence == 1
+
+        # Mismatched prompt_tokens raises ValueError with counts.
+        with pytest.raises(ValueError, match="prompt token count mismatch"):
+            assemble_group_payload(
+                _make_payload(9),
+                return_logprobs=True,
+                merge_continuous_turns=True,
+                processor=_StubProcessor(),
+            )
+
+    def test_assemble_group_payload_merges_continuous_token_turns(self):
+        """merge_continuous_turns=True folds continuous turns into one sequence
+        with a multi-turn response_mask and aligned rollout_logprobs."""
+        p0 = PayloadPart(
+            group_id=3,
+            traj_index=0,
+            turn_index=0,
+            input_ids=[1, 2],
+            output_ids=[3, 4],
+            logprobs=[-0.1, -0.2],
+            version_start=1,
+            weight_version=1,
+            finish_reason={"type": "stop"},
+        )
+        p1 = PayloadPart(
+            group_id=3,
+            traj_index=0,
+            turn_index=1,
+            input_ids=[1, 2, 3, 4, 5],
+            output_ids=[6, 7],
+            logprobs=[-0.3, -0.4],
+            version_start=1,
+            weight_version=2,
+            finish_reason={"type": "stop"},
+        )
+        fin = PayloadPart(
+            group_id=3,
+            traj_index=-1,
+            turn_index=-1,
+            input_ids=[],
+            output_ids=[],
+            logprobs=None,
+            version_start=1,
+            weight_version=2,
+            finish_reason={},
+            last=True,
+            rewards=[1.0],
+            verdicts={
+                0: {
+                    "kept_lens": {0: 2, 1: 2},
+                    "continues_prev": [False, True],
+                    "is_end": {0: False, 1: True},
+                    "not_training": {},
+                    "extra_fields_train": {},
+                }
+            },
+        )
+        result = assemble_group_payload(
+            GroupPayload(group_id=3, parts=[p0, p1, fin]),
+            return_logprobs=True,
+            merge_continuous_turns=True,
+        )
+        assert result.num_sequence == 1
+        assert result.input_ids == [[1, 2, 3, 4, 5, 6, 7]]
+        assert result.prompt_lengths == [2]
+        assert result.response_lengths == [5]
+        assert result.response_mask == [[False, False, True, True, False, True, True]]
+        assert result.rollout_logprobs == [[-0.1, -0.2, 0.0, -0.3, -0.4]]
+        assert result.version_start == [1]
+        assert result.version_end == [2]
+        assert result.is_end == [True]

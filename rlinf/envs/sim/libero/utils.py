@@ -134,6 +134,32 @@ def quat2axisangle(quat: np.ndarray) -> np.ndarray:
     return (quat[:3] * 2.0 * math.acos(quat[3])) / den
 
 
+def _aggregated_libero_benchmark(
+    benchmark, benchmark_cls, name: str, suite_names: tuple[str, ...]
+):
+    """Build a LIBERO benchmark that keeps each task's source suite."""
+    tasks = []
+    task_suite_names: list[str] = []
+    for suite_name in suite_names:
+        for task in benchmark.task_maps.get(suite_name, {}).values():
+            tasks.append(task)
+            task_suite_names.append(suite_name)
+
+    class AggregatedLibero(benchmark_cls):
+        def __init__(self, task_order_index=0):
+            super().__init__(task_order_index=task_order_index)
+            self.name = name
+            self._make_benchmark()
+
+        def _make_benchmark(self):
+            self.tasks = list(tasks)
+            self.n_tasks = len(self.tasks)
+            self.task_suite_names = list(task_suite_names)
+
+    benchmark.BENCHMARK_MAPPING[name] = AggregatedLibero
+    return AggregatedLibero
+
+
 def get_benchmark_overridden(benchmark_name: str) -> type[Benchmark]:
     """
     Return the Benchmark class for a given name.
@@ -150,6 +176,17 @@ def get_benchmark_overridden(benchmark_name: str) -> type[Benchmark]:
     Benchmark = benchmark.Benchmark
 
     name = str(benchmark_name).lower()
+    grouped = {
+        "libero_gso": ("libero_goal", "libero_spatial", "libero_object"),
+        "libero_all": (
+            "libero_goal",
+            "libero_spatial",
+            "libero_object",
+            "libero_10",
+        ),
+    }
+    if name in grouped:
+        return _aggregated_libero_benchmark(benchmark, Benchmark, name, grouped[name])
     if name == "libero_mem" and name not in benchmark.BENCHMARK_MAPPING:
         raise ImportError(
             "task_suite_name='libero_mem' requires the LIBERO-Mem fork "

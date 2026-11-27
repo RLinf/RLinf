@@ -31,6 +31,9 @@ class RewardVideoProcessor:
     def __init__(self, processor: Any) -> None:
         self.processor = processor
 
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.processor, name)
+
     async def process_mm_data_async(
         self, image_data: Any, input_text: Any, request_obj: Any, *args, **kwargs
     ) -> dict[str, Any]:

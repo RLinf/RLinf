@@ -54,6 +54,9 @@ PATH_DEFORMATIONS = [
     "/health/",
     "/server_info/",
     "/model_info?",
+    "/open_session/",
+    "/close_session/",
+    "/OPEN_SESSION",
 ]
 
 
@@ -116,7 +119,14 @@ class TestPeerWhitelistMiddleware:
 
     def test_remote_peer_passes_only_the_whitelisted_paths(self):
         peer = ("10.208.10.188", 40000)
-        for path in ("/generate", "/health", "/server_info", "/model_info"):
+        for path in (
+            "/generate",
+            "/open_session",
+            "/close_session",
+            "/health",
+            "/server_info",
+            "/model_info",
+        ):
             handler_ran, status = _drive(path, peer)
             assert handler_ran, f"{path}: handler must run"
             assert status == 200, f"{path}: got {status}"

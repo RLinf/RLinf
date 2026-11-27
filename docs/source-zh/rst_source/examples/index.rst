@@ -36,6 +36,12 @@
 
       用世界模型作为模拟器做 VLA 闭环强化学习——OpenSora、Wan 与 BWM。
 
+   .. grid-item-card:: 具身智能体
+      :link: embodied_agent/index
+      :link-type: doc
+
+      以多轮工具调用范式训练推理 VLM 具身智能体——包含 VLM-as-Policy 与后续高层规划大脑。
+
 模型 × 模拟器速查矩阵
 ---------------------
 

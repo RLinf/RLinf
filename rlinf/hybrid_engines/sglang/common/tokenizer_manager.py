@@ -54,16 +54,14 @@ class TokenizerManager(_TokenizerManager):
             port_args=port_args,
         )
 
-        self.run_task_method_communicator = _Communicator(
-            self.send_to_scheduler,
-            fan_out=server_args.dp_size,
-        )
-        self.sync_hf_weight_communicator = _Communicator(
-            self.send_to_scheduler, server_args.dp_size
-        )
-        self.abort_generation_communicator = _Communicator(
-            self.send_to_scheduler, server_args.dp_size
-        )
+        # SGLang 0.5.19 keeps a zmq socket on send_to_scheduler. FanOutCommunicator
+        # calls its first argument, so the send function is _dispatch_to_scheduler.
+        # Older releases exposed the send callable itself as send_to_scheduler.
+        dispatch = getattr(self, "_dispatch_to_scheduler", self.send_to_scheduler)
+        fan_out = server_args.dp_size
+        self.run_task_method_communicator = _Communicator(dispatch, fan_out=fan_out)
+        self.sync_hf_weight_communicator = _Communicator(dispatch, fan_out=fan_out)
+        self.abort_generation_communicator = _Communicator(dispatch, fan_out=fan_out)
 
         _extra_mapping = [
             (TaskMethodOutput, self.run_task_method_communicator.handle_recv),
@@ -94,7 +92,7 @@ class TokenizerManager(_TokenizerManager):
         if isinstance(obj, str):
             obj = TaskMethodInput(method_name=obj)
         res: list[TaskMethodOutput] = await self.run_task_method_communicator(obj)
-        return res[0].result
+        return res[0].unpacked_result()
 
     async def sync_hf_weight(
         self,

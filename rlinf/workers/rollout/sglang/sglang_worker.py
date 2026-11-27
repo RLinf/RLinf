@@ -47,7 +47,34 @@ from rlinf.workers.rollout.utils import (
     print_sglang_outputs,
 )
 
-_SERVER_ARGS_FIELDS = {f.name for f in dataclasses.fields(ServerArgs)}
+
+def _server_args_fields(cls: Any) -> set[str]:
+    """Return field names defined by SGLang's ``ServerArgs`` across versions.
+
+    SGLang <=0.5.x used ``dataclasses``; SGLang 0.5.22+ uses ``msgspec.Struct``.
+    Sphinx ``autodoc_mock_imports`` replaces ``ServerArgs`` with a mock that
+    matches neither and yields an empty set.
+    """
+    if dataclasses.is_dataclass(cls):
+        return {f.name for f in dataclasses.fields(cls)}
+    struct_fields = getattr(cls, "__struct_fields__", None)
+    if struct_fields is not None:
+        return set(struct_fields)
+    return set()
+
+
+def _server_args_asdict(server_args: Any) -> dict[str, Any]:
+    """Serialize a ``ServerArgs`` instance to a plain dict across versions."""
+    if dataclasses.is_dataclass(server_args):
+        return dataclasses.asdict(server_args)
+    if hasattr(type(server_args), "__struct_fields__"):
+        import msgspec
+
+        return msgspec.structs.asdict(server_args)
+    raise TypeError(f"Unsupported ServerArgs type: {type(server_args)!r}")
+
+
+_SERVER_ARGS_FIELDS = _server_args_fields(ServerArgs)
 
 
 class SGLangWorker(Worker):
@@ -220,6 +247,24 @@ class SGLangWorker(Worker):
                 "enable_deterministic_inference", False
             ),
         }
+        max_mamba_cache_size = self._cfg_rollout.sglang.get(
+            "max_mamba_cache_size", None
+        )
+        if max_mamba_cache_size is not None:
+            version_dependent_args["max_mamba_cache_size"] = int(max_mamba_cache_size)
+        enable_streaming_session = bool(
+            self._cfg_rollout.sglang.get("enable_streaming_session", False)
+        )
+        if enable_streaming_session:
+            version_dependent_args["enable_streaming_session"] = True
+        cuda_graph_max_bs_value = min(
+            self._cfg_rollout.cuda_graph_max_bs,
+            self._cfg_rollout.max_running_requests,
+        )
+        if "cuda_graph_max_bs_decode" in _SERVER_ARGS_FIELDS:
+            version_dependent_args["cuda_graph_max_bs_decode"] = cuda_graph_max_bs_value
+        else:
+            version_dependent_args["cuda_graph_max_bs"] = cuda_graph_max_bs_value
         for name in list(version_dependent_args):
             if name in _SERVER_ARGS_FIELDS:
                 continue
@@ -233,10 +278,6 @@ class SGLangWorker(Worker):
         server_args = ServerArgs(
             model_path=self._cfg_rollout.model.model_path,
             disable_cuda_graph=not use_cudagraph,
-            cuda_graph_max_bs=min(
-                self._cfg_rollout.cuda_graph_max_bs,
-                self._cfg_rollout.max_running_requests,
-            ),
             tp_size=self._cfg_rollout.tensor_parallel_size,
             # Expert parallel: pass ep_size explicitly. sglang derives
             # moe_tp = tp // ep // moe_dp itself. ep_size defaults to
@@ -289,7 +330,7 @@ class SGLangWorker(Worker):
             server_args.skip_server_warmup = True
 
         self.log_on_first_rank(f"{server_args=}")
-        return dataclasses.asdict(server_args)
+        return _server_args_asdict(server_args)
 
     async def stop(self):
         """Stop the SGLang engine and finalize stats collectors."""

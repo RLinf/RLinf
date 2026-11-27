@@ -1,0 +1,32 @@
+# PEAR Stage 2 on LIBERO-10 (Long): extends episode response budget to 256k.
+
+defaults:
+  - libero_gso_grpo_pear_sglang
+  - _self_
+
+runner:
+  experiment_name: "libero_10_grpo_pear_stage2"
+  logger:
+    experiment_name: "libero_10_grpo_pear_stage2"
+  seq_length: 262144
+
+data:
+  task_suite_name: libero_10
+
+algorithm:
+  sampling_params:
+    max_new_tokens: 262144
+
+agentloop:
+  max_turns: 64
+
+rollout:
+  sglang:
+    response_budget: 262144
+  model:
+    max_new_tokens: 262144
+
+actor:
+  model:
+    encoder_seq_length: 262144
+    max_new_tokens: 262144

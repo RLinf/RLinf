@@ -145,6 +145,7 @@ SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
 SupportedModel.GLM4_MOE_LITE = SupportedModel.register("glm4_moe_lite", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
+SupportedModel.QWEN_VLM = SupportedModel.register("qwen_vlm", force=True)
 SupportedModel.SUPERMIMIC = SupportedModel.register("supermimic", force=True)
 
 # Policies whose training entry point reads a contract other than ``obs["states"]``.
@@ -192,6 +193,7 @@ EMBODIED_MODEL = set(
         SupportedModel.RECAP_VALUE_MODEL,
         SupportedModel.STEAM_VALUE_MODEL,
         SupportedModel.EVO1,
+        SupportedModel.QWEN_VLM,
         SupportedModel.SUPERMIMIC,
     }
 )
@@ -1471,6 +1473,21 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if model_type == SupportedModel.QWEN_VLM and not only_eval:
+        if int(model_cfg.get("num_action_chunks", 1)) != 1:
+            raise ValueError("Qwen VLM policy emits one macro action per turn.")
+        if int(model_cfg.get("action_dim", 8)) != 8:
+            raise ValueError(
+                "LIBERO VLM actions are 7 relative quantities plus a validity flag."
+            )
+        if algorithm_cfg.get("logprob_type") != "sequence_token_level":
+            raise ValueError(
+                "Qwen VLM GRPO requires algorithm.logprob_type=sequence_token_level."
+            )
+        if float(cfg.rollout.sampling_params.get("temperature_train", 1.0)) != 1.0:
+            raise ValueError(
+                "Qwen VLM token replay requires rollout temperature_train=1.0."
+            )
     validate_env_policy_fields(cfg, model_cfg)
     for index, adapter in enumerate(model_cfg.get("merged_loras", None) or []):
         assert adapter.get("path"), (
@@ -1578,9 +1595,10 @@ def validate_embodied_cfg(cfg):
             SupportedModel.OPENVLA_OFT,
             SupportedModel.OPENPI,
             SupportedModel.LINGBOTVLAV2,
+            SupportedModel.QWEN_VLM,
         ], (
-            f"algorithm.recompute_logprobs supports "
-            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value, SupportedModel.OPENPI.value, SupportedModel.LINGBOTVLAV2.value]}, "
+            "algorithm.recompute_logprobs supports openvla, openvla_oft, "
+            "openpi, lingbotvlav2, and qwen_vlm, "
             f"got '{model_cfg.model_type}'."
         )
         assert algorithm_cfg.get("adv_type", None) != "opd", (
@@ -2375,7 +2393,10 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             f"got {cfg.algorithm.adv_type!r}."
         )
     reward_cfg = cfg.get("reward", None)
-    if reward_cfg is None or reward_cfg.get("reward_type", None) != "searchr1":
+    reward_type = (
+        reward_cfg.get("reward_type", None) if reward_cfg is not None else None
+    )
+    if reward_type not in ("searchr1", "embodied_vlm"):
         return cfg
 
     with open_dict(cfg.agentloop):
@@ -2426,7 +2447,7 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             f"rollout.sglang.tool_call_parser={actual_parser!r}."
         )
 
-    if cfg.critic.get("use_critic_model", False):
+    if OmegaConf.select(cfg, "critic.use_critic_model", default=False):
         if not cfg.runner.get("synchronous", False):
             raise ValueError("SearchR1 PPO requires runner.synchronous=True.")
         if (
@@ -2475,7 +2496,7 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             )
 
     component_placement = ModelParallelComponentPlacement(cfg, Cluster())
-    if cfg.critic.get("use_critic_model", False) and (
+    if OmegaConf.select(cfg, "critic.use_critic_model", default=False) and (
         not component_placement.is_collocated
         or component_placement.get_hardware_ranks("critic")
         != component_placement.get_hardware_ranks("actor")
@@ -2485,13 +2506,11 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             "to share the same GPUs."
         )
     if not component_placement.is_collocated:
-        # The Megatron MA actor gathers the full rollout batch before
-        # training, so it also runs under disaggregated placement. The FSDP
-        # MA actor still asserts collocated placement internally.
-        if cfg.actor.training_backend != "megatron":
+        if cfg.actor.training_backend not in ("megatron", "fsdp"):
             raise ValueError(
-                "SearchR1 multi-agent actors support only collocated component "
-                "placement unless actor.training_backend is megatron."
+                "Multi-agent actors support disaggregated placement only with "
+                "actor.training_backend 'megatron' or 'fsdp', found "
+                f"{cfg.actor.training_backend!r}."
             )
     if cfg.runner.get("async_mode", False):
         if not component_placement.is_disaggregated:
@@ -2730,6 +2749,19 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             if task_settings.get("generate_timeout_s", None) is None:
                 task_settings.generate_timeout_s = session_cfg.generate_timeout_s
         session_cfg.verify_assembly = bool(session_cfg.get("verify_assembly", False))
+        session_cfg.merge_continuous_turns = bool(
+            session_cfg.get("merge_continuous_turns", False)
+        )
+        session_cfg.engine_streaming_session = bool(
+            session_cfg.get("engine_streaming_session", False)
+        )
+        session_cfg.keep_sessions_on_weight_sync = bool(
+            session_cfg.get("keep_sessions_on_weight_sync", False)
+        )
+        session_cfg.topk_log_probs = int(session_cfg.get("topk_log_probs", 0))
+        session_cfg.engine_session_capacity = int(
+            session_cfg.get("engine_session_capacity", 1_000_000)
+        )
         # Checked before the conversion: dict() of anything else raises a
         # TypeError naming the call, not the config key.
         chat_template_kwargs = session_cfg.get("chat_template_kwargs", None)
@@ -2748,10 +2780,10 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
     reward_type = (
         reward_cfg.get("reward_type", None) if reward_cfg is not None else None
     )
-    if reward_type != "searchr1":
+    if reward_type not in ("searchr1", "embodied_vlm"):
         raise ValueError(
-            f"session_server.enable requires reward.reward_type 'searchr1', "
-            f"found {reward_type!r}."
+            "session_server.enable requires reward.reward_type 'searchr1' or "
+            f"'embodied_vlm', found {reward_type!r}."
         )
     if not cfg.runner.get("async_mode", False):
         raise ValueError(
@@ -2759,11 +2791,11 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             "async runner drives the session servers (the synchronous and "
             "eval runners keep the generate channels)."
         )
-    if cfg.actor.training_backend != "megatron":
+    if cfg.actor.training_backend not in ("megatron", "fsdp"):
         raise ValueError(
-            f"session_server.enable requires actor.training_backend "
-            f"'megatron' (the session payload is assembled by "
-            f"MAMegatronActor), found {cfg.actor.training_backend!r}."
+            "session_server.enable requires actor.training_backend "
+            "'megatron' or 'fsdp' (assembled by MAMegatronActor or "
+            f"MAFSDPActor), found {cfg.actor.training_backend!r}."
         )
     backend_type = OmegaConf.select(
         cfg, "rollout.sglang.backend_type", default="engine"
@@ -2884,13 +2916,14 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             "reuse an idle connection the engine's uvicorn has already "
             "closed (an ECONNRESET race)."
         )
-    try:
-        import sglang_router  # noqa: F401
-    except ImportError:
-        raise ValueError(
-            "rollout.router.type 'sglang' requires the sglang_router "
-            "package; install it in the training environment."
-        )
+    if not cfg.session_server.engine_streaming_session:
+        try:
+            import sglang_router  # noqa: F401
+        except ImportError:
+            raise ValueError(
+                "rollout.router.type 'sglang' requires the sglang_router "
+                "package; install it in the training environment."
+            )
     if cfg.session_server.num_servers < 1 or cfg.session_server.payload_shards < 1:
         raise ValueError(
             f"session_server.num_servers and session_server.payload_shards "

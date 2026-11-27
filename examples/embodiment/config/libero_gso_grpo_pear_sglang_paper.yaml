@@ -1,0 +1,55 @@
+# Paper-scale disaggregated async VLM-as-Policy (PEAR Stage 1) on LIBERO-GSO.
+#
+# Layout (4 nodes, 8 GPUs each = 32 H200 GPUs):
+#   - actor (FSDP2, Qwen3.8-27B): global hardware ranks 0-15 (nodes 0-1)
+#   - rollout (2 x SGLang server TP8): global hardware ranks 16-31 (nodes 2-3)
+#   - 2 SessionServer instances (one per rollout node) using least-loaded
+#     direct per-group engine pinning and parallel payload assembly.
+
+defaults:
+  - libero_gso_grpo_pear_sglang
+  - _self_
+
+cluster:
+  num_nodes: 4
+  component_placement:
+    actor: 0-15
+    rollout: 16-31
+    reward: 16-31
+
+runner:
+  experiment_name: "libero_gso_grpo_pear_sglang_paper"
+  logger:
+    experiment_name: "libero_gso_grpo_pear_sglang_paper"
+  # Paper run_stage1.sh caps at 1000 updates (reported Stage 1 curve ~148 steps).
+  max_steps: 1000
+
+data:
+  # 128 variable groups x 8 trajectories = 1024 trajectories per step
+  # (8 groups per actor DP rank across 16 actor GPUs).
+  rollout_batch_size: 128
+
+agentloop:
+  # Uncapped model turns up to the suite's native step budget (libero_goal: 300).
+  max_turns: 300
+  max_actor_accept_staleness: 4
+
+rollout_buffer:
+  max_inflight_groups: 160
+  max_buffered_groups: 256
+  max_dropped_groups_per_step: 1280
+
+session_server:
+  num_servers: 2
+  payload_shards: 2
+
+tools:
+  embodied_env:
+    max_concurrent_envs: 128
+
+rollout:
+  max_running_requests: 64
+  cuda_graph_max_bs: 64
+  sglang:
+    max_mamba_cache_size: 256
+    torch_compile_max_bs: 64

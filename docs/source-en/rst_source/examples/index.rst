@@ -36,6 +36,12 @@ Choose an entry point by benchmark, model family, or training paradigm:
 
       Closed-loop VLA RL using learned world models as simulators — OpenSora, Wan, and BWM.
 
+   .. grid-item-card:: Embodied Agents
+      :link: embodied_agent/index
+      :link-type: doc
+
+      Train reasoning VLMs as multi-turn tool-calling embodied agents — VLM-as-Policy and upcoming planners.
+
 Model × Simulator Quick Matrix
 ------------------------------
 

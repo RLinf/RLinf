@@ -1,0 +1,13 @@
+# engine: sglang==0.5.22
+# sglang 0.5.22 on CUDA 13 (torch 2.14.1 cu130, driver >= 580).
+# Upstream sglang 0.5.22 dropped CUDA 12 builds (torch 2.14.1, sglang-kernel 0.4.9, sgl-deep-gemm 0.2.2).
+-r sglang_0.5.22_common.txt
+
+cuda-python>=13.0
+flashinfer-python[cu13]==0.7.1
+humming-kernels[cu13]==0.1.12
+nvidia-cutlass-dsl[cu13]==4.8.0
+nvshmem4py-cu13
+sgl-deep-ep==0.1.2.post1
+sgl-deep-gemm==0.2.2
+sglang-kernel==0.4.9

@@ -156,6 +156,42 @@ def concat_batch(data1, data2):
     return batch
 
 
+def pad_stack_list_of_dict_tensor(list_of_dict: list, dim=0):
+    """Stack dictionaries of tensors, padding every non-batch axis to the max.
+
+    VLM turns have different prompt, image, and response lengths. Right-padding
+    those axes keeps a ``[turn, batch, ...]`` trajectory stackable. The batch
+    axis is not padded.
+    """
+    if len(list_of_dict) == 0:
+        return {}
+    ret = {}
+    for key in list_of_dict[0]:
+        values = [item[key] for item in list_of_dict]
+        first = values[0]
+        if first is None:
+            continue
+        if isinstance(first, dict):
+            ret[key] = pad_stack_list_of_dict_tensor(values, dim=dim)
+        elif isinstance(first, torch.Tensor):
+            ret[key] = _pad_and_stack_tensors(values, dim=dim)
+        else:
+            raise ValueError(f"{key=}, {type(first)} is not supported!")
+    return ret
+
+
+def _pad_and_stack_tensors(tensors: list[torch.Tensor], dim: int = 0) -> torch.Tensor:
+    rank = tensors[0].ndim
+    max_shape = [max(tensor.shape[axis] for tensor in tensors) for axis in range(rank)]
+    padded = []
+    for tensor in tensors:
+        pad = []
+        for axis in range(rank - 1, 0, -1):
+            pad.extend((0, max_shape[axis] - tensor.shape[axis]))
+        padded.append(torch.nn.functional.pad(tensor, pad) if any(pad) else tensor)
+    return torch.stack(padded, dim=dim)
+
+
 def stack_list_of_dict_tensor(list_of_dict: list, dim=0):
     if len(list_of_dict) == 0:
         return {}

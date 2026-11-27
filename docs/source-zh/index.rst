@@ -106,6 +106,7 @@
   SFT 与模仿学习 <rst_source/examples/sft_index>
   RL 算法示例 <rst_source/examples/methods_index>
   世界模型 <rst_source/examples/world_model_index>
+  具身智能体 <rst_source/examples/embodied_agent/index>
   模型评测 <rst_source/evaluations/index>
 
 .. toctree::

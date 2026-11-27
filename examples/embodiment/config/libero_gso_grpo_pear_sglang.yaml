@@ -1,0 +1,245 @@
+# Disaggregated async VLM-as-Policy (PEAR Stage 1) on LIBERO-GSO via RLinf's
+# unified SessionServer + AsyncAgentRunner + MAFSDPActor stack.
+#
+# Layout (2 nodes, 8 GPUs each):
+#   - actor (FSDP2, Qwen3.8-27B): global hardware ranks 0-7 (node 0)
+#   - rollout (SGLang server TP8): global hardware ranks 8-15 (node 1)
+#   - SessionServer (direct per-engine sessions), EmbodiedVLMAgentLoopWorker,
+#     and EmbodiedEnvToolWorker sit on rollout node(s); RolloutBuffer sits on
+#     the head node (node 0).
+#
+# Launch from the head node after starting Ray with unique RLINF_NODE_RANK:
+#   bash examples/embodiment/run_vlm_policy.sh libero_gso_grpo_pear_sglang
+
+defaults:
+  - model/qwen3_8_27b@actor.model
+  - model/qwen3_8_27b@rollout.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    actor: 0-7
+    rollout: 8-15
+    reward: 8-15
+
+runner:
+  task_type: reasoning
+  async_mode: True
+  output_dir: "../results"
+  experiment_name: "libero_gso_grpo_pear_sglang"
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_gso_grpo_pear_sglang"
+    logger_backends: ["tensorboard"]
+  max_epochs: 1
+  # Shortened smoke run. Paper stage 1 trains for ~148 steps (max_steps: 1000).
+  max_steps: 2
+  val_check_interval: -1
+  save_interval: -1
+  seq_length: 163840
+  enable_dynamic_batch_size: False
+  resume_dir: null
+
+data:
+  task_suite_name: libero_gso
+  task_id_filter: null
+  specific_reset_id: null
+  max_prompt_length: 2048
+  # 8 groups x 8 trajectories = 64 trajectories per step (1 group per actor DP rank).
+  rollout_batch_size: 8
+  val_rollout_batch_size: null
+  num_workers: 0
+  shuffle: True
+  seed: 42
+
+algorithm:
+  group_size: 8
+  n_minibatches: 1
+  training_batch_size_per_gpu: 1
+  max_num_gen_batches: 4
+  recompute_logprobs: False
+  shuffle_rollout: False
+  adv_type: grpo_dynamic
+  advantage_mode: trajectory
+  normalize_advantages: False
+  loss_type: pear_reinforce
+  loss_agg_func: "token-mean"
+  loss_scales: []
+  kl_beta: 0.0
+  kl_penalty_type: kl
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0.0
+  calculate_entropy: False
+  clip_ratio_c: 3.0
+  clip_ratio_low: 0.2
+  clip_ratio_high: 0.2
+  early_stop_imp_ratio: null
+  down_sampling:
+    do_down_sampling: True
+    down_sampling_config:
+      # DAPO equal-reward group filtering in RolloutBufferWorker.
+      reject_equal_reward: True
+  pear:
+    score_centering: False
+    global_token_mean: True
+  sampling_params:
+    do_sample: True
+    temperature: 1.0
+    top_k: -1
+    top_p: 1.0
+    repetition_penalty: 1.0
+    # Episode response budget matching PEAR Stage 1.
+    max_new_tokens: 160000
+
+agentloop:
+  group_name: "AgentLoopGroup"
+  task_name: "embodied_vlm"
+  is_dynamic_rollout_batch: True
+  max_turns: 16
+  tokens_per_image_estimate: 256
+  print_outputs: False
+  max_actor_accept_staleness: 4
+
+rollout_buffer:
+  max_inflight_groups: 12
+  max_buffered_groups: 16
+  max_dropped_groups_per_step: 80
+
+session_server:
+  enable: True
+  num_servers: 1
+  payload_shards: 2
+  merge_continuous_turns: True
+  engine_streaming_session: True
+  keep_sessions_on_weight_sync: True
+  topk_log_probs: 0
+  generate_timeout_s: 1800.0
+  payload_put_timeout_s: 300.0
+  max_pending_payload_bytes: 2147483648
+
+tools:
+  embodied_env:
+    camera_height: 512
+    camera_width: 512
+    reset_gripper_open: False
+    num_steps_wait: 10
+    max_concurrent_envs: 64
+    seed: 42
+
+rollout:
+  group_name: "RolloutGroup"
+  rollout_backend: "sglang"
+  tensor_parallel_size: 8
+  pipeline_parallel_size: 1
+  gpu_memory_utilization: 0.75
+  enforce_eager: False
+  distributed_executor_backend: mp
+  disable_log_stats: False
+  detokenize: True
+  return_logprobs: True
+  max_running_requests: 32
+  cuda_graph_max_bs: 32
+  pause_mode: retract
+  validate_weight_first_sync: False
+  validate_weight: False
+  print_outputs: False
+  sglang:
+    backend_type: server
+    # Let SGLang pick the hardware-optimal backend (flashinfer on Ampere,
+    # fa3 on Hopper) instead of hardcoding triton.
+    attention_backend: null
+    # Bound GDN recurrent-state slots (~4-5 per running request under
+    # extra_buffer plus sticky sessions) so default mamba_full_memory_ratio
+    # does not squeeze the KV cache pool.
+    max_mamba_cache_size: 256
+    decode_log_interval: 50000
+    use_torch_compile: False
+    torch_compile_max_bs: 32
+    reasoning_effort: xhigh
+    response_budget: 160000
+    fp32_modules: ["visual", "A_log", "lm_head"]
+  router:
+    type: sglang
+    policy: manual
+    assignment_mode: min_load
+    disable_retries: True
+    disable_health_check: True
+    request_timeout_secs: 1800
+    max_idle_secs: 600
+    log_level: warn
+  model:
+    model_path: "/path/to/model/Qwen3.8-27B" # https://huggingface.co/Qwen/Qwen3.8-27B
+    model_type: "qwen_vlm"
+    precision: "bf16"
+    embodiment: "libero"
+    is_lora: False
+    reasoning_effort: xhigh
+    max_new_tokens: 160000
+    trust_remote_code: True
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  enable_dp_load_balance: True
+  pack_traj: False
+  use_fp32_head: True
+  sync_precision: "bf16"
+  seed: 42
+  enable_offload: False
+  model:
+    model_path: "/path/to/model/Qwen3.8-27B" # https://huggingface.co/Qwen/Qwen3.8-27B
+    model_type: "qwen_vlm"
+    precision: "bf16"
+    encoder_seq_length: 163840
+    embodiment: "libero"
+    action_dim: 8
+    num_action_chunks: 1
+    add_value_head: False
+    is_lora: False
+    reasoning_effort: xhigh
+    max_new_tokens: 160000
+    trust_remote_code: True
+  tokenizer:
+    tokenizer_model: "/path/to/model/Qwen3.8-27B" # https://huggingface.co/Qwen/Qwen3.8-27B
+    use_fast: False
+    trust_remote_code: True
+    padding_side: "right"
+  optim:
+    lr: 1.0e-6
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 0.0
+    clip_grad: 1.0
+  fsdp_config:
+    strategy: "fsdp2"
+    sharding_strategy: "full_shard"
+    gradient_checkpointing: True
+    gradient_checkpointing_use_reentrant: False
+    # Reduce-scatter each layer's gradient immediately on every micro-batch
+    # instead of holding unsharded 27B gradients (~55 GiB) across layers.
+    enable_gradient_accumulation: False
+    use_liger_kernel: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+      fp32_modules: ["model.visual"]
+      fp32_modules_tf32: True
+      fp32_residual: True
+
+reward:
+  use_reward_model: False
+  reward_type: "embodied_vlm"
+
+critic:
+  use_critic_model: False

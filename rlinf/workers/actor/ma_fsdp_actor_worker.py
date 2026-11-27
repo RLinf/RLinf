@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from dataclasses import replace
+from typing import Any, Optional
 
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.loss_scales import restore_source_dp_normalization
@@ -34,6 +35,7 @@ from rlinf.data.schema.actor_batch import (
 )
 from rlinf.data.schema.reasoning_results import (
     DynamicRolloutResult,
+    GroupDelivery,
 )
 from rlinf.hybrid_engines.fsdp.utils import (
     pack_fsdp_input,
@@ -50,8 +52,13 @@ from rlinf.utils.distributed import (
     balance_rollout_groups,
     compute_rollout_metrics_dynamic,
 )
+from rlinf.utils.metric_utils import (
+    VersionedTrajectoryRecord,
+    compute_staleness_metrics,
+)
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
+    PlacementMode,
 )
 from rlinf.utils.torch_functionals import batch_pad_to_fixed_len
 from rlinf.utils.utils import (
@@ -62,13 +69,19 @@ from rlinf.utils.utils import (
 from rlinf.workers.actor.fsdp_actor_worker import (
     FSDPActor,
 )
+from rlinf.workers.rollout.session_server.assembly import (
+    assemble_group_payload,
+    verify_group_assembly,
+)
+from rlinf.workers.rollout.session_server.payload import payload_channel_for
 
 
 class MAFSDPActor(FSDPActor):
-    """FSDP actor for Search-R1 multi-agent dynamic rollouts.
+    """FSDP actor for multi-agent and multimodal VLM dynamic rollouts.
 
-    The actor requires collocated placement because dynamic rollout batches are
-    consumed and trained within the same actor group.
+    Supports both collocated synchronous training and disaggregated async
+    training (including SessionServer ``GroupDelivery`` payloads, chunked FP32
+    LM head forward, ``pear_reinforce`` loss, and top-K score centering).
     """
 
     def __init__(
@@ -83,8 +96,12 @@ class MAFSDPActor(FSDPActor):
             "MAFSDPActor requires agentloop.is_dynamic_rollout_batch=True"
         )
         self.placement = placement
-        assert self.placement.is_collocated, (
-            "Only collocated placement is supported for multi-agent actor"
+        assert self.placement.placement_mode in (
+            PlacementMode.COLLOCATED,
+            PlacementMode.DISAGGREGATED,
+        ), (
+            "Multi-agent FSDP actor supports only collocated or disaggregated "
+            f"placement, got {self.placement.placement_mode}"
         )
         if self.cfg.algorithm.get("importance_sampling_fix", False):
             raise ValueError(
@@ -93,6 +110,73 @@ class MAFSDPActor(FSDPActor):
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
+        # Set by run_training for the duration of a training step and read by
+        # _assemble_delivery when SessionServer is enabled.
+        self._payload_channels: Optional[list[Channel]] = None
+        self._processor: Any = None
+
+        pear_cfg = self.cfg.algorithm.get("pear", None) or {}
+        is_pear = self.cfg.algorithm.loss_type == "pear_reinforce"
+        self._pear_score_centering = bool(pear_cfg.get("score_centering", False))
+        self._use_fp32_head = bool(self.cfg.actor.get("use_fp32_head", is_pear))
+        self._global_token_mean = bool(pear_cfg.get("global_token_mean", is_pear))
+        self._current_global_valid_tokens: Optional[float] = None
+
+    def _processor_or_load(self) -> Any:
+        if self._processor is None:
+            from transformers import AutoProcessor
+
+            self._processor = AutoProcessor.from_pretrained(
+                self.cfg.actor.model.model_path,
+                trust_remote_code=self.cfg.actor.model.get("trust_remote_code", True),
+            )
+        return self._processor
+
+    def _receive_rollout_result(self, channel: Channel) -> DynamicRolloutResult:
+        """Fetch one rollout result, assembling delivered SessionServer groups."""
+        result = channel.get()
+        if isinstance(result, GroupDelivery):
+            result = self._assemble_delivery(result)
+        return result
+
+    def _assemble_delivery(self, delivery: GroupDelivery) -> DynamicRolloutResult:
+        """Fetch and assemble one delivered group's payload from its channel."""
+        assert self._payload_channels is not None, (
+            "a group arrived as a GroupDelivery but this actor has no "
+            "payload channels: run_training must receive them when the "
+            "session server is enabled."
+        )
+        channel = payload_channel_for(
+            delivery.payload_ref.locator, self._payload_channels
+        )
+        payload = channel.get(key=delivery.payload_ref.key)
+        channel.remove_key(key=delivery.payload_ref.key, async_op=True)
+        session_cfg = self.cfg.get("session_server", None)
+        merge_turns = bool(
+            session_cfg.get("merge_continuous_turns", False)
+            if session_cfg is not None
+            else False
+        )
+        has_multimodal = any(
+            part.delta_text is not None for part in payload.parts if not part.last
+        )
+        processor = self._processor_or_load() if has_multimodal else None
+        response_budget = OmegaConf.select(
+            self.cfg, "rollout.sglang.response_budget", default=None
+        )
+        result = assemble_group_payload(
+            payload,
+            not self.cfg.algorithm.recompute_logprobs,
+            merge_continuous_turns=merge_turns,
+            processor=processor,
+            response_budget=response_budget,
+        )
+        result.group_id = delivery.group_id
+        result.task_name = delivery.task_name
+        verify = next(part.verify for part in payload.parts if part.last)
+        if verify is not None:
+            verify_group_assembly(result, verify, self.cfg)
+        return result
 
     def _get_num_rollout_results_per_dp(self) -> int:
         """Count question groups; each group can contain a different turn count."""
@@ -113,7 +197,10 @@ class MAFSDPActor(FSDPActor):
         Unlike get_batch, which receives one rollout result, this receives
         all of the step's groups and returns them as a list.
         """
-        results = [channel.get() for _ in range(self._get_num_rollout_results_per_dp())]
+        results = [
+            self._receive_rollout_result(channel)
+            for _ in range(self._get_num_rollout_results_per_dp())
+        ]
         if not channel.is_local:
             for result in results:
                 result.extra_fields_train["source_dp"] = [
@@ -298,6 +385,126 @@ class MAFSDPActor(FSDPActor):
         """Return the full response mask used by dynamic multi-agent rollouts."""
         return m_batch["response_mask"]
 
+    def _forward_chunked_fp32_head(
+        self,
+        m_batch: DynamicActorBatch,
+    ) -> tuple[TokenRows, TokenRows, Optional[list[torch.Tensor]]]:
+        """Run unpadded backbone forward + chunked FP32 LM head on assistant tokens.
+
+        Avoids materializing full ``[seq_len, vocab_size]`` logits on long
+        multimodal episodes (160k-256k tokens).
+        """
+        from rlinf.hybrid_engines.fsdp.fp32_head import (
+            response_logprobs_and_heads_from_hidden,
+            response_logprobs_from_hidden,
+        )
+
+        device = self.torch_platform.current_device()
+        backbone = self.model.model
+        lm_head = self.model.get_output_embeddings()
+        temperature = float(self.cfg.algorithm.sampling_params.temperature)
+
+        mm_list = m_batch.get("multi_modal_inputs")
+        topk_ids_list = (
+            m_batch.get("rollout_topk_ids") if self._pear_score_centering else None
+        )
+
+        logprobs_rows: TokenRows = []
+        entropy_rows: TokenRows = []
+        train_head_rows: Optional[list[torch.Tensor]] = (
+            [] if topk_ids_list is not None else None
+        )
+
+        for idx, (row, mask_row) in enumerate(
+            zip(m_batch["input_ids"], m_batch["response_mask"])
+        ):
+            sample_ids = row.to(device).unsqueeze(0)
+            sample_mask = mask_row.to(device=device, dtype=torch.bool)
+            sample_attn = torch.ones_like(sample_ids, dtype=torch.long)
+            resp_pos = sample_mask.nonzero(as_tuple=False).flatten()
+            model_inputs: dict[str, Any] = {
+                "input_ids": sample_ids,
+                "attention_mask": sample_attn,
+                "use_cache": False,
+                "return_dict": False,
+                "logits_to_keep": slice(0, 0),
+            }
+            if mm_list is not None and mm_list[idx] is not None:
+                for key, val in mm_list[idx].items():
+                    tensor = val.to(device)
+                    if key == "mm_token_type_ids" and tensor.ndim == 1:
+                        tensor = tensor.unsqueeze(0)
+                    model_inputs[key] = tensor
+
+            captured_hidden: list[torch.Tensor] = []
+
+            def _capture_backbone(_module, _args, output):
+                captured_hidden.append(output[0])
+
+            def _chunked_head_hook(_module, _args, _output):
+                hidden = captured_hidden.pop()
+                lm_weight = lm_head.weight
+                if resp_pos.numel() == 0:
+                    sel_lp = hidden.new_zeros((1, 0), dtype=torch.float32)
+                    sel_ent = hidden.new_zeros((1, 0), dtype=torch.float32)
+                    if train_head_rows is not None:
+                        k = int(topk_ids_list[idx].shape[-1])
+                        return (
+                            sel_lp,
+                            sel_ent,
+                            hidden.new_zeros((1, 0, k), dtype=torch.float32),
+                        )
+                    return (sel_lp, sel_ent)
+                if train_head_rows is not None:
+                    head_ids = topk_ids_list[idx].to(device=device, dtype=torch.long)
+                    return response_logprobs_and_heads_from_hidden(
+                        hidden,
+                        lm_weight,
+                        sample_ids,
+                        resp_pos.unsqueeze(0),
+                        head_ids.unsqueeze(0),
+                        temperature=temperature,
+                    )
+                return response_logprobs_from_hidden(
+                    hidden,
+                    lm_weight,
+                    sample_ids,
+                    resp_pos.unsqueeze(0),
+                    temperature=temperature,
+                )
+
+            # Call the root module so FSDP2 unshards root-level parameters
+            # (final norm and lm_head) and attaches pre-/post-backward hooks
+            # to the returned chunked logprob tensors, while logits_to_keep=
+            # slice(0, 0) keeps the full [seq_len, vocab] logits unallocated.
+            backbone_hook = backbone.register_forward_hook(_capture_backbone)
+            head_hook = lm_head.register_forward_hook(_chunked_head_hook)
+            try:
+                with self.amp_context:
+                    head_out = self.model(**model_inputs)[0]
+            finally:
+                backbone_hook.remove()
+                head_hook.remove()
+
+            if train_head_rows is not None:
+                sel_lp, sel_ent, sel_head = head_out
+            else:
+                sel_lp, sel_ent = head_out
+                sel_head = None
+
+            seq_lp = sel_lp.new_zeros(row.shape[0], dtype=torch.float32)
+            seq_ent = sel_ent.new_zeros(row.shape[0], dtype=torch.float32)
+            if resp_pos.numel() > 0:
+                seq_lp[resp_pos] = sel_lp[0]
+                seq_ent[resp_pos] = sel_ent[0]
+            if train_head_rows is not None and sel_head is not None:
+                train_head_rows.append(sel_head[0])
+
+            logprobs_rows.append(seq_lp)
+            entropy_rows.append(seq_ent)
+
+        return logprobs_rows, entropy_rows, train_head_rows
+
     def forward_backward_batch(
         self,
         idx: int,
@@ -309,17 +516,31 @@ class MAFSDPActor(FSDPActor):
             self.model,
             is_last_micro_batch=(idx + 1) == micro_batch_cnt,
         )
-        # batch for forward
-        logprobs, entropy = self.forward_batch(m_batch, True)
+        device = self.torch_platform.current_device()
+        can_use_fp32_head = (
+            self._use_fp32_head
+            and hasattr(self.model, "model")
+            and hasattr(self.model, "get_output_embeddings")
+            and self.model.get_output_embeddings() is not None
+        )
+        train_head_rows: Optional[list[torch.Tensor]] = None
+        if can_use_fp32_head:
+            logprobs, entropy, train_head_rows = self._forward_chunked_fp32_head(
+                m_batch
+            )
+            width = max(len(row) for row in logprobs)
+        else:
+            logprobs, entropy = self.forward_batch(m_batch, True)
+            width = self.cfg.actor.model.encoder_seq_length
 
-        width = self.cfg.actor.model.encoder_seq_length
         outputs = DynamicRolloutResult.materialize_actor_batch(
             {"logprobs": logprobs, "entropy": entropy},
             width,
             0,
-            self.torch_platform.current_device(),
+            device,
         )
         logprobs, entropy = outputs["logprobs"], outputs["entropy"]
+        raw_topk_logprobs = m_batch.get("rollout_topk_logprobs")
         m_batch = DynamicRolloutResult.materialize_actor_batch(
             {
                 key: value
@@ -336,7 +557,7 @@ class MAFSDPActor(FSDPActor):
             },
             width,
             0,
-            self.torch_platform.current_device(),
+            device,
         )
         # batch for backward
         old_logprobs = m_batch.get("recomputed_logprobs")
@@ -356,6 +577,38 @@ class MAFSDPActor(FSDPActor):
         clip_ratio_high = clip_ratio_high if clip_ratio_high is not None else clip_ratio
         clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
 
+        extra_loss_kwargs: dict[str, Any] = {}
+        if (
+            self._pear_score_centering
+            and train_head_rows is not None
+            and raw_topk_logprobs is not None
+        ):
+            from rlinf.algorithms.pear_score_centering import (
+                score_centering_correction,
+            )
+
+            sc_corr = logprobs.new_zeros(logprobs.shape, dtype=torch.float32)
+            sc_sampler_mass = logprobs.new_zeros(logprobs.shape, dtype=torch.float32)
+            sc_train_mass = logprobs.new_zeros(logprobs.shape, dtype=torch.float32)
+            for row_idx, (train_head, sampler_head) in enumerate(
+                zip(train_head_rows, raw_topk_logprobs)
+            ):
+                resp_pos = loss_mask[row_idx].nonzero(as_tuple=False).flatten()
+                if resp_pos.numel() == 0 or train_head.shape[0] != resp_pos.numel():
+                    continue
+                corr, s_mass, t_mass = score_centering_correction(
+                    train_head,
+                    sampler_head.to(device=device, dtype=torch.float32),
+                )
+                sc_corr[row_idx, resp_pos] = corr
+                sc_sampler_mass[row_idx, resp_pos] = s_mass
+                sc_train_mass[row_idx, resp_pos] = t_mass
+            extra_loss_kwargs["sc_correction"] = sc_corr
+            extra_loss_kwargs["sc_sampler_head_mass"] = sc_sampler_mass
+            extra_loss_kwargs["sc_train_head_mass"] = sc_train_mass
+        if self._current_global_valid_tokens is not None:
+            extra_loss_kwargs["global_valid_tokens"] = self._current_global_valid_tokens
+
         loss, mbs_metrics_data = policy_loss(
             task_type=self.task_type,
             loss_type=self.cfg.algorithm.loss_type,
@@ -370,15 +623,16 @@ class MAFSDPActor(FSDPActor):
             clip_log_ratio_min=self.cfg.algorithm.get("clip_log_ratio_min", None),
             clip_log_ratio_max=self.cfg.algorithm.get("clip_log_ratio_max", None),
             fast_path_zero_loss_mask=True,
+            **extra_loss_kwargs,
         )
 
-        entropy_loss = torch.tensor(0.0, device=self.torch_platform.current_device())
+        entropy_loss = torch.tensor(0.0, device=device)
         if self.calculate_entropy:
             entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
             if self.calculate_entropy_loss:
                 loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
-        kl_loss = torch.tensor(0.0, device=self.torch_platform.current_device())
+        kl_loss = torch.tensor(0.0, device=device)
         if self.kl_beta > 0 and ref_logprobs is not None:
             kld = kl_penalty(logprobs, ref_logprobs, self.kl_penalty_type)
             kl_loss = self.loss_agg_func(kld * m_batch["loss_scales"], loss_mask)
@@ -387,7 +641,18 @@ class MAFSDPActor(FSDPActor):
         # add to log
         # scale loss for gradient accumulation and backprop
         final_loss_metric = loss.detach()
-        loss = loss / self.gradient_accumulation
+        if self._current_global_valid_tokens is not None:
+            # Loss is already normalized by global valid tokens across all
+            # micro-batches and DP ranks; multiply by DP world size to offset
+            # FSDP's mean gradient all-reduce.
+            dp_world = (
+                torch.distributed.get_world_size(group=getattr(self, "_dp_group", None))
+                if torch.distributed.is_initialized()
+                else 1
+            )
+            loss = loss * float(dp_world)
+        else:
+            loss = loss / self.gradient_accumulation
 
         with backward_ctx:
             self.grad_scaler.scale(loss).backward()
@@ -402,8 +667,9 @@ class MAFSDPActor(FSDPActor):
 
         return mbs_metrics_data
 
-    def _compute_rollout_metrics(self, batch: DynamicActorBatch):
-        rollout_metrics_compute_data_group = self.get_rollout_metrics_group(batch)
+    def _compute_rollout_metrics(
+        self, batch: DynamicActorBatch, rollout_metrics_compute_data_group
+    ):
         if rollout_metrics_compute_data_group is None:
             return None
 
@@ -435,17 +701,139 @@ class MAFSDPActor(FSDPActor):
             )
         return rollout_metrics
 
+    def _extract_versioned_trajectory_records(
+        self, rollout_results: list[DynamicRolloutResult]
+    ) -> Optional[list[VersionedTrajectoryRecord]]:
+        """Extract per-trajectory weight-version records for staleness metrics."""
+        records = []
+        for result_index, rollout_result in enumerate(rollout_results):
+            if (
+                rollout_result is None
+                or rollout_result.version_start is None
+                or rollout_result.version_end is None
+            ):
+                return None
+            num_trajectories = (
+                max(rollout_result.idx_to_traj) + 1 if rollout_result.idx_to_traj else 0
+            )
+            earliest_versions: list[Optional[int]] = [None] * num_trajectories
+            completion_versions: list[Optional[int]] = [None] * num_trajectories
+            generated_tokens = [0] * num_trajectories
+            call_counts = [0] * num_trajectories
+            cross_version_calls = [0] * num_trajectories
+            turn_rewards = [0.0] * num_trajectories
+            turn_counts = [0] * num_trajectories
+            token_weighted_version_start_sums = [0] * num_trajectories
+            for turn_index, traj_index in enumerate(rollout_result.idx_to_traj):
+                turn_tokens = rollout_result.response_lengths[turn_index]
+                version_start = rollout_result.version_start[turn_index]
+                version_end = rollout_result.version_end[turn_index]
+                earliest_versions[traj_index] = (
+                    version_start
+                    if earliest_versions[traj_index] is None
+                    else min(earliest_versions[traj_index], version_start)
+                )
+                completion_versions[traj_index] = (
+                    version_end
+                    if completion_versions[traj_index] is None
+                    else max(completion_versions[traj_index], version_end)
+                )
+                generated_tokens[traj_index] += turn_tokens
+                call_counts[traj_index] += 1
+                cross_version_calls[traj_index] += int(version_start != version_end)
+                turn_rewards[traj_index] += rollout_result.rewards[turn_index]
+                turn_counts[traj_index] += 1
+                token_weighted_version_start_sums[traj_index] += (
+                    version_start * turn_tokens
+                )
+            for traj_index in range(num_trajectories):
+                records.append(
+                    VersionedTrajectoryRecord(
+                        group_index=result_index,
+                        earliest_version=earliest_versions[traj_index],
+                        completion_version=completion_versions[traj_index],
+                        generated_tokens=generated_tokens[traj_index],
+                        call_count=call_counts[traj_index],
+                        cross_version_calls=cross_version_calls[traj_index],
+                        reward=turn_rewards[traj_index]
+                        / max(turn_counts[traj_index], 1),
+                        token_weighted_version_start_sum=(
+                            token_weighted_version_start_sums[traj_index]
+                        ),
+                    )
+                )
+        return records
+
+    def _compute_staleness_metrics(
+        self,
+        rollout_results: list[DynamicRolloutResult],
+        version: Optional[int],
+        dp_group,
+    ) -> Optional[dict[str, float]]:
+        """Compute staleness metrics across all DP ranks, or None to skip."""
+        if version is None or dp_group is None:
+            return None
+        local_records = self._extract_versioned_trajectory_records(rollout_results)
+        dp_world_size = torch.distributed.get_world_size(dp_group)
+        has_version_list = [None] * dp_world_size
+        torch.distributed.all_gather_object(
+            has_version_list, local_records is not None, group=dp_group
+        )
+        if not all(flag is True for flag in has_version_list):
+            return None
+        local_records = local_records or []
+        records_by_rank = [None] * dp_world_size
+        torch.distributed.all_gather_object(
+            records_by_rank, local_records, group=dp_group
+        )
+        all_records = []
+        group_index_offset = 0
+        for rank_records in records_by_rank:
+            for record in rank_records:
+                all_records.append(
+                    replace(record, group_index=group_index_offset + record.group_index)
+                )
+            group_index_offset += len(rank_records)
+        return compute_staleness_metrics(all_records, version)
+
+    def _compute_global_valid_tokens(self, mini_batch: DynamicActorBatch) -> float:
+        """Sum valid response tokens across this mini-batch and all DP ranks."""
+        local_tokens = float(
+            sum(
+                int(mask.to(dtype=torch.bool).sum().item())
+                for mask in mini_batch["response_mask"]
+            )
+        )
+        token_tensor = torch.tensor(
+            local_tokens,
+            dtype=torch.float64,
+            device=self.torch_platform.current_device(),
+        )
+        if torch.distributed.is_initialized():
+            torch.distributed.all_reduce(
+                token_tensor,
+                op=torch.distributed.ReduceOp.SUM,
+                group=getattr(self, "_dp_group", None),
+            )
+        return float(token_tensor.item())
+
     def run_training(
-        self, input_channel: Channel, do_offload=False
+        self,
+        input_channel: Channel,
+        do_offload: bool = False,
+        version: Optional[int] = None,
+        payload_channels: Optional[list[Channel]] = None,
     ) -> tuple[dict, list]:
         assert not do_offload, (
             "do_offload argument of run_inference/run_training is not supported in FSDP for now"
         )
-        assert not self.is_pipeline, (
-            "MAFSDPActor currently only supports collocated training"
-        )
 
-        global_batch, _ = self.get_step_batch(input_channel)
+        self._payload_channels = payload_channels
+        try:
+            global_batch, results = self.get_step_batch(input_channel)
+        finally:
+            self._payload_channels = None
+
         assert (
             "recomputed_logprobs" in global_batch or "rollout_logprobs" in global_batch
         )
@@ -460,7 +848,17 @@ class MAFSDPActor(FSDPActor):
                 "normalize_advantages is not implemented in multi-agent"
             )
 
-        rollout_metrics = self._compute_rollout_metrics(global_batch)
+        rollout_metrics_group = self.get_rollout_metrics_group(global_batch)
+        rollout_metrics = self._compute_rollout_metrics(
+            global_batch, rollout_metrics_group
+        )
+        staleness_metrics = self._compute_staleness_metrics(
+            results, version, rollout_metrics_group
+        )
+        if staleness_metrics:
+            if rollout_metrics is None:
+                rollout_metrics = {}
+            rollout_metrics.update(staleness_metrics)
 
         scale_context = {
             "folding_scale": [],
@@ -506,11 +904,18 @@ class MAFSDPActor(FSDPActor):
 
         self.model.train()
         training_metrics_list = []
-        with self.worker_timer():
+        with self.worker_timer("run_training"):
             for mini_batch in mini_batches:
                 if not mini_batch["input_ids"]:
                     continue
-                mean_metric_dict = self.training_step(batch=mini_batch)
+                if self._global_token_mean:
+                    self._current_global_valid_tokens = (
+                        self._compute_global_valid_tokens(mini_batch)
+                    )
+                try:
+                    mean_metric_dict = self.training_step(batch=mini_batch)
+                finally:
+                    self._current_global_valid_tokens = None
                 training_metrics_list.append(mean_metric_dict)
 
             if not self.lr_sched_sync_with_optim:

@@ -1,0 +1,45 @@
+# PEAR Stage 3: async off-policy PEAR with top-K score centering and staleness cap.
+#
+# The paper calls Stage 3 RoboDojo-only; the released PEAR recipe mixes LIBERO
+# and RoboDojo layouts. RoboDojo execution uses rlinf.envs.sim.robodojo.vlm_action
+# and requires Isaac Sim plus cuRobo.
+
+defaults:
+  - libero_10_grpo_pear_stage2
+  - _self_
+
+runner:
+  experiment_name: "pear_stage3_libero_robodojo"
+  logger:
+    experiment_name: "pear_stage3_libero_robodojo"
+  seq_length: 8192
+
+algorithm:
+  pear:
+    score_centering: True
+    global_token_mean: True
+    stage3_recipe: "mixed_libero_robodojo"
+    paper_stage3_recipe: "robodojo_only"
+  sampling_params:
+    max_new_tokens: 4096
+
+agentloop:
+  # PEAR max_off_policy_threshold=5 => staleness <= 4.
+  max_actor_accept_staleness: 4
+
+session_server:
+  topk_log_probs: 32
+  keep_sessions_on_weight_sync: True
+
+rollout:
+  sglang:
+    response_budget: 4096
+  model:
+    embodiment: "robodojo"
+    max_new_tokens: 4096
+
+actor:
+  model:
+    embodiment: "robodojo"
+    encoder_seq_length: 8192
+    max_new_tokens: 4096

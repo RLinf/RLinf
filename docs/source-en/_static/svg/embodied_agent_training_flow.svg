@@ -1,0 +1,258 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 790" width="1200" height="790" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="m-blue" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#2563eb"/>
+    </marker>
+    <marker id="m-violet" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#7c3aed"/>
+    </marker>
+    <marker id="m-teal" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#0d9488"/>
+    </marker>
+    <marker id="m-orange" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#ea580c"/>
+    </marker>
+    <marker id="m-slate" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+      <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <!-- Canvas -->
+  <rect x="8" y="8" width="1184" height="774" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <!-- Header -->
+  <text x="34" y="40" font-size="19" font-weight="700" fill="#0f172a">How Embodied Agent Async Training Runs</text>
+  <text x="34" y="62" font-size="12" fill="#64748b">Reasoning VLMs run as multi-turn tool-calling agents: simulation is a stateful tool, and rollout overlaps with training</text>
+
+  <!-- Legend -->
+  <g transform="translate(686, 34)">
+    <line x1="0" y1="6" x2="24" y2="6" stroke="#2563eb" stroke-width="2.4" marker-end="url(#m-blue)"/>
+    <text x="32" y="10" font-size="11.5" fill="#334155">Control / metadata</text>
+
+    <line x1="150" y1="6" x2="174" y2="6" stroke="#7c3aed" stroke-width="2.4" marker-end="url(#m-violet)"/>
+    <text x="182" y="10" font-size="11.5" fill="#334155">Agent loop / inference</text>
+
+    <line x1="322" y1="6" x2="346" y2="6" stroke="#ea580c" stroke-width="2.8" marker-end="url(#m-orange)"/>
+    <text x="354" y="10" font-size="11.5" fill="#334155">Accepted data / weights</text>
+  </g>
+
+  <!-- ==================== TOP BAR: AsyncAgentRunner ==================== -->
+  <rect x="34" y="80" width="1132" height="44" rx="10" fill="#0f172a"/>
+  <text x="54" y="107" font-size="13.5" font-weight="700" fill="#ffffff">AsyncAgentRunner</text>
+  <line x1="198" y1="92" x2="198" y2="112" stroke="#334155" stroke-width="1.2"/>
+  <text x="214" y="106" font-size="12" fill="#cbd5e1">Head orchestrator · launches worker groups · advances training steps and cross-node weight sync</text>
+  <rect x="920" y="90" width="228" height="24" rx="12" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+  <text x="1034" y="106" text-anchor="middle" font-size="11" font-weight="600" fill="#e2e8f0">2-node 16-GPU · disaggregated async</text>
+
+  <!-- Subtle runner launch indicators -->
+  <line x1="310" y1="124" x2="310" y2="146" stroke="#64748b" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#m-slate)"/>
+  <line x1="652" y1="124" x2="652" y2="146" stroke="#64748b" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#m-slate)"/>
+  <line x1="1004" y1="124" x2="1004" y2="146" stroke="#64748b" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#m-slate)"/>
+
+  <!-- ==================== BAND 1: CONTROL PLANE (RolloutBuffer) ==================== -->
+  <rect x="118" y="150" width="1048" height="90" rx="12" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.4"/>
+  <rect x="118" y="150" width="7" height="90" rx="3.5" fill="#2563eb"/>
+  <text x="140" y="172" font-size="12.5" font-weight="700" fill="#1d4ed8">Control Plane · RolloutBuffer (Node 0 CPU)</text>
+
+  <rect x="736" y="156" width="412" height="22" rx="11" fill="#dbeafe" stroke="#60a5fa" stroke-width="1"/>
+  <text x="942" y="171" text-anchor="middle" font-size="11" font-weight="600" fill="#1e40af">Metadata &amp; payload_ref only — no images or tokens on Node 0</text>
+
+  <g>
+    <rect x="140" y="184" width="214" height="44" rx="8" fill="#ffffff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="247" y="202" text-anchor="middle" font-size="12" font-weight="700" fill="#1e3a8a">Task Dataset</text>
+    <text x="247" y="219" text-anchor="middle" font-size="10.8" fill="#64748b">Prompts, task suites &amp; seeds</text>
+  </g>
+  <line x1="354" y1="206" x2="378" y2="206" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m-blue)"/>
+
+  <g>
+    <rect x="382" y="184" width="234" height="44" rx="8" fill="#ffffff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="499" y="202" text-anchor="middle" font-size="12" font-weight="700" fill="#1e3a8a">Admission Limits</text>
+    <text x="499" y="219" text-anchor="middle" font-size="10.8" fill="#64748b">Caps in-flight &amp; buffered groups</text>
+  </g>
+  <line x1="616" y1="206" x2="640" y2="206" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m-blue)"/>
+
+  <g>
+    <rect x="644" y="184" width="234" height="44" rx="8" fill="#ffffff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="761" y="202" text-anchor="middle" font-size="12" font-weight="700" fill="#1e3a8a">DAPO Group Filter</text>
+    <text x="761" y="219" text-anchor="middle" font-size="10.8" fill="#64748b">Drops zero-variance groups early</text>
+  </g>
+  <line x1="878" y1="206" x2="902" y2="206" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m-blue)"/>
+
+  <g>
+    <rect x="906" y="184" width="242" height="44" rx="8" fill="#ffffff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="1027" y="202" text-anchor="middle" font-size="12" font-weight="700" fill="#1e3a8a">Staleness &amp; Batching</text>
+    <text x="1027" y="219" text-anchor="middle" font-size="10.8" fill="#64748b">Bounds policy lag, emits batches</text>
+  </g>
+
+  <!-- ==================== BAND 2: ASYNC ROLLOUT ZONE (Node 1) ==================== -->
+  <rect x="118" y="286" width="1048" height="276" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4"/>
+  <rect x="118" y="286" width="7" height="276" rx="3.5" fill="#7c3aed"/>
+  <text x="140" y="308" font-size="12.5" font-weight="700" fill="#5b21b6">Async Rollout Zone</text>
+  <rect x="790" y="293" width="358" height="22" rx="11" fill="#f3e8ff" stroke="#c4b5fd" stroke-width="1"/>
+  <text x="969" y="308" text-anchor="middle" font-size="11" font-weight="600" fill="#5b21b6">Node 1 Rollout · 8 GPUs + simulators · continuous sampling</text>
+
+  <!-- LEFT HERO: Embodied Agent -->
+  <g>
+    <rect x="143" y="328" width="374" height="224" rx="12" fill="#6d28d9" fill-opacity="0.08"/>
+    <rect x="140" y="324" width="374" height="224" rx="12" fill="#ffffff" stroke="#7c3aed" stroke-width="2.5"/>
+    <path d="M 140 336 Q 140 324 152 324 L 502 324 Q 514 324 514 336 L 514 364 L 140 364 Z" fill="#6d28d9"/>
+    <text x="156" y="349" font-size="13.5" font-weight="700" fill="#ffffff">Embodied Agent</text>
+    <rect x="356" y="333" width="146" height="22" rx="11" fill="#4c1d95"/>
+    <text x="429" y="348" text-anchor="middle" font-size="10.5" font-weight="700" fill="#ede9fe">Multi-Turn Tool-Call Loop</text>
+
+    <!-- 3-step Observe -> Think -> Act visual loop -->
+    <rect x="154" y="376" width="102" height="60" rx="8" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="205" y="399" text-anchor="middle" font-size="12" font-weight="700" fill="#4c1d95">1. Observe</text>
+    <text x="205" y="419" text-anchor="middle" font-size="10.5" fill="#475569">Frames + pose</text>
+
+    <line x1="256" y1="406" x2="272" y2="406" stroke="#7c3aed" stroke-width="1.8" marker-end="url(#m-violet)"/>
+
+    <rect x="276" y="376" width="102" height="60" rx="8" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1.2"/>
+    <text x="327" y="399" text-anchor="middle" font-size="12" font-weight="700" fill="#4c1d95">2. Reason</text>
+    <text x="327" y="419" text-anchor="middle" font-size="10.5" fill="#475569">CoT + action / plan</text>
+
+    <line x1="378" y1="406" x2="394" y2="406" stroke="#7c3aed" stroke-width="1.8" marker-end="url(#m-violet)"/>
+
+    <rect x="398" y="376" width="102" height="60" rx="8" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="1.2"/>
+    <text x="449" y="399" text-anchor="middle" font-size="12" font-weight="700" fill="#065f46">3. Act</text>
+    <text x="449" y="419" text-anchor="middle" font-size="10.5" fill="#475569">Call EnvTool</text>
+
+    <!-- Loop arrows between 3-step cycle and EnvTool -->
+    <line x1="449" y1="436" x2="449" y2="466" stroke="#7c3aed" stroke-width="2" marker-end="url(#m-violet)"/>
+    <text x="438" y="455" text-anchor="end" font-size="10.2" font-weight="600" fill="#6d28d9">action / skill call</text>
+
+    <line x1="205" y1="468" x2="205" y2="440" stroke="#059669" stroke-width="2" marker-end="url(#m-teal)"/>
+    <text x="216" y="455" text-anchor="start" font-size="10.2" font-weight="600" fill="#047857">new obs + reward</text>
+
+    <!-- Docked EnvTool -->
+    <rect x="154" y="470" width="346" height="64" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.6"/>
+    <text x="168" y="492" font-size="12.2" font-weight="700" fill="#065f46">EnvTool (World as a Stateful Tool)</text>
+    <text x="168" y="512" font-size="10.8" fill="#334155">Simulators / controllers / skills (e.g., LIBERO + PD/OSC)</text>
+    <text x="168" y="527" font-size="10.2" fill="#047857">Supports direct actions (VLM-as-Policy) and high-level planning</text>
+  </g>
+
+  <!-- CENTER-RIGHT BRIDGE: Session Server -->
+  <g>
+    <rect x="588" y="324" width="238" height="224" rx="10" fill="#ffffff" stroke="#0d9488" stroke-width="1.8"/>
+    <path d="M 588 334 Q 588 324 598 324 L 816 324 Q 826 324 826 334 L 826 360 L 588 360 Z" fill="#f0fdfa"/>
+    <line x1="588" y1="360" x2="826" y2="360" stroke="#99f6e4" stroke-width="1.2"/>
+    <text x="602" y="347" font-size="13" font-weight="700" fill="#0f766e">Session Server</text>
+    <text x="722" y="346" font-size="10.5" font-weight="600" fill="#0d9488">Session &amp; trace</text>
+
+    <text x="602" y="382" font-size="11.2" fill="#334155">• Proxies streaming turns to engine</text>
+    <text x="602" y="404" font-size="11.2" fill="#334155">• Records tokens, logprobs, ver v</text>
+    <text x="602" y="426" font-size="11.2" fill="#334155">• Replies first, writes payload async</text>
+    <text x="602" y="448" font-size="11.2" fill="#334155">• Commits only metadata to buffer</text>
+
+    <rect x="600" y="464" width="214" height="72" rx="8" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="612" y="486" font-size="11.8" font-weight="700" fill="#92400e">Payload Shards (Local)</text>
+    <text x="612" y="506" font-size="10.8" fill="#78350f">Frames &amp; tokens stay on rollout node</text>
+    <text x="612" y="524" font-size="10.8" fill="#78350f">Filtered groups freed locally</text>
+  </g>
+
+  <!-- RIGHT COMPUTE: SGLang Router + Engine -->
+  <rect x="898" y="324" width="250" height="52" rx="9" fill="#ffffff" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="5 3"/>
+  <text x="912" y="346" font-size="12" font-weight="700" fill="#334155">SGLang Router</text>
+  <text x="912" y="364" font-size="10.5" fill="#64748b">Engine registry (streaming pins direct)</text>
+
+  <g>
+    <rect x="898" y="396" width="250" height="152" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+    <text x="912" y="422" font-size="13.5" font-weight="700" fill="#9a3412">SGLang Engine</text>
+    <rect x="1062" y="406" width="74" height="22" rx="11" fill="#ffedd5" stroke="#fb923c" stroke-width="1"/>
+    <text x="1099" y="421" text-anchor="middle" font-size="10.5" font-weight="700" fill="#c2410c">TP8</text>
+    <text x="912" y="450" font-size="11.3" fill="#334155">• Multimodal VLM streaming</text>
+    <text x="912" y="473" font-size="11.3" fill="#334155">• Reuses KV &amp; GDN prefix cache</text>
+    <text x="912" y="496" font-size="11.3" fill="#334155">• Pause retract on weight sync</text>
+    <text x="912" y="526" font-size="10.8" font-weight="600" fill="#c2410c">Overlaps continuously with Actor</text>
+  </g>
+
+  <!-- ==================== BAND 3: TRAINING & WEIGHT SYNC (Node 0 Actor) ==================== -->
+  <rect x="118" y="610" width="1048" height="150" rx="12" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.4"/>
+  <rect x="118" y="610" width="7" height="150" rx="3.5" fill="#4f46e5"/>
+  <text x="140" y="632" font-size="12.5" font-weight="700" fill="#3730a3">Training &amp; Weight Sync · Node 0 Actor Node (8 GPUs · FSDP2 DP8)</text>
+
+  <g>
+    <rect x="140" y="646" width="686" height="98" rx="10" fill="#ffffff" stroke="#4f46e5" stroke-width="2"/>
+    <text x="158" y="668" font-size="13" font-weight="700" fill="#312e81">MAFSDPActor (FSDP2 DP8)</text>
+    <text x="358" y="668" font-size="11" fill="#64748b">Trains only on groups passing DAPO &amp; staleness checks</text>
+
+    <rect x="158" y="680" width="198" height="50" rx="7" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.1"/>
+    <text x="257" y="701" text-anchor="middle" font-size="11.5" font-weight="700" fill="#3730a3">1. Merge Multi-Turn</text>
+    <text x="257" y="719" text-anchor="middle" font-size="10.5" fill="#475569">Pull payload &amp; pack turns</text>
+
+    <line x1="356" y1="705" x2="380" y2="705" stroke="#4f46e5" stroke-width="1.8" marker-end="url(#m-blue)"/>
+
+    <rect x="384" y="680" width="204" height="50" rx="7" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.1"/>
+    <text x="486" y="701" text-anchor="middle" font-size="11.5" font-weight="700" fill="#3730a3">2. Chunked FP32 Head</text>
+    <text x="486" y="719" text-anchor="middle" font-size="10.5" fill="#475569">Aligns logprobs &amp; grads</text>
+
+    <line x1="588" y1="705" x2="612" y2="705" stroke="#4f46e5" stroke-width="1.8" marker-end="url(#m-blue)"/>
+
+    <rect x="616" y="680" width="194" height="50" rx="7" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.1"/>
+    <text x="713" y="701" text-anchor="middle" font-size="11.5" font-weight="700" fill="#3730a3">3. GRPO / PEAR Step</text>
+    <text x="713" y="719" text-anchor="middle" font-size="10.5" fill="#475569">Emits new weights v + 1</text>
+  </g>
+
+  <g>
+    <rect x="898" y="646" width="250" height="98" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+    <text x="912" y="670" font-size="13" font-weight="700" fill="#9a3412">Cross-Node Weight Sync</text>
+    <text x="912" y="694" font-size="11.3" fill="#334155">pause retract → NCCL sync</text>
+    <text x="912" y="714" font-size="11.3" fill="#334155">flush cache → continue</text>
+    <text x="912" y="734" font-size="10.8" font-weight="600" fill="#c2410c">~5 s full sync for 27B</text>
+  </g>
+
+  <!-- ==================== ALL INTER-COMPONENT ARROWS ==================== -->
+
+  <!-- ① RolloutBuffer -> Embodied Agent -->
+  <line x1="310" y1="240" x2="310" y2="320" stroke="#2563eb" stroke-width="2.4" marker-end="url(#m-blue)"/>
+  <rect x="242" y="253" width="136" height="22" rx="11" fill="#ffffff" stroke="#93c5fd" stroke-width="1.2"/>
+  <text x="310" y="268" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">① Dispatch groups</text>
+
+  <!-- ② Embodied Agent <-> Session Server -->
+  <line x1="514" y1="396" x2="584" y2="396" stroke="#7c3aed" stroke-width="2.2" marker-end="url(#m-violet)"/>
+  <text x="551" y="387" text-anchor="middle" font-size="10.3" font-weight="700" fill="#5b21b6">② Generate</text>
+  <line x1="588" y1="432" x2="518" y2="432" stroke="#0d9488" stroke-width="2.2" marker-end="url(#m-teal)"/>
+  <text x="551" y="449" text-anchor="middle" font-size="10.3" font-weight="600" fill="#0f766e">CoT + action</text>
+
+  <!-- ③ Session Server <-> SGLang Engine -->
+  <line x1="826" y1="350" x2="894" y2="350" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#m-slate)"/>
+  <text x="862" y="342" text-anchor="middle" font-size="9.8" fill="#64748b">stateless</text>
+
+  <line x1="826" y1="442" x2="894" y2="442" stroke="#7c3aed" stroke-width="2.2" marker-end="url(#m-violet)"/>
+  <text x="862" y="433" text-anchor="middle" font-size="10.3" font-weight="700" fill="#5b21b6">③ Stream</text>
+  <line x1="898" y1="478" x2="830" y2="478" stroke="#0d9488" stroke-width="2.2" marker-end="url(#m-teal)"/>
+  <text x="862" y="495" text-anchor="middle" font-size="10" font-weight="600" fill="#0f766e">ids + logp</text>
+
+  <!-- ④ Session Server -> RolloutBuffer -->
+  <line x1="652" y1="324" x2="652" y2="244" stroke="#2563eb" stroke-width="2.4" marker-end="url(#m-blue)"/>
+  <rect x="580" y="253" width="144" height="22" rx="11" fill="#ffffff" stroke="#93c5fd" stroke-width="1.2"/>
+  <text x="652" y="268" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">④ Commit metadata</text>
+
+  <!-- ④' RolloutBuffer -> Session Server -->
+  <line x1="774" y1="240" x2="774" y2="320" stroke="#64748b" stroke-width="1.8" stroke-dasharray="4 3" marker-end="url(#m-slate)"/>
+  <rect x="730" y="253" width="108" height="22" rx="11" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.1"/>
+  <text x="784" y="268" text-anchor="middle" font-size="10.5" font-weight="600" fill="#475569">Discard → free</text>
+
+  <!-- ⑤ RolloutBuffer -> MAFSDPActor -->
+  <path d="M 118 195 L 62 195 L 62 695 L 136 695" fill="none" stroke="#2563eb" stroke-width="2.4" marker-end="url(#m-blue)"/>
+  <rect x="19" y="404" width="86" height="62" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.3"/>
+  <text x="62" y="424" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">⑤ Deliver</text>
+  <text x="62" y="441" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">accepted</text>
+  <text x="62" y="457" text-anchor="middle" font-size="10.5" fill="#475569">batch</text>
+
+  <!-- ⑥ Payload Shards -> MAFSDPActor -->
+  <line x1="666" y1="536" x2="666" y2="642" stroke="#ea580c" stroke-width="2.6" marker-end="url(#m-orange)"/>
+  <rect x="572" y="574" width="188" height="24" rx="12" fill="#fff7ed" stroke="#fdba74" stroke-width="1.2"/>
+  <text x="666" y="590" text-anchor="middle" font-size="11" font-weight="700" fill="#c2410c">⑥ Pull accepted payloads</text>
+
+  <!-- ⑦ MAFSDPActor -> Weight Sync -> SGLang Engine -->
+  <line x1="826" y1="695" x2="894" y2="695" stroke="#ea580c" stroke-width="2.8" marker-end="url(#m-orange)"/>
+  <line x1="1004" y1="646" x2="1004" y2="552" stroke="#ea580c" stroke-width="3" marker-end="url(#m-orange)"/>
+  <rect x="1016" y="574" width="150" height="24" rx="12" fill="#fff7ed" stroke="#fb923c" stroke-width="1.3"/>
+  <text x="1091" y="590" text-anchor="middle" font-size="11" font-weight="700" fill="#c2410c">⑦ Sync weights v→v+1</text>
+
+  <!-- Side branch: notify Session Server -->
+  <path d="M 1004 586 L 794 586 L 794 552" fill="none" stroke="#ea580c" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#m-orange)"/>
+  <rect x="838" y="575" width="118" height="21" rx="10.5" fill="#ffffff" stroke="#fdba74" stroke-width="1"/>
+  <text x="897" y="589" text-anchor="middle" font-size="10.5" font-weight="600" fill="#c2410c">Notify ver v+1</text>
+</svg>

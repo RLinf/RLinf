@@ -262,6 +262,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_qwen_vlm(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.qwen_vlm import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_openpi_cfg(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openpi_cfg import get_model
 
@@ -470,6 +475,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.EVO1.value,
         _build_evo1,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.QWEN_VLM.value,
+        _build_qwen_vlm,
         category="embodied",
         force=True,
     )

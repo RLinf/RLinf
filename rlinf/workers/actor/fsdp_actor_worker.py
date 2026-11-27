@@ -150,7 +150,12 @@ class FSDPActor(FSDPModelManager, Worker):
         self._component_placement = placement
         self.is_pipeline = self._component_placement.is_disaggregated
         self.ref_policy_state_dict = None
-        if self.is_pipeline:
+        has_inference = (
+            self.is_pipeline
+            and cfg.get("inference", None) is not None
+            and self._component_placement.get_world_size("inference") > 0
+        )
+        if has_inference:
             self._inference_group_name = cfg.inference.group_name
             self._inference_world_size = self._component_placement.get_world_size(
                 "inference"
@@ -173,7 +178,12 @@ class FSDPActor(FSDPModelManager, Worker):
         self.enable_dynamic_batch_size = cfg.runner.get(
             "enable_dynamic_batch_size", False
         )
-        if self.is_pipeline:
+        is_dynamic_ma = bool(
+            cfg.get("agentloop", {}).get("is_dynamic_rollout_batch", False)
+            if cfg.get("agentloop", None) is not None
+            else False
+        )
+        if self.is_pipeline and not is_dynamic_ma:
             assert not self.enable_dp_load_balance, (
                 "DP load balance is not supported in pipeline mode."
             )
@@ -286,6 +296,23 @@ class FSDPActor(FSDPModelManager, Worker):
         rollout_dtype = None
         if self._cfg.get("sync_precision", None) is not None:
             rollout_dtype = torch_dtype_from_precision(self._cfg.sync_precision)
+        rollout_sglang_cfg = (
+            self.cfg.rollout.get("sglang", None)
+            if self.cfg.get("rollout", None) is not None
+            else None
+        )
+        fp32_modules = tuple(
+            str(name)
+            for name in (
+                (
+                    rollout_sglang_cfg.get("fp32_modules", None)
+                    if rollout_sglang_cfg is not None
+                    else None
+                )
+                or self._cfg.get("sync_fp32_modules", None)
+                or ()
+            )
+        )
 
         rollout_state_dict = self.get_model_state_dict(
             cpu_offload=False, full_state_dict=False
@@ -299,7 +326,9 @@ class FSDPActor(FSDPModelManager, Worker):
             for k, v in model_bucket.items():
                 if isinstance(v, DTensor):
                     v = v.full_tensor()
-                if rollout_dtype is not None:
+                if fp32_modules and any(mod in k for mod in fp32_modules):
+                    v = v.to(torch.float32)
+                elif rollout_dtype is not None:
                     v = v.to(rollout_dtype)
                 if not self.is_pipeline:
                     v = reduce_tensor(v)
@@ -307,7 +336,7 @@ class FSDPActor(FSDPModelManager, Worker):
             if bucket_idx == 0:
                 buffer["bucket_length"] = torch.tensor(
                     [len(model_bucket_list)],
-                    device=torch.cuda.current_device(),
+                    device=self.torch_platform.current_device(),
                 )
 
             for send_handle in send_handles:

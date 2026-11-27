@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="q-teal" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#0d9488"/>
+    </marker>
+    <marker id="q-blue" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#2563eb"/>
+    </marker>
+    <marker id="q-orange" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#ea580c"/>
+    </marker>
+    <marker id="q-violet" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#7c3aed"/>
+    </marker>
+    <marker id="q-red" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 9.5 5 L 0 8.8 z" fill="#dc2626"/>
+    </marker>
+  </defs>
+
+  <!-- Canvas -->
+  <rect x="8" y="8" width="1184" height="614" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <!-- Title -->
+  <text x="34" y="40" font-size="18.5" font-weight="700" fill="#0f172a">Lifecycle of One Multi-Turn Embodied Agent Group</text>
+  <text x="34" y="62" font-size="12" fill="#64748b">From initial observation and tool calls with cached prefix reuse to group filtering and on-demand training</text>
+
+  <!-- Highlight band behind Embodied Agent lifeline -->
+  <rect x="82" y="80" width="194" height="524" rx="12" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="1.2"/>
+
+  <!-- 5 Lifeline Headers -->
+  <g>
+    <rect x="88" y="88" width="182" height="46" rx="9" fill="#6d28d9" stroke="#5b21b6" stroke-width="1.8"/>
+    <text x="179" y="109" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">Embodied Agent</text>
+    <text x="179" y="126" text-anchor="middle" font-size="10.5" fill="#ede9fe">Observe · Reason · EnvTool</text>
+  </g>
+  <g>
+    <rect x="344" y="88" width="164" height="46" rx="9" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.8"/>
+    <text x="426" y="109" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0f766e">Session Server</text>
+    <text x="426" y="126" text-anchor="middle" font-size="10.5" fill="#0d9488">Session proxy &amp; recorder</text>
+  </g>
+  <g>
+    <rect x="582" y="88" width="172" height="46" rx="9" fill="#fff7ed" stroke="#ea580c" stroke-width="1.8"/>
+    <text x="668" y="109" text-anchor="middle" font-size="12.5" font-weight="700" fill="#9a3412">SGLang Engine</text>
+    <text x="668" y="126" text-anchor="middle" font-size="10.5" fill="#c2410c">TP8 streaming inference</text>
+  </g>
+  <g>
+    <rect x="802" y="88" width="164" height="46" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="884" y="109" text-anchor="middle" font-size="12.5" font-weight="700" fill="#92400e">Payload Shards</text>
+    <text x="884" y="126" text-anchor="middle" font-size="10.5" fill="#b45309">Local trace storage</text>
+  </g>
+  <g>
+    <rect x="996" y="88" width="172" height="46" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="1082" y="109" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1e3a8a">Buffer &amp; Actor</text>
+    <text x="1082" y="126" text-anchor="middle" font-size="10.5" fill="#2563eb">Filter, schedule &amp; train</text>
+  </g>
+
+  <!-- Vertical Lifelines -->
+  <line x1="179" y1="134" x2="179" y2="594" stroke="#a78bfa" stroke-width="2.2" stroke-dasharray="5 4"/>
+  <line x1="426" y1="134" x2="426" y2="594" stroke="#5eead4" stroke-width="1.8" stroke-dasharray="5 4"/>
+  <line x1="668" y1="134" x2="668" y2="594" stroke="#fdba74" stroke-width="1.8" stroke-dasharray="5 4"/>
+  <line x1="884" y1="134" x2="884" y2="594" stroke="#fcd34d" stroke-width="1.8" stroke-dasharray="5 4"/>
+  <line x1="1082" y1="134" x2="1082" y2="594" stroke="#93c5fd" stroke-width="1.8" stroke-dasharray="5 4"/>
+
+  <!-- ==================== PHASE A: Turn 1 ==================== -->
+  <rect x="28" y="150" width="1144" height="104" rx="10" fill="#f8fafc" fill-opacity="0.65" stroke="#e2e8f0" stroke-width="1"/>
+  <rect x="28" y="150" width="46" height="104" rx="10" fill="#7c3aed" fill-opacity="0.12"/>
+  <text x="51" y="196" text-anchor="middle" font-size="11.5" font-weight="700" fill="#5b21b6">Phase A</text>
+  <text x="51" y="214" text-anchor="middle" font-size="10.2" font-weight="600" fill="#6d28d9">Turn 1</text>
+
+  <line x1="179" y1="172" x2="420" y2="172" stroke="#7c3aed" stroke-width="2.2" marker-end="url(#q-violet)"/>
+  <text x="302" y="165" text-anchor="middle" font-size="11" font-weight="600" fill="#4c1d95">1. open_session + initial frames &amp; task</text>
+
+  <line x1="426" y1="188" x2="662" y2="188" stroke="#0d9488" stroke-width="2.2" marker-end="url(#q-teal)"/>
+  <text x="546" y="181" text-anchor="middle" font-size="11" font-weight="600" fill="#0f766e">2. Pin engine session &amp; prefill</text>
+
+  <line x1="668" y1="214" x2="432" y2="214" stroke="#ea580c" stroke-width="2" marker-end="url(#q-orange)"/>
+  <text x="548" y="207" text-anchor="middle" font-size="10.8" fill="#9a3412">3. ids + logprob + weight ver v</text>
+
+  <line x1="426" y1="226" x2="185" y2="226" stroke="#0d9488" stroke-width="2" marker-end="url(#q-teal)"/>
+  <text x="302" y="242" text-anchor="middle" font-size="10.8" fill="#0f766e">Reply immediately with action / plan</text>
+
+  <line x1="426" y1="238" x2="878" y2="238" stroke="#d97706" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#q-orange)"/>
+  <rect x="608" y="227" width="246" height="20" rx="10" fill="#fffbeb" stroke="#fcd34d" stroke-width="1"/>
+  <text x="731" y="241" text-anchor="middle" font-size="10.5" font-weight="600" fill="#92400e">Write Turn 1 async (non-blocking)</text>
+
+  <!-- ==================== PHASE B: Multi-Turn Loop ==================== -->
+  <rect x="28" y="268" width="1144" height="118" rx="10" fill="#f8fafc" fill-opacity="0.65" stroke="#e2e8f0" stroke-width="1"/>
+  <rect x="28" y="268" width="46" height="118" rx="10" fill="#0d9488" fill-opacity="0.12"/>
+  <text x="51" y="320" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0f766e">Phase B</text>
+  <text x="51" y="338" text-anchor="middle" font-size="10.2" font-weight="600" fill="#0d9488">Tool Loop</text>
+
+  <rect x="92" y="278" width="174" height="28" rx="7" fill="#ecfdf5" stroke="#10b981" stroke-width="1.4"/>
+  <text x="179" y="296" text-anchor="middle" font-size="11" font-weight="700" fill="#065f46">EnvTool step → new obs</text>
+
+  <line x1="179" y1="322" x2="420" y2="322" stroke="#7c3aed" stroke-width="2.2" marker-end="url(#q-violet)"/>
+  <text x="302" y="315" text-anchor="middle" font-size="11" font-weight="600" fill="#4c1d95">4. Turn k delta (new frames &amp; state)</text>
+
+  <line x1="426" y1="336" x2="662" y2="336" stroke="#0d9488" stroke-width="2.4" marker-end="url(#q-teal)"/>
+  <rect x="440" y="312" width="216" height="20" rx="10" fill="#ccfbf1" stroke="#14b8a6" stroke-width="1"/>
+  <text x="548" y="326" text-anchor="middle" font-size="10.5" font-weight="700" fill="#0f766e">Reuse session KV &amp; GDN cache</text>
+
+  <line x1="668" y1="354" x2="185" y2="354" stroke="#0d9488" stroke-width="2" marker-end="url(#q-teal)"/>
+  <text x="302" y="370" text-anchor="middle" font-size="10.8" fill="#0f766e">5. Zero re-prefill · next action returned</text>
+
+  <line x1="426" y1="374" x2="878" y2="374" stroke="#d97706" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#q-orange)"/>
+  <rect x="668" y="363" width="166" height="20" rx="10" fill="#fffbeb" stroke="#fcd34d" stroke-width="1"/>
+  <text x="751" y="377" text-anchor="middle" font-size="10.5" font-weight="600" fill="#92400e">Append Turn k record async</text>
+
+  <!-- ==================== PHASE C: Close & Commit ==================== -->
+  <rect x="28" y="398" width="1144" height="88" rx="10" fill="#f8fafc" fill-opacity="0.65" stroke="#e2e8f0" stroke-width="1"/>
+  <rect x="28" y="398" width="46" height="88" rx="10" fill="#2563eb" fill-opacity="0.1"/>
+  <text x="51" y="438" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1d4ed8">Phase C</text>
+  <text x="51" y="456" text-anchor="middle" font-size="10.2" font-weight="600" fill="#2563eb">Finish</text>
+
+  <line x1="179" y1="422" x2="420" y2="422" stroke="#7c3aed" stroke-width="2.2" marker-end="url(#q-violet)"/>
+  <text x="302" y="415" text-anchor="middle" font-size="11" font-weight="600" fill="#4c1d95">6. close_session + sparse 0/1 reward</text>
+
+  <line x1="426" y1="438" x2="662" y2="438" stroke="#0d9488" stroke-width="1.8" marker-end="url(#q-teal)"/>
+  <text x="546" y="431" text-anchor="middle" font-size="10.5" fill="#0f766e">Release streaming slot</text>
+
+  <line x1="426" y1="466" x2="1076" y2="466" stroke="#2563eb" stroke-width="2.4" marker-end="url(#q-blue)"/>
+  <rect x="608" y="455" width="332" height="22" rx="11" fill="#eff6ff" stroke="#60a5fa" stroke-width="1.2"/>
+  <text x="774" y="470" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">7. Commit metadata &amp; payload_ref (~KB only)</text>
+
+  <!-- ==================== PHASE D: Filter & Dispatch ==================== -->
+  <rect x="28" y="500" width="1144" height="102" rx="10" fill="#f8fafc" fill-opacity="0.65" stroke="#e2e8f0" stroke-width="1"/>
+  <rect x="28" y="500" width="46" height="102" rx="10" fill="#ea580c" fill-opacity="0.1"/>
+  <text x="51" y="544" text-anchor="middle" font-size="11.5" font-weight="700" fill="#c2410c">Phase D</text>
+  <text x="51" y="562" text-anchor="middle" font-size="10.2" font-weight="600" fill="#ea580c">Route</text>
+
+  <rect x="92" y="510" width="210" height="34" rx="7" fill="#ecfdf5" stroke="#34d399" stroke-width="1.2"/>
+  <text x="197" y="531" text-anchor="middle" font-size="11" font-weight="700" fill="#065f46">✓ Accepted (variable reward)</text>
+
+  <line x1="1082" y1="527" x2="890" y2="527" stroke="#ea580c" stroke-width="2.4" marker-end="url(#q-orange)"/>
+  <rect x="916" y="516" width="144" height="22" rx="11" fill="#fff7ed" stroke="#fb923c" stroke-width="1.1"/>
+  <text x="988" y="531" text-anchor="middle" font-size="10.5" font-weight="700" fill="#c2410c">8a. Pull by ref</text>
+
+  <text x="326" y="531" font-size="11.2" fill="#334155">Actor pulls only accepted groups, packs turns, and runs a GRPO step</text>
+
+  <rect x="92" y="556" width="210" height="34" rx="7" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.2"/>
+  <text x="197" y="577" text-anchor="middle" font-size="11" font-weight="700" fill="#991b1b">✗ Discarded (all 0/1 or stale)</text>
+
+  <line x1="1082" y1="573" x2="890" y2="573" stroke="#dc2626" stroke-width="2.2" stroke-dasharray="5 3" marker-end="url(#q-red)"/>
+  <rect x="916" y="562" width="144" height="22" rx="11" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.1"/>
+  <text x="988" y="577" text-anchor="middle" font-size="10.5" font-weight="700" fill="#b91c1c">8b. Free locally</text>
+
+  <text x="326" y="577" font-size="11.2" fill="#64748b">Zero cross-node transfer: payload shards reclaim rollout-node memory</text>
+</svg>

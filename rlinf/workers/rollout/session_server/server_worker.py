@@ -56,6 +56,7 @@ from rlinf.workers.rollout.session_server.payload import (
     PayloadDiscard,
     PayloadPart,
     PayloadWriter,
+    extract_topk_logprobs,
     payload_key_for,
     payload_locator_for,
     routing_key_for,
@@ -110,6 +111,15 @@ class _SessionState:
     # Set while a request of this session is being served, by either
     # endpoint: a session handles one request at a time.
     inflight: bool = False
+    # Engine-side SGLang session state (used for multimodal/text turns so
+    # prior images are not re-sent on turn 2+).
+    engine_session_id: Optional[str] = None
+    engine_client: Optional[InferenceHTTPClient] = None
+    last_engine_rid: Optional[str] = None
+    pending_engine_session_close: bool = False
+    committed_text: str = ""
+    all_image_data: list[str] = field(default_factory=list)
+    history_bytes: int = 0
 
 
 @dataclass
@@ -202,11 +212,28 @@ class SessionServerWorker(Worker):
         # result, the generate responses carry logprobs, and the finalize
         # part carries both sides' sampling params.
         self._verify_assembly = bool(session_server_cfg.verify_assembly)
+        self._engine_streaming_session = bool(
+            session_server_cfg.get("engine_streaming_session", False)
+        )
+        self._keep_sessions_on_weight_sync = bool(
+            session_server_cfg.get("keep_sessions_on_weight_sync", False)
+        )
+        self._topk_log_probs = int(session_server_cfg.get("topk_log_probs", 0))
+        self._engine_session_capacity = int(
+            session_server_cfg.get("engine_session_capacity", 1_000_000)
+        )
 
         self._groups: dict[int, _GroupState] = {}
         self._sessions: dict[str, _SessionState] = {}
         self._loaded_versions: list[int] = []
         self._router_client: Optional[InferenceHTTPClient] = None
+        # Direct per-engine HTTP clients used for engine-side SGLang sessions
+        # (/open_session, /close_session, and session-bound /generate), because
+        # sglang-router does not proxy /open_session or /close_session.
+        self._engine_clients: list[InferenceHTTPClient] = []
+        self._group_engine_idx: dict[int, int] = {}
+        self._engine_active_groups: list[int] = []
+        self._retained_history_bytes: int = 0
         self._agent_output_channel: Optional[Channel] = None
         # Built by serve(), once the payload channels exist.
         self._payload_writer: Optional[PayloadWriter] = None
@@ -347,9 +374,10 @@ class SessionServerWorker(Worker):
 
     async def serve(
         self,
-        router_url: str,
+        router_url: Optional[str],
         agent_output_channel: Channel,
         payload_channels: list[Channel],
+        engine_urls: Optional[list[str]] = None,
     ) -> None:
         """Serve until the HTTP server exits.
 
@@ -361,21 +389,37 @@ class SessionServerWorker(Worker):
         Args:
             router_url: Base URL (``http://host:port``) requests are forwarded
                 to, with the group's routing key in the
-                ``X-SMG-Routing-Key`` header.
+                ``X-SMG-Routing-Key`` header. May be None when ``engine_urls``
+                handles all traffic directly.
             agent_output_channel: Channel completed-group metadata and
                 discard records are reported on.
             payload_channels: The same-node payload channels, one per shard.
                 Every part of a group goes to one of them.
+            engine_urls: Optional direct SGLang engine base URLs used for
+                engine-side sessions (``/open_session``, ``/close_session``,
+                and session-bound ``/generate``). Falls back to ``router_url``
+                when omitted.
         """
         assert self._http_server_task is None, "serve is already running."
         assert payload_channels, "serve needs at least one payload channel."
+        assert router_url or engine_urls, "serve needs router_url or engine_urls."
         try:
             # The length the actor trains on, which the chat entry enforces.
             self._max_seq_length = int(self._cfg.runner.seq_length)
             # Load the chat entry's tokenizer now, so a bad model path or chat
             # template fails at startup instead of on the first chat request.
             self._setup_chat()
-            self._router_client = InferenceHTTPClient(router_url, keepalive_timeout=4.0)
+            self._router_client = (
+                InferenceHTTPClient(router_url, keepalive_timeout=4.0)
+                if router_url
+                else None
+            )
+            self._engine_clients = [
+                InferenceHTTPClient(url, keepalive_timeout=4.0)
+                for url in (engine_urls or ())
+            ]
+            self._engine_active_groups = [0] * len(self._engine_clients)
+            self._group_engine_idx.clear()
             self._agent_output_channel = agent_output_channel
             self._payload_writer = PayloadWriter(
                 payload_channels,
@@ -428,11 +472,20 @@ class SessionServerWorker(Worker):
             await self._http_server_task
             self._http_server_task = None
             self._serve_ended = True
+        await self._close_all_engine_sessions(force=True)
         if self._payload_writer is not None:
             await self._payload_writer.aclose()
         if self._router_client is not None:
             await self._router_client.aclose()
             self._router_client = None
+        if self._engine_clients:
+            await asyncio.gather(
+                *(client.aclose() for client in self._engine_clients),
+                return_exceptions=True,
+            )
+            self._engine_clients = []
+            self._engine_active_groups = []
+            self._group_engine_idx.clear()
 
     async def wait_until_serving(self) -> None:
         """Wait until the HTTP server accepts connections.
@@ -464,9 +517,22 @@ class SessionServerWorker(Worker):
         """Record the weight versions every rollout instance has loaded.
 
         Called by the runner after each weight sync. The minimum becomes the
-        ``version_start`` lower bound of every later generate.
+        ``version_start`` lower bound of every later generate. When engine
+        streaming sessions are active and ``keep_sessions_on_weight_sync`` is
+        False, existing engine sessions are closed on weight version changes so
+        subsequent turns reopen cleanly against the new weights.
         """
-        self._loaded_versions = list(versions.values())
+        new_versions = list(versions.values())
+        version_changed = bool(self._loaded_versions) and (
+            new_versions != self._loaded_versions
+        )
+        self._loaded_versions = new_versions
+        if (
+            version_changed
+            and self._engine_streaming_session
+            and not self._keep_sessions_on_weight_sync
+        ):
+            await self._close_all_engine_sessions()
 
     async def get_metrics(self) -> dict:
         """Drain the per-step counters under the ``session_server/`` prefix.
@@ -486,6 +552,7 @@ class SessionServerWorker(Worker):
             )
         else:
             metrics["session_server/pending_payload_bytes"] = 0
+        metrics["session_server/retained_history_bytes"] = self._retained_history_bytes
         return metrics
 
     def _expire_discard_records(self) -> None:
@@ -506,8 +573,10 @@ class SessionServerWorker(Worker):
         for group_id in expired:
             group = self._groups.pop(group_id)
             for session in group.sessions.values():
+                self._clear_session_history(session)
                 if session.session_id is not None:
                     self._sessions.pop(session.session_id, None)
+            self._release_group_engine(group_id)
 
     # ------------------------------------------------------------------
     # Session and group state
@@ -657,13 +726,19 @@ class SessionServerWorker(Worker):
             if error is not None:
                 return self._error(*error)
             rlinf_block = body.get("rlinf") or {}
+            delta_text = body.get("text")
+            image_data = body.get("image_data")
+            is_text_mode = isinstance(delta_text, str) and bool(delta_text)
+            excluded = (
+                ("rlinf", "input_ids", "sampling_params", "text", "image_data")
+                if is_text_mode
+                else ("rlinf", "input_ids", "sampling_params")
+            )
             # Every other body field rides through to the engine unchanged:
             # the request is sglang's /generate shape apart from the rlinf
             # block.
             passthrough = {
-                key: value
-                for key, value in body.items()
-                if key not in ("rlinf", "input_ids", "sampling_params")
+                key: value for key, value in body.items() if key not in excluded
             }
             result, error = await self._generate_core(
                 session,
@@ -671,45 +746,58 @@ class SessionServerWorker(Worker):
                 body.get("sampling_params"),
                 rlinf_block.get("prev_kept_len"),
                 passthrough,
+                delta_text=delta_text if is_text_mode else None,
+                image_data=image_data if is_text_mode else None,
             )
             if error is not None:
                 return self._error(*error)
-            content = {
+            content: dict[str, Any] = {
                 "output_ids": list(result["output_ids"]),
                 "finish_reason": dict(result["finish_reason"]),
                 "weight_version": result["weight_version"],
                 "cached_tokens": result["cached_tokens"],
             }
+            if is_text_mode:
+                content["text"] = result.get("text") or ""
+                content["prompt_tokens"] = result.get("prompt_tokens", 0)
             if self._verify_assembly:
                 # Only the verification needs the agent-side logprobs; normal
                 # responses keep them out of the data plane.
                 content["logprobs"] = result["logprobs"]
             return JSONResponse(content=content)
         finally:
-            session.inflight = False
+            try:
+                if session.pending_engine_session_close:
+                    await self._close_engine_session(session)
+            finally:
+                session.inflight = False
 
     async def _generate_core(
         self,
         session: _SessionState,
-        input_ids: list,
+        input_ids: Any,
         sampling_overrides: Any,
         prev_kept_len: Optional[int],
         body_fields: Optional[dict] = None,
+        *,
+        delta_text: Optional[str] = None,
+        image_data: Optional[list[str]] = None,
     ) -> tuple[Optional[dict], Optional[tuple[int, str]]]:
-        """Run one generation turn for ``session``; both entries share it.
+        """Run one generation turn for ``session``; all entries share it.
 
         Validates the inputs, records the prefix bookkeeping, forwards to
-        the router, checks the abort / weight-version contracts, writes the
+        the router (managing an engine-side SGLang streaming session when
+        requested), checks the abort / weight-version contracts, writes the
         payload part, and updates the metrics and versions. The caller has
         already checked with :meth:`_turn_refusal` that the trajectory may
         take a turn, before changing any session state.
 
         Returns:
             The engine result (``text``, ``output_ids``, ``finish_reason``,
-            ``weight_version``, ``cached_tokens``, ``logprobs``) —
-            ``logprobs`` only when the assembly check needs them — or the
-            status and message of the failure, which each entry wraps in its
-            own error shape.
+            ``weight_version``, ``cached_tokens``, ``prompt_tokens``,
+            ``logprobs``) — ``logprobs`` only when the assembly check needs
+            them — or the status and message of the failure, which each entry
+            wraps in its own error shape.
 
         Args:
             body_fields: Extra request fields forwarded to the engine as-is
@@ -717,9 +805,24 @@ class SessionServerWorker(Worker):
                 input_ids and sampling_params; the chat entry passes none).
                 ``sampling_params`` and ``return_logprob`` are always
                 overwritten by this server's merged values.
+            delta_text: Incremental prompt text for multimodal / text
+                streaming turns; None for token-id turns.
+            image_data: Optional base64-encoded images introduced on this turn.
         """
-        if not isinstance(input_ids, list) or not input_ids:
-            return None, (400, "input_ids must be a non-empty list")
+        is_text_mode = delta_text is not None
+        if not is_text_mode:
+            if not isinstance(input_ids, list) or not input_ids:
+                return None, (400, "input_ids must be a non-empty list")
+        else:
+            if input_ids is None:
+                input_ids = []
+            elif not isinstance(input_ids, list):
+                return None, (400, "input_ids must be a list when provided")
+            if image_data is not None and (
+                not isinstance(image_data, list)
+                or any(not isinstance(item, str) for item in image_data)
+            ):
+                return None, (400, "image_data must be a list of base64 strings")
         if prev_kept_len is not None and (
             not isinstance(prev_kept_len, int) or prev_kept_len < 0
         ):
@@ -733,18 +836,92 @@ class SessionServerWorker(Worker):
 
         group = self._groups[session.group_id]
         version_start = min(self._loaded_versions)
-        turn = new_turn_record(
-            input_ids, session.last_input, session.last_output, prev_kept_len
-        )
+        if is_text_mode and not input_ids:
+            if session.entry is None:
+                session.entry = "multimodal"
+            turn = TurnRecord(
+                input_len=0,
+                declared_prev_kept_len=prev_kept_len,
+                continues_prev=len(session.turns) > 0,
+            )
+        else:
+            turn = new_turn_record(
+                input_ids, session.last_input, session.last_output, prev_kept_len
+            )
 
         forwarded = dict(body_fields or {})
-        forwarded["input_ids"] = input_ids
+        routing_key = routing_key_for(session.group_id)
+        turn_images: Optional[list[str]] = (
+            list(image_data) if image_data is not None else None
+        )
+        use_engine_session = False
+        if is_text_mode:
+            use_engine_session = bool(
+                forwarded.pop("engine_session", self._engine_streaming_session)
+            )
+            images_for_turn = turn_images or []
+            if use_engine_session:
+                if session.engine_session_id is None:
+                    try:
+                        (
+                            session.engine_session_id,
+                            session.engine_client,
+                        ) = await self._open_engine_session(
+                            session.group_id, routing_key
+                        )
+                        session.last_engine_rid = None
+                    except Exception as exc:
+                        self.log_error(
+                            f"Session server /open_session failed (group "
+                            f"{session.group_id}, traj {session.traj_index}): {exc!r}"
+                        )
+                        return None, (
+                            500,
+                            f"opening engine session failed: {exc!r}",
+                        )
+                    if session.committed_text:
+                        send_text = session.committed_text + delta_text
+                        send_images = [*session.all_image_data, *images_for_turn]
+                    else:
+                        send_text = delta_text
+                        send_images = images_for_turn
+                else:
+                    send_text = delta_text
+                    send_images = images_for_turn
+                session_params: dict[str, Any] = {"id": session.engine_session_id}
+                if session.last_engine_rid is not None:
+                    session_params["rid"] = session.last_engine_rid
+                forwarded["session_params"] = session_params
+            else:
+                send_text = session.committed_text + delta_text
+                send_images = [*session.all_image_data, *images_for_turn]
+            forwarded["text"] = send_text
+            if send_images:
+                forwarded["image_data"] = send_images
+            forwarded.setdefault(
+                "rid",
+                f"ss{self._server_index}-g{session.group_id}"
+                f"-t{session.traj_index}-k{len(session.turns)}",
+            )
+        else:
+            forwarded["input_ids"] = input_ids
         forwarded["sampling_params"] = self._merged_sampling_params(sampling_overrides)
-        forwarded["return_logprob"] = self._return_logprob
+        need_topk = self._topk_log_probs > 0
+        forwarded["return_logprob"] = self._return_logprob or need_topk
+        if need_topk:
+            forwarded["top_logprobs_num"] = self._topk_log_probs
 
+        if use_engine_session:
+            target_client = session.engine_client or self._engine_client_for_group(
+                session.group_id
+            )
+        elif self._router_client is not None:
+            target_client = self._router_client
+        else:
+            target_client = self._engine_client_for_group(session.group_id)
         try:
             result = await self._forward_generate(
-                forwarded, routing_key_for(session.group_id), group.task_name
+                forwarded, routing_key, group.task_name, client=target_client
             )
         except Exception as exc:
             self.log_error(
@@ -795,10 +972,23 @@ class SessionServerWorker(Worker):
             return None, (410, f"group {session.group_id} was discarded")
 
         logprobs = None
-        if self._return_logprob:
+        topk_ids = None
+        topk_logprobs = None
+        if need_topk:
+            token_lps, topk_ids, topk_logprobs = extract_topk_logprobs(
+                meta_info, output_ids, self._topk_log_probs
+            )
+            if self._return_logprob:
+                logprobs = token_lps if token_lps is not None else []
+        elif self._return_logprob:
             token_logprobs = meta_info.get("output_token_logprobs") or []
             logprobs = [float(item[0]) for item in token_logprobs]
 
+        output_text = result.get("text")
+        raw_prompt_tokens = meta_info.get("prompt_tokens")
+        prompt_tokens = (
+            int(raw_prompt_tokens) if raw_prompt_tokens is not None else None
+        )
         turn.output_len = len(output_ids)
         part = PayloadPart(
             group_id=session.group_id,
@@ -811,6 +1001,14 @@ class SessionServerWorker(Worker):
             weight_version=weight_version,
             finish_reason=dict(finish_reason),
             prev_kept_len=prev_kept_len,
+            delta_text=delta_text,
+            image_data=turn_images,
+            output_text=str(output_text)
+            if is_text_mode and output_text is not None
+            else None,
+            topk_ids=topk_ids,
+            topk_logprobs=topk_logprobs,
+            prompt_tokens=prompt_tokens,
         )
         await self._emit_part(session, part)
         if group.discard_reason is not None:
@@ -820,12 +1018,23 @@ class SessionServerWorker(Worker):
             # response is rejected like any other post-discard request.
             return None, (410, f"group {session.group_id} was discarded")
         session.turns.append(turn)
-        if turn.continues_prev is False:
+        if turn.continues_prev is False and not is_text_mode:
             # The arrival-time classification found a break inside the
             # previous input, which is a history rewrite. Counted here: a
             # turn a failed forward never records is no rewrite either.
             self._metrics["session_server/prefix_rewritten"] += 1
-        session.last_input = list(input_ids)
+        if use_engine_session and "rid" in forwarded:
+            session.last_engine_rid = str(forwarded["rid"])
+        if is_text_mode:
+            need_history_resend = (not use_engine_session) or (
+                not self._keep_sessions_on_weight_sync
+            )
+            if need_history_resend:
+                self._append_session_history(
+                    session, delta_text + str(output_text or ""), turn_images
+                )
+        if input_ids:
+            session.last_input = list(input_ids)
         session.last_output = list(output_ids)
         if self._verify_assembly:
             turn.merged_sampling_params = forwarded["sampling_params"]
@@ -836,15 +1045,140 @@ class SessionServerWorker(Worker):
 
         return (
             {
-                "text": result.get("text"),
+                "text": output_text,
                 "output_ids": list(output_ids),
                 "finish_reason": dict(finish_reason),
                 "weight_version": weight_version,
                 "cached_tokens": meta_info.get("cached_tokens", 0),
+                "prompt_tokens": meta_info.get("prompt_tokens", 0),
                 "logprobs": logprobs if self._verify_assembly else None,
             },
             None,
         )
+
+    def _engine_client_for_group(self, group_id: int) -> Optional[InferenceHTTPClient]:
+        """Return the direct SGLang engine client pinned to ``group_id``.
+
+        Assigns each new group to the engine with the fewest active groups and
+        keeps it pinned there until the group finishes or is voided. Falls back
+        to ``self._router_client`` when no direct engine URLs were supplied.
+        """
+        if self._engine_clients:
+            if len(self._engine_active_groups) != len(self._engine_clients):
+                self._engine_active_groups = [0] * len(self._engine_clients)
+            idx = self._group_engine_idx.get(group_id)
+            if idx is None:
+                idx = min(
+                    range(len(self._engine_clients)),
+                    key=lambda i: self._engine_active_groups[i],
+                )
+                self._group_engine_idx[group_id] = idx
+                self._engine_active_groups[idx] += 1
+            return self._engine_clients[idx]
+        return self._router_client
+
+    def _release_group_engine(self, group_id: int) -> None:
+        """Release ``group_id``'s engine pin and active-group load count."""
+        idx = self._group_engine_idx.pop(group_id, None)
+        if idx is not None and 0 <= idx < len(self._engine_active_groups):
+            self._engine_active_groups[idx] = max(
+                0, self._engine_active_groups[idx] - 1
+            )
+
+    def _append_session_history(
+        self,
+        session: _SessionState,
+        text: str,
+        images: Optional[list[str]],
+    ) -> None:
+        """Record committed text and images for fallback full-history resends."""
+        session.committed_text += text
+        added = len(text)
+        if images:
+            session.all_image_data.extend(images)
+            added += sum(len(img) for img in images)
+        session.history_bytes += added
+        self._retained_history_bytes += added
+
+    def _clear_session_history(self, session: _SessionState) -> None:
+        """Release any retained text and image history for ``session``."""
+        session.committed_text = ""
+        session.all_image_data.clear()
+        if session.history_bytes:
+            self._retained_history_bytes = max(
+                0, self._retained_history_bytes - session.history_bytes
+            )
+            session.history_bytes = 0
+
+    async def _open_engine_session(
+        self, group_id: int, routing_key: int
+    ) -> tuple[str, InferenceHTTPClient]:
+        """Open a non-streaming SGLang session pinned to the group's engine worker."""
+        client = self._engine_client_for_group(group_id)
+        headers = {"X-SMG-Routing-Key": str(routing_key)}
+        # Omit streaming=True so SGLang returns req_to_token_pool slots between
+        # turns instead of deadlocking once concurrent sessions reach
+        # max_running_requests. Multi-turn chaining uses session_params.rid.
+        opened = await client.async_post(
+            "/open_session",
+            {"capacity_of_str_len": self._engine_session_capacity},
+            headers=headers,
+            timeout_s=self._generate_timeout_s,
+        )
+        if isinstance(opened, str) and opened:
+            return opened, client
+        if isinstance(opened, dict):
+            session_id = opened.get("session_id") or opened.get("id")
+            if session_id:
+                return str(session_id), client
+        raise RuntimeError(
+            f"SGLang /open_session did not return a session_id; got {opened!r}"
+        )
+
+    async def _close_engine_session(self, session: _SessionState) -> None:
+        """Close the engine-side SGLang session of one trajectory, best effort."""
+        engine_sid = session.engine_session_id
+        client = session.engine_client
+        session.engine_session_id = None
+        session.engine_client = None
+        session.last_engine_rid = None
+        session.pending_engine_session_close = False
+        if engine_sid is None:
+            return
+        if client is None:
+            client = self._engine_client_for_group(session.group_id)
+        if client is None:
+            return
+        headers = {"X-SMG-Routing-Key": str(routing_key_for(session.group_id))}
+        try:
+            await client.async_post(
+                "/close_session",
+                {"session_id": engine_sid},
+                headers=headers,
+                timeout_s=min(self._generate_timeout_s, 30.0),
+            )
+        except Exception as exc:
+            self.log_warning(
+                f"Closing engine session {engine_sid} for group "
+                f"{session.group_id} failed ({exc!r})."
+            )
+
+    async def _close_all_engine_sessions(self, *, force: bool = False) -> None:
+        """Close active engine-side sessions, deferring any in-flight request."""
+        to_close: list[_SessionState] = []
+        for group in self._groups.values():
+            for session in group.sessions.values():
+                if session.engine_session_id is None:
+                    continue
+                if not force and session.inflight:
+                    session.pending_engine_session_close = True
+                else:
+                    to_close.append(session)
+        if to_close:
+            await asyncio.gather(
+                *(self._close_engine_session(s) for s in to_close),
+                return_exceptions=True,
+            )
 
     def _merged_sampling_params(self, overrides: Any) -> dict:
         """Config defaults merged with this call's overrides, in the order
@@ -855,9 +1189,14 @@ class SessionServerWorker(Worker):
         return params
 
     async def _forward_generate(
-        self, body: dict, routing_key: int, task_name: str
+        self,
+        body: dict,
+        routing_key: int,
+        task_name: str,
+        *,
+        client: Optional[InferenceHTTPClient] = None,
     ) -> dict:
-        """POST to the router's /generate; connect failures are retried.
+        """POST to the router or pinned engine /generate; connect failures are retried.
 
         Only ``ClientConnectorError`` is retried: the connection was never
         established, so the request was never sent and resending draws no new
@@ -866,6 +1205,7 @@ class SessionServerWorker(Worker):
         resending would re-roll the turn, and the failure goes back to the
         agent instead.
         """
+        target = client if client is not None else self._router_client
         timeout_s = self._per_task_generate_timeout_s.get(
             task_name, self._generate_timeout_s
         )
@@ -873,7 +1213,9 @@ class SessionServerWorker(Worker):
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                return await self._post_generate(body, headers, timeout_s)
+                return await self._post_generate(
+                    body, headers, timeout_s, client=target
+                )
             except aiohttp.ClientConnectorError as exc:
                 self.log_warning(
                     f"Router connection error on generate attempt "
@@ -881,14 +1223,20 @@ class SessionServerWorker(Worker):
                     f"({type(exc).__name__}: {exc}), retrying"
                 )
                 await asyncio.sleep(0.5 * (attempt + 1))
-        return await self._post_generate(body, headers, timeout_s)
+        return await self._post_generate(body, headers, timeout_s, client=target)
 
     async def _post_generate(
-        self, body: dict, headers: dict[str, str], timeout_s: float
+        self,
+        body: dict,
+        headers: dict[str, str],
+        timeout_s: float,
+        *,
+        client: Optional[InferenceHTTPClient] = None,
     ) -> dict:
         """One /generate POST, with the forward-time metrics accounted."""
+        target = client if client is not None else self._router_client
         started = asyncio.get_running_loop().time()
-        result = await self._router_client.async_post(
+        result = await target.async_post(
             "/generate", body, headers=headers, timeout_s=timeout_s
         )
         elapsed = asyncio.get_running_loop().time() - started
@@ -1024,7 +1372,11 @@ class SessionServerWorker(Worker):
                 )
             return JSONResponse(content=response)
         finally:
-            session.inflight = False
+            try:
+                if session.pending_engine_session_close:
+                    await self._close_engine_session(session)
+            finally:
+                session.inflight = False
 
     def _session_max_len(self, session: _SessionState) -> int:
         """The longest sequence this session's turns may produce.
@@ -1078,7 +1430,16 @@ class SessionServerWorker(Worker):
         group = self._groups.get(part.group_id)
         if group is None:
             return
-        nbytes, task = await self._payload_writer.emit_part(group.payload_shard, part)
+        if self._retained_history_bytes:
+            nbytes, task = await self._payload_writer.emit_part(
+                group.payload_shard,
+                part,
+                extra_pending_bytes=self._retained_history_bytes,
+            )
+        else:
+            nbytes, task = await self._payload_writer.emit_part(
+                group.payload_shard, part
+            )
         group.payload_bytes += nbytes
         if task is not None and not group.finalized:
             group.pending_settles.append(task)
@@ -1222,6 +1583,8 @@ class SessionServerWorker(Worker):
             # does; a turn the agent declares nothing about did not end.
             turn.is_end = is_end.get(turn_index, is_end.get(str(turn_index), False))
         session.extra_fields_train = extra_fields_train
+        self._clear_session_history(session)
+        await self._close_engine_session(session)
 
         group.closed.add(session.traj_index)
         await self._maybe_finalize(group)
@@ -1413,7 +1776,10 @@ class SessionServerWorker(Worker):
         self._remember_reported(group_id, session_ids)
         for sid in session_ids:
             self._sessions.pop(sid, None)
+        for session in group.sessions.values():
+            self._clear_session_history(session)
         self._groups.pop(group_id, None)
+        self._release_group_engine(group_id)
         return True
 
     async def _void_group(self, group_id: int, reason: str) -> None:
@@ -1435,12 +1801,18 @@ class SessionServerWorker(Worker):
         group.rewarded.clear()
         group.rewards = []
         for session in group.sessions.values():
+            if session.inflight:
+                session.pending_engine_session_close = True
+            else:
+                await self._close_engine_session(session)
             session.turns.clear()
             session.last_input = None
             session.last_output = None
             session.chat = None
+            self._clear_session_history(session)
             session.extra_fields_train.clear()
             session.not_training_turns.clear()
+        self._release_group_engine(group_id)
         group.verify_result = None
         if reason == _WRITE_FAILED:
             self._metrics["session_server/payload_write_failed"] += 1

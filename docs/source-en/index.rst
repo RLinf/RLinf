@@ -106,6 +106,7 @@ Why RLinf
   SFT & Imitation <rst_source/examples/sft_index>
   RL Recipes <rst_source/examples/methods_index>
   World Models <rst_source/examples/world_model_index>
+  Embodied Agents <rst_source/examples/embodied_agent/index>
   Evaluation <rst_source/evaluations/index>
 
 .. toctree::

@@ -34,22 +34,33 @@ from typing import Any, Callable, MutableMapping
 
 # Paths a non-local peer may request. Exact matches only: default-deny
 # resists path obfuscation ("/rlinf%2F...", doubled slashes, case changes).
-# The four entries are everything an sglang router calls on a worker under
+# These entries are everything an sglang router calls on a worker under
 # `policy: manual` with `disable_health_check: true`: the registration
 # probes (GET /server_info, GET /model_info, GET /health, once per worker
-# at registration) and the forwarded POST /generate. Any other router
-# configuration reaches further endpoints and is rejected here: PowerOfTwo
-# policies poll GET /v1/loads every 30 s, and enabled health checks issue
-# periodic /health traffic. Config validation pins these two settings
-# whenever the session server is enabled.
-WHITELISTED_PATHS = frozenset({"/generate", "/health", "/server_info", "/model_info"})
+# at registration), the forwarded POST /generate, and engine-side streaming
+# session lifecycle routes (POST /open_session, POST /close_session). Any
+# other router configuration reaches further endpoints and is rejected here:
+# PowerOfTwo policies poll GET /v1/loads every 30 s, and enabled health
+# checks issue periodic /health traffic. Config validation pins these two
+# settings whenever the session server is enabled.
+WHITELISTED_PATHS = frozenset(
+    {
+        "/generate",
+        "/open_session",
+        "/close_session",
+        "/health",
+        "/server_info",
+        "/model_info",
+    }
+)
 
 # Loopback values of ``scope["client"][0]``.
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
 
 _FORBIDDEN_BODY = (
     "403 Forbidden: non-local requests are only allowed on the "
-    "router-facing paths (/generate, /health, /server_info, /model_info)."
+    "router-facing paths (/generate, /open_session, /close_session, "
+    "/health, /server_info, /model_info)."
 ).encode()
 
 
