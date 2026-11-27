@@ -46,7 +46,7 @@ bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
 ## 最新动态
 
-- [2026/11] 🔥 RLinf 支持用 RPent 规划器多轮数据对 Qwen3.8-27B 做全量或 LoRA 微调，并支持导出 HuggingFace 权重与合并 LoRA adapter。文档：[Qwen-VL 监督微调](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html#rpent-planner-sft)。
+- [2026/11] 🔥 RLinf 支持用 RPent 规划器多轮数据对 Qwen3.8-27B 做全量或 LoRA 微调，并支持导出 HuggingFace 权重与合并 LoRA adapter。文档：[Qwen-VL 监督微调](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html)。
 - [2026/11] 🔥 RLinf 新增 FlexRLT，可直接用冻结 VLA 的特征训练小型 actor 和 critic，并分别选择特征表示、网络、AC/TD3 算法及 STEAM 门控。文档：[FlexRLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/flexrlt.html)。
 - [2026/11] 🔥 RLinf 支持在 [DexJoCo](https://github.com/brave-eai/dexjoco) 灵巧操作基准上用 SFT 和 PPO 训练 CNN 和 π₀.₅ policy。PPO 将 π₀.₅ 在 `water_plant` 上的成功率从 SFT 后的 78.1% 提升至 98.4%。文档：[基于 DexJoCo 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html)。
 - [2026/11] 🔥 RLinf 支持奖励反馈学习（ReFL），使用 ImageReward 微调 SD3.5 Medium。文档：[ReFL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/refl.html)。
@@ -266,7 +266,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">Qwen2.5-VL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL-MoE</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html#rpent-planner-sft">Qwen3.8-27B</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3.8-27B</a> ✅</li>
           </ul>
           <li><b>世界模型</b></li>
           <ul>

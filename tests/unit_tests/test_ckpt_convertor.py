@@ -23,7 +23,6 @@ from rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf import (
 )
 from rlinf.utils.ckpt_convertor.fsdp_convertor.utils import (
     copy_model_config_and_code,
-    save_state_dict_sharded_safetensors,
 )
 from rlinf.utils.ckpt_convertor.openpi.jax_to_openpi import _unwrap_value_leaves
 
@@ -84,22 +83,54 @@ def test_copy_model_config_and_code_preserves_chat_template_and_merges(tmp_path)
     assert not (dst / "model.safetensors.index.json").exists()
 
 
-def test_save_state_dict_sharded_safetensors_handles_tied_weights(tmp_path):
+def test_fsdp_convertor_exports_hub_model_with_tied_weights(tmp_path, monkeypatch):
+    from omegaconf import OmegaConf
     from safetensors.torch import load_file
 
-    shared = torch.arange(6, dtype=torch.float32).reshape(2, 3)
-    state_dict = {
-        "lm_head.weight": shared,
-        "model.embed_tokens.weight": shared,
-        "model.slice_a": shared[:1],
-        "model.slice_b": shared[1:],
-    }
+    from rlinf.utils.ckpt_convertor.fsdp_convertor import convert_pt_to_hf
 
-    num_shards, _ = save_state_dict_sharded_safetensors(state_dict, str(tmp_path))
+    class _TiedModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embed = torch.nn.Embedding(4, 3)
+            self.lm_head = torch.nn.Linear(3, 4, bias=False)
+            self.lm_head.weight = self.embed.weight
 
-    assert num_shards == 1
-    loaded = load_file(str(tmp_path / "model-00001-of-00001.safetensors"))
-    torch.testing.assert_close(loaded["lm_head.weight"], shared)
-    torch.testing.assert_close(loaded["model.embed_tokens.weight"], shared)
-    torch.testing.assert_close(loaded["model.slice_a"], shared[:1])
-    torch.testing.assert_close(loaded["model.slice_b"], shared[1:])
+    snapshot = tmp_path / "hf_cache_snapshot"
+    save_dir = tmp_path / "exported"
+    snapshot.mkdir()
+    (snapshot / "config.json").write_text('{"model_type": "qwen3_5"}', encoding="utf-8")
+    (snapshot / "preprocessor_config.json").write_text("{}", encoding="utf-8")
+    (snapshot / "chat_template.jinja").write_text("{{ messages }}", encoding="utf-8")
+    (snapshot / "merges.txt").write_text("#version: 0.2\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        convert_pt_to_hf,
+        "resolve_model_path",
+        lambda path: str(snapshot) if path == "Qwen/Qwen3.8-27B" else path,
+    )
+
+    raw_cfg = OmegaConf.create(
+        {"model_type": "qwen3_5", "model_path": "Qwen/Qwen3.8-27B", "is_lora": False}
+    )
+    OmegaConf.set_struct(raw_cfg, True)
+    prepared = convert_pt_to_hf._prepare_model_cfg(raw_cfg)
+    assert prepared.model_path == str(snapshot)
+    assert raw_cfg.model_path == "Qwen/Qwen3.8-27B"
+
+    model = _TiedModel()
+    cfg = OmegaConf.create({"convertor": {"torch_dtype": None}})
+    convert_pt_to_hf._save_hf_checkpoint(model, prepared, cfg, str(save_dir))
+
+    for name in (
+        "config.json",
+        "preprocessor_config.json",
+        "chat_template.jinja",
+        "merges.txt",
+        "model.safetensors.index.json",
+    ):
+        assert (save_dir / name).is_file(), f"missing {name}"
+
+    loaded = load_file(str(save_dir / "model-00001-of-00001.safetensors"))
+    torch.testing.assert_close(loaded["embed.weight"], model.embed.weight)
+    torch.testing.assert_close(loaded["lm_head.weight"], model.embed.weight)

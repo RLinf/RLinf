@@ -40,8 +40,6 @@ Qwen-VL 监督微调
 | **你将完成：**\ 安装环境 → 准备模型权重与数据（Robo2VLM 或 RPent JSONL）→ 启动 ``run_vlm_sft.sh`` → 观察 loss 与指标并导出 HuggingFace 权重。
 | **前置条件：**\ :doc:`安装 </rst_source/start/installation>` · Qwen-VL 或 Qwen3.8-27B 权重 · Robo2VLM 或 RPent 数据集。
 
-.. _rpent-planner-sft:
-
 安装与运行
 ----------
 

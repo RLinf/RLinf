@@ -47,7 +47,7 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, follow the [Quick St
 
 ## What's NEW!
 
-- [2026/11] 🔥 RLinf supports full-parameter and LoRA SFT for Qwen3.8-27B on multi-turn RPent planner data, with HuggingFace checkpoint export and LoRA adapter merging. Doc: [Qwen-VL SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html#rpent-planner-sft).
+- [2026/11] 🔥 RLinf supports full-parameter and LoRA SFT for Qwen3.8-27B on multi-turn RPent planner data, with HuggingFace checkpoint export and LoRA adapter merging. Doc: [Qwen-VL SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html).
 - [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
 - [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
 - [2026/11] 🔥 RLinf supports Reward Feedback Learning (ReFL) for fine-tuning SD3.5 Medium with ImageReward. Doc: [ReFL](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/refl.html).
@@ -266,7 +266,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen2.5-VL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL-MoE</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html#rpent-planner-sft">Qwen3.8-27B</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3.8-27B</a> ✅</li>
           </ul>
           <li><b>World Model</b></li>
           <ul>

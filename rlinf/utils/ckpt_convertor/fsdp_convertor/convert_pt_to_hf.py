@@ -49,16 +49,17 @@ If the checkpoint uses a custom ``model_type`` registered only through
 ``get_model`` can resolve the builder.
 """
 
+import copy
 import os
 from collections.abc import Collection, Mapping
 from pathlib import Path
 
 import hydra
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 from rlinf.config import SupportedModel
-from rlinf.models import get_model
+from rlinf.models import get_model, resolve_model_path
 from rlinf.scheduler.cluster import load_user_extension_module
 
 from .utils import (
@@ -172,7 +173,15 @@ def _resolve_model_cfg(cfg: DictConfig) -> DictConfig:
 
 
 def _prepare_model_cfg(model_cfg: DictConfig) -> DictConfig:
-    """Apply model-type validation (e.g. DreamZero cold start without config.json)."""
+    """Resolve Hub model paths and apply model-type config validation."""
+    raw_model_path = model_cfg.get("model_path", None)
+    if isinstance(raw_model_path, str):
+        resolved_model_path = resolve_model_path(raw_model_path)
+        if resolved_model_path != raw_model_path:
+            model_cfg = copy.deepcopy(model_cfg)
+            with open_dict(model_cfg):
+                model_cfg.model_path = resolved_model_path
+
     model_type = model_cfg.get("model_type", None)
     if model_type is None:
         return model_cfg

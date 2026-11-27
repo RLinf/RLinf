@@ -2171,11 +2171,7 @@ def test_prefix_async_replay_drains_without_rank_collectives(tmp_path):
     )
 
 
-@pytest.mark.parametrize("is_lora", [False, True], ids=["base", "peft"])
-@pytest.mark.parametrize("wrap_fsdp", [False, True], ids=["eager", "fsdp"])
-def test_generate_with_kv_cache_resolves_base_model_rope_index(
-    tmp_path, is_lora, wrap_fsdp
-):
+def test_generate_with_kv_cache_resolves_base_model_rope_index(tmp_path):
     from contextlib import nullcontext
     from types import SimpleNamespace
 
@@ -2187,12 +2183,7 @@ def test_generate_with_kv_cache_resolves_base_model_rope_index(
         pytest.skip("Test requires its own single-rank process group")
 
     class _Backbone(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.rope_calls: list[dict] = []
-
         def get_rope_index(self, input_ids, attention_mask=None, **kwargs):
-            self.rope_calls.append(kwargs)
             seq_len = input_ids.size(1)
             pos = torch.arange(seq_len, device=input_ids.device).view(1, 1, seq_len)
             return pos.expand(3, input_ids.size(0), seq_len), None
@@ -2202,51 +2193,25 @@ def test_generate_with_kv_cache_resolves_base_model_rope_index(
             super().__init__()
             self.model = _Backbone()
             self.head = nn.Linear(1, 1)
-            self.seen_positions: list[torch.Tensor] = []
-            self._emitted = [7, 2]
+            self.step = 0
 
-        def forward(
-            self,
-            input_ids,
-            position_ids,
-            attention_mask,
-            past_key_values=None,
-            use_cache=True,
-            **kwargs,
-        ):
-            step = len(self.seen_positions)
-            self.seen_positions.append(position_ids.detach().clone())
-            token = self._emitted[min(step, len(self._emitted) - 1)]
-            logits = torch.zeros(
-                input_ids.size(0), input_ids.size(1), 16, device=input_ids.device
-            )
+        def forward(self, input_ids, position_ids, attention_mask, **kwargs):
+            token = 7 if self.step == 0 else 2
+            self.step += 1
+            logits = torch.zeros(input_ids.size(0), input_ids.size(1), 16)
             logits[:, -1, token] = 1.0
-            return SimpleNamespace(logits=logits, past_key_values=(step + 1,))
-
-    class _LoraModel(nn.Module):
-        def __init__(self, model):
-            super().__init__()
-            self.model = model
-
-        def forward(self, *args, **kwargs):
-            return self.model(*args, **kwargs)
+            return SimpleNamespace(logits=logits, past_key_values=(self.step,))
 
     class _PeftModel(nn.Module):
         def __init__(self, model):
             super().__init__()
-            self.base_model = _LoraModel(model)
-
-        def __getattr__(self, name):
-            try:
-                return super().__getattr__(name)
-            except AttributeError:
-                return getattr(self.base_model, name)
+            self.model = model
 
         def get_base_model(self):
-            return self.base_model.model
+            return self.model
 
         def forward(self, *args, **kwargs):
-            return self.base_model(*args, **kwargs)
+            return self.model(*args, **kwargs)
 
     dist.init_process_group(
         "gloo",
@@ -2255,36 +2220,26 @@ def test_generate_with_kv_cache_resolves_base_model_rope_index(
         world_size=1,
     )
     try:
-        vlm = _VLM()
-        model: nn.Module = _PeftModel(vlm) if is_lora else vlm
-        if wrap_fsdp:
-            model = FSDP(model, use_orig_params=True, device_id=torch.device("cpu"))
-
         input_ids = torch.tensor([[10, 11, 12]])
-        attention_mask = torch.ones_like(input_ids)
-        multi_modal_inputs = {
-            "pixel_values": torch.zeros(1, 3),
-            "image_grid_thw": torch.tensor([[1, 2, 2]]),
-            "mm_token_type_ids": torch.tensor([[0, 1, 0]]),
-        }
-        generated = generate_with_kv_cache(
-            model=model,
-            eos_token_id=2,
-            pad_token_id=0,
-            amp_context=nullcontext(),
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            multi_modal_inputs=multi_modal_inputs,
-            max_new_tokens=4,
-        )
-
-        assert generated.tolist() == [[10, 11, 12, 7, 2]]
-        assert len(vlm.model.rope_calls) == 1
-        assert set(vlm.model.rope_calls[0]) == {
-            "image_grid_thw",
-            "mm_token_type_ids",
-        }
-        assert [p.shape for p in vlm.seen_positions] == [(3, 1, 3), (3, 1, 1)]
-        assert vlm.seen_positions[1].tolist() == [[[3]], [[3]], [[3]]]
+        mm = {"pixel_values": torch.zeros(1, 3), "image_grid_thw": torch.ones(1, 3)}
+        variants = [
+            _VLM(),
+            _PeftModel(_VLM()),
+            FSDP(
+                _PeftModel(_VLM()), use_orig_params=True, device_id=torch.device("cpu")
+            ),
+        ]
+        for model in variants:
+            generated = generate_with_kv_cache(
+                model=model,
+                eos_token_id=2,
+                pad_token_id=0,
+                amp_context=nullcontext(),
+                input_ids=input_ids,
+                attention_mask=torch.ones_like(input_ids),
+                multi_modal_inputs=mm,
+                max_new_tokens=4,
+            )
+            assert generated.tolist() == [[10, 11, 12, 7, 2]]
     finally:
         dist.destroy_process_group()

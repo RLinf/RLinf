@@ -40,8 +40,6 @@ Both workflows run FSDP supervised fine-tuning through ``examples/sft/run_vlm_sf
 | **You'll do:** install the environment → prepare weights and data (Robo2VLM or RPent JSONL) → launch ``run_vlm_sft.sh`` → monitor loss/eval metrics and export to HuggingFace.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Qwen-VL or Qwen3.8-27B weights · Robo2VLM or RPent dataset.
 
-.. _rpent-planner-sft:
-
 Setup and Run
 -------------
 
