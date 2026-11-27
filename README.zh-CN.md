@@ -204,7 +204,7 @@ RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测�
 
 ### 模型
 
-RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。下表按 System 0、System 1、System 2 和其他模型组件整理模型及训练示例。
+RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习，覆盖运动控制、视觉-语言-动作模型（VLA）、世界动作模型（WAM）以及推理与智能体模型。下表按 System 0、System 1、System 2 和其他模型分组。
 
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
@@ -226,8 +226,8 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。�
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><b>VLA</b>
             <ul style="margin-left: 0; padding-left: 16px;">
-              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">π₀ / π₀.₅（OpenPI）</a> ✅</li>
-              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0_fast.html">π₀-FAST（LeRobot）</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">π₀ / π₀.₅ (OpenPI)</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0_fast.html">π₀-FAST (LeRobot)</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/maniskill.html">OpenVLA</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/openvla_oft.html">OpenVLA-OFT</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6, N1.7)</a> ✅</li>
@@ -252,29 +252,34 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。�
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li><b>机器人智能体强化学习</b></li>
+          <li><b>机器人智能体强化学习</b>（敬请期待）</li>
           <li><b>数学推理强化学习</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-1.5B</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-7B</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/math_reasoning/moonlight.html">Moonlight-16B</a> ✅</li>
-              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/agentlightning_calc_x.html">Qwen2.5-1.5B（AgentLightning Calc-X）</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/agentlightning_calc_x.html">Qwen2.5-1.5B (AgentLightning Calc-X)</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/rstar2.html">Qwen2.5-7B (rStar2)</a> ✅</li>
             </ul>
           </li>
           <li><b>搜索强化学习</b>
             <ul style="margin-left: 0; padding-left: 16px;">
-              <li><b>Search-R1 / rStar2</b>
+              <li><b>Search-R1</b>
                 <ul style="margin-left: 0; padding-left: 16px;">
-                  <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/searchr1/qwen2.5.html">Qwen2.5-3B</a> ✅</li>
-                  <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/rstar2.html">Qwen2.5-7B（rStar2）</a> ✅</li>
-                  <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/searchr1/glm4.7_flash.html">GLM-4.7-Flash</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/searchr1/index.html#searchr1-setup">Qwen2.5-3B</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/searchr1/index.html#searchr1-glm">GLM-4.7-Flash</a> ✅</li>
                 </ul>
               </li>
               <li><b>WideSeek-R1</b>
                 <ul style="margin-left: 0; padding-left: 16px;">
-                  <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/wideseek_r1/train.html">Qwen3-4B</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/wideseek_r1/index.html#wideseek-r1-setup">Qwen3-4B</a> ✅</li>
                 </ul>
               </li>
+            </ul>
+          </li>
+          <li><b>代码强化学习</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/coding_online_rl.html">Qwen2.5-Coder-1.5B (Online Coder)</a> ✅</li>
             </ul>
           </li>
           <li><b>几何推理强化学习</b>
@@ -282,7 +287,7 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。�
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/qwen3_vl_geo3k.html">Qwen3-VL</a> ✅</li>
             </ul>
           </li>
-          <li><b>VLM 监督微调</b>
+          <li><b>VLM SFT</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">Qwen2.5-VL</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL</a> ✅</li>
@@ -319,7 +324,7 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。�
 
 ### 组件
 
-下表列出模拟器、真机环境和训练算法。真机部署请参阅 [RPent](https://github.com/RLinf/RPent)。
+下表列出模拟器、真机环境和训练算法。真机部署见 [RPent](https://github.com/RLinf/RPent)。
 
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
@@ -424,7 +429,7 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。�
             <ul>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">全量微调</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">LoRA 微调</a> ✅</li>
-              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">VLM 模型微调</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_vlm.html">VLM SFT</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dagger.html">DAgger</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/hg-dagger.html">HG-DAgger</a> ✅</li>
             </ul>

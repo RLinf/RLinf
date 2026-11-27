@@ -204,7 +204,7 @@ RLinf updates models with a training engine and runs rollout and evaluation with
 
 ### Models
 
-RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. The table below groups models and training recipes into System 0, System 1, System 2, and other model components.
+RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL across motion control, Vision-Language-Action (VLA) models, World Action Models (WAM), and reasoning and agent models. The table below groups them into System 0, System 1, System 2, and other models.
 
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
   <thead align="center" valign="bottom">
@@ -212,7 +212,7 @@ RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. T
       <th style="min-width: 120px;">System 0<br>Motion Control</th>
       <th style="min-width: 120px;">System 1<br>VLA / WAM</th>
       <th style="min-width: 120px;">System 2<br>Reasoning and Agents</th>
-      <th style="min-width: 120px;">Others</th>
+      <th style="min-width: 120px;">Other Models</th>
     </tr>
   </thead>
   <tbody valign="top">
@@ -252,29 +252,34 @@ RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. T
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li><b>Robot-Use-Agent RL</b></li>
+          <li><b>Robot-Use-Agent RL</b> (coming soon)</li>
           <li><b>Math Reasoning RL</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-1.5B</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-7B</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/moonlight.html">Moonlight-16B</a> ✅</li>
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/agentlightning_calc_x.html">Qwen2.5-1.5B (AgentLightning Calc-X)</a> ✅</li>
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/rstar2.html">Qwen2.5-7B (rStar2)</a> ✅</li>
             </ul>
           </li>
           <li><b>Search RL</b>
             <ul style="margin-left: 0; padding-left: 16px;">
-              <li><b>Search-R1 / rStar2</b>
+              <li><b>Search-R1</b>
                 <ul style="margin-left: 0; padding-left: 16px;">
-                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/qwen2.5.html">Qwen2.5-3B</a> ✅</li>
-                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/rstar2.html">Qwen2.5-7B (rStar2)</a> ✅</li>
-                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/glm4.7_flash.html">GLM-4.7-Flash</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/index.html#searchr1-setup">Qwen2.5-3B</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/index.html#searchr1-glm">GLM-4.7-Flash</a> ✅</li>
                 </ul>
               </li>
               <li><b>WideSeek-R1</b>
                 <ul style="margin-left: 0; padding-left: 16px;">
-                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/wideseek_r1/train.html">Qwen3-4B</a> ✅</li>
+                  <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/wideseek_r1/index.html#wideseek-r1-setup">Qwen3-4B</a> ✅</li>
                 </ul>
               </li>
+            </ul>
+          </li>
+          <li><b>Coding RL</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/coding_online_rl.html">Qwen2.5-Coder-1.5B (Online Coder)</a> ✅</li>
             </ul>
           </li>
           <li><b>Geometric Reasoning RL</b>
@@ -325,7 +330,7 @@ The components below cover simulators, real-world environments, and training alg
   <thead align="center" valign="bottom">
     <tr>
       <th style="min-width: 120px;">Simulators</th>
-      <th style="min-width: 120px;">Real-world Env</th>
+      <th style="min-width: 120px;">Real-World Envs</th>
       <th style="min-width: 120px;">Algorithms</th>
     </tr>
   </thead>
