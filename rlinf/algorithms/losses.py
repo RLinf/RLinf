@@ -16,6 +16,7 @@ from typing import Callable, Optional
 
 import torch
 
+from rlinf.algorithms.kl_clip import KLClip
 from rlinf.algorithms.registry import register_policy_loss
 from rlinf.algorithms.utils import apply_importance_sampling_correction, huber_loss
 from rlinf.utils.metric_utils import (
@@ -186,6 +187,8 @@ def compute_ppo_actor_loss(
     log_logprob_diagnostics: bool = False,
     rollout_logprobs: Optional[torch.Tensor] = None,
     importance_sampling_clip: Optional[float] = None,
+    ppo_conditional_kl: Optional[torch.Tensor] = None,
+    kl_clip: Optional[KLClip] = None,
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """
@@ -207,6 +210,8 @@ def compute_ppo_actor_loss(
             the rollout behavior policy. Defaults to None.
         importance_sampling_clip (Optional[float], optional): Upper bound for the
             actor-to-rollout importance-sampling ratio. Defaults to None.
+        ppo_conditional_kl: Conditional KL for each ratio entry, when available.
+        kl_clip: Adaptive clip and metric accumulator for the rollout update.
 
     Returns:
         Tuple[torch.Tensor, Dict]: (actor_loss, metrics_dict)
@@ -216,6 +221,7 @@ def compute_ppo_actor_loss(
         fast_path_zero_loss_mask
         and not log_logprob_diagnostics
         and rollout_logprobs is None
+        and kl_clip is None
         and loss_mask is not None
         and not loss_mask.any()
     ):
@@ -298,7 +304,14 @@ def compute_ppo_actor_loss(
         log_ratio = torch.clamp(log_ratio, max=clip_log_ratio_max)
     ratio = torch.where(loss_mask, torch.exp(log_ratio), 0)
 
-    clipped_ratio = torch.clamp(ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high)
+    clip_min = 1.0 - clip_ratio_low
+    clip_max = 1.0 + clip_ratio_high
+    if kl_clip is None:
+        clipped_ratio = ratio.clamp(clip_min, clip_max)
+    else:
+        clipped_ratio, sample_kl, tightened = kl_clip.clip_ratio(
+            ratio, clip_ratio_low, clip_ratio_high, ppo_conditional_kl, loss_mask
+        )
     policy_loss1 = -advantages * ratio
     policy_loss2 = -advantages * clipped_ratio
 
@@ -318,8 +331,13 @@ def compute_ppo_actor_loss(
     )
     policy_loss = loss_agg_func(policy_loss, loss_mask, loss_mask_ratio)
 
-    clip_mask = policy_loss1.detach() < policy_loss2.detach()
     dual_clip_mask = (dual_clip_mask * loss_mask).bool()
+    if kl_clip is not None:
+        with torch.no_grad():
+            standard_ratio = ratio.clamp(clip_min, clip_max)
+            standard_clip = policy_loss1 < -advantages * standard_ratio
+            extra_clipped = clip_mask & ~standard_clip & ~dual_clip_mask & loss_mask
+            kl_clip.record(sample_kl, loss_mask, tightened, extra_clipped)
 
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
 

@@ -70,6 +70,8 @@ RLinf supports GRPO across embodied manipulation, math reasoning, VQA, and agent
 - **Embodied (VLA)**: :doc:`LIBERO <../../examples/embodied/libero>` and :doc:`π₀ / π₀.₅ <../../examples/embodied/pi0>` (``examples/embodiment/config/libero_10_grpo_openpi.yaml``, ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml``, preset ``examples/embodiment/config/algorithm/grpo.yaml``).
 - **Math reasoning**: :doc:`Math Reasoning <../../examples/agentic/math_reasoning/reasoning>` (``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``, ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-fsdp.yaml``).
 
+For KL-adaptive clip bounds in synchronous FSDP OpenPI GRPO (``algorithm.kl_clip_target``), see :doc:`PPO <ppo>` (Section 3.1).
+
 An example configuration for LLM math reasoning is shown below:
 
 .. code-block:: yaml

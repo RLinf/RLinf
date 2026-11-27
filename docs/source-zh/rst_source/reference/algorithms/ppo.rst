@@ -114,6 +114,36 @@ Rollout 与 Actor 的重要性采样修正
 
 该模式要求使用同步、非流水线的具身训练，``loss_type`` 为 ``actor`` 或 ``actor_critic``。通过 ``actor/importance_sampling_weight``、``actor/importance_sampling_clip_fraction``、``actor/behav_approx_kl`` 和 ``actor/recomputed_logprob_abs_diff`` 监控 rollout 与 actor 的差异。
 
+按 KL 收紧概率比的裁剪范围
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+设置 ``algorithm.kl_clip_target`` 可以按动作块收紧概率比的裁剪范围。actor 会在每个动作块选中的去噪步骤上，计算从 rollout policy 到当前 policy 的条件 KL。
+
+实测 KL 满足 :math:`D \le D_{\mathrm{target}}` 时，概率比沿用 ``clip_ratio_low`` 和 ``clip_ratio_high`` 配置的裁剪区间 :math:`[1 - \varepsilon_{\mathrm{low}},\, 1 + \varepsilon_{\mathrm{high}}]`。超过目标时，区间两端与 1 的距离按 :math:`s = \max\!\big(0.25,\, \sqrt{D_{\mathrm{target}} / D}\big)` 收缩至 :math:`[1 - s\,\varepsilon_{\mathrm{low}},\, 1 + s\,\varepsilon_{\mathrm{high}}]`。例如目标 KL 为 0.05 时，KL 为 0.20 的动作块会把两端距离减半。
+
+OpenPI 在同时满足以下条件时支持 ``algorithm.kl_clip_target``：
+
+- 使用同步、非流水线的具身 PPO 或 GRPO（``runner.task_type: embodied``、``runner.use_training_pipeline: false``、``runner.async_mode: false``），actor 后端为 ``fsdp``，rollout 后端为 ``huggingface``。
+- ``algorithm.loss_type`` 为 ``actor`` 或 ``actor_critic``。
+- ``algorithm.logprob_type`` 与 ``algorithm.reward_type`` 均为 ``chunk_level``。
+- ``algorithm.recompute_logprobs`` 为 ``false``，使概率比直接以 rollout 返回的对数概率为基准。
+- OpenPI 策略配置为正有限噪声的 Flow-SDE（``noise_method: flow_sde``、``noise_level > 0``），关闭 ``joint_logprob`` 与 ``is_nft``，且 rollout 与 actor 的去噪步数一致。
+
+在训练 YAML 中设置有限的正数作为 KL 目标；省略该配置项或设为 ``null`` 时关闭：
+
+.. code-block:: yaml
+
+   algorithm:
+     kl_clip_target: 0.05
+
+每次 rollout 更新会按全部有效动作块统计以下指标：
+
+- ``train/actor/conditional_kl_mean``：有效动作块的平均条件 KL。
+- ``train/actor/kl_clip/tight_frac``：有效动作块中裁剪范围收紧的比例。
+- ``train/actor/kl_clip/extra_frac``：有效动作块中仅因裁剪范围收紧而进入 PPO 裁剪分支的比例。
+
+该选项只收紧概率比的裁剪范围，不会提前终止更新，也不会改变配置的更新轮数。
+
 3.2. LLM 推理任务
 ~~~~~~~~~~~~~~~~~
 LLM 推理任务的配置与具身任务的配置有相似之处。

@@ -71,6 +71,8 @@ RLinf 在具身操作、数学推理、VQA 与智能体任务中均支持 GRPO�
 - **具身（VLA）**：:doc:`LIBERO <../../examples/embodied/libero>` 与 :doc:`π₀ / π₀.₅ <../../examples/embodied/pi0>`\ （``examples/embodiment/config/libero_10_grpo_openpi.yaml``、``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml``，算法预设位于 ``examples/embodiment/config/algorithm/grpo.yaml``）。
 - **数学推理**：:doc:`数学推理 <../../examples/agentic/math_reasoning/reasoning>`\ （``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``、``examples/reasoning/config/math/qwen2.5-1.5b-grpo-fsdp.yaml``）。
 
+同步 FSDP OpenPI GRPO 也支持按 KL 收紧裁剪范围（``algorithm.kl_clip_target``），配置方式见 :doc:`PPO <ppo>` 第 3.1 节。
+
 下面给出 LLM 数学推理任务的核心配置片段：  
 
 .. code-block:: yaml

@@ -56,6 +56,7 @@ class BasePolicy(ABC):
         - predict_value_batch
         - prepare_dagger_sft_batch
         - prepare_nft_reference_model
+        - validate_transition_stats
     """
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
@@ -114,11 +115,24 @@ class BasePolicy(ABC):
     def prepare_nft_reference_model(self) -> None:
         """Release state unused by NFT forward on a cached reference model."""
 
-    @abstractmethod
-    def default_forward(self, **kwargs): ...
+    def validate_transition_stats(self) -> None:
+        """Validate support for returning the selected transition's Gaussian stats.
+
+        When requested by ``return_transition_stats``, the training rollout and
+        actor forward return ``transition_stats`` with FP32 ``mean`` and ``std``
+        tensors shaped ``[batch, action_chunk, action_dim]``.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support transition statistics."
+        )
 
     @abstractmethod
-    def predict_action_batch(self, **kwargs): ...
+    def default_forward(self, *, return_transition_stats: bool = False, **kwargs): ...
+
+    @abstractmethod
+    def predict_action_batch(
+        self, *, return_transition_stats: bool = False, **kwargs
+    ): ...
 
     def supports_value_only_bootstrap(self) -> bool:
         """Return whether this policy instance can run ``predict_value_batch``."""

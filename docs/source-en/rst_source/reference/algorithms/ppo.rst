@@ -125,6 +125,36 @@ This mode requires synchronous, non-pipelined embodied training with
 ``actor/behav_approx_kl``, and ``actor/recomputed_logprob_abs_diff`` to measure
 rollout-actor divergence.
 
+KL-Adaptive Clip Bounds
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Use ``algorithm.kl_clip_target`` to narrow the policy ratio bounds for individual action chunks. For each chunk, the actor computes the conditional KL from the rollout policy to the current policy on the selected denoising transition.
+
+Chunks with KL :math:`D \le D_{\mathrm{target}}` keep the configured bounds :math:`[1 - \varepsilon_{\mathrm{low}},\, 1 + \varepsilon_{\mathrm{high}}]` set by ``clip_ratio_low`` and ``clip_ratio_high``. Above the target, both bounds contract by :math:`s = \max\!\big(0.25,\, \sqrt{D_{\mathrm{target}} / D}\big)` to :math:`[1 - s\,\varepsilon_{\mathrm{low}},\, 1 + s\,\varepsilon_{\mathrm{high}}]`. With ``kl_clip_target: 0.05``, a chunk at KL 0.20 halves both distances.
+
+OpenPI supports ``algorithm.kl_clip_target`` when all of the following hold:
+
+- Training runs synchronous, non-pipelined embodied PPO or GRPO (``runner.task_type: embodied``, ``runner.use_training_pipeline: false``, ``runner.async_mode: false``) with the ``fsdp`` actor backend and ``huggingface`` rollout backend.
+- ``algorithm.loss_type`` is ``actor`` or ``actor_critic``.
+- Both ``algorithm.logprob_type`` and ``algorithm.reward_type`` are ``chunk_level``.
+- ``algorithm.recompute_logprobs`` is ``false`` so the policy ratio uses the rollout log probabilities.
+- The OpenPI policy uses Flow-SDE (``noise_method: flow_sde``) with positive finite ``noise_level``, ``joint_logprob: false``, ``is_nft: false``, and matching actor and rollout denoising step counts.
+
+Set a finite positive target in the training YAML. Omit the key or set it to ``null`` to turn the option off.
+
+.. code-block:: yaml
+
+   algorithm:
+     kl_clip_target: 0.05
+
+Recorded metrics (aggregated across all valid chunks in the rollout update):
+
+- ``train/actor/conditional_kl_mean``: Mean conditional KL across valid action chunks.
+- ``train/actor/kl_clip/tight_frac``: Fraction of valid action chunks whose clip bounds narrowed.
+- ``train/actor/kl_clip/extra_frac``: Fraction of valid action chunks clipped only because of the narrowed bounds.
+
+This option only narrows clip bounds; it does not stop updates early or change the configured number of update epochs.
+
 3.2. LLM Reasoning Tasks
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
