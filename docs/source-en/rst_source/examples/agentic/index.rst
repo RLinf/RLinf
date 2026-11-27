@@ -21,9 +21,9 @@ Choose a Track
      - GRPO, PPO (text & visual reasoning)
      - :doc:`Moonlight-16B <math_reasoning/moonlight>`, :doc:`Qwen2.5 GRPO <math_reasoning/reasoning>`, :doc:`Qwen2.5 PPO <math_reasoning/reasoning_ppo>`, :doc:`Qwen3-VL Geo3K <qwen3_vl_geo3k>`
    * - :doc:`Agentic RL <agents/index>`
-     - Agent Lightning, GLM-4.7-Flash, Qwen2.5, Qwen3-4B
+     - Agent Lightning, GLM-4.7-Flash, Qwen2.5, Qwen3-4B, Qwen3.5-4B
      - Multi-turn tools, MARL, online RL
-     - :doc:`AgentLightning <agentlightning_calc_x>`, :doc:`Coding Online RL <coding_online_rl>`, :doc:`rStar2 <rstar2>`, :doc:`Search-R1 <searchr1/index>`, :doc:`WideSeek-R1 <wideseek_r1/index>`
+     - :doc:`AgentLightning <agentlightning_calc_x>`, :doc:`Coding Online RL <coding_online_rl>`, :doc:`RPent <rpent>`, :doc:`rStar2 <rstar2>`, :doc:`Search-R1 <searchr1/index>`, :doc:`WideSeek-R1 <wideseek_r1/index>`
    * - :doc:`Image & Video Generation <../video_models>`
      - SD3.5 Medium, Wan2.2 TI2V 5B (Diffusers)
      - DiffusionART, Diffusion-NFT, ReFL
@@ -76,6 +76,12 @@ Agentic RL
       :link-type: doc
 
       End-to-end online RL for IDE code completion combining RLinf with the Continue extension.
+
+   .. grid-item-card:: RPent
+      :link: rpent
+      :link-type: doc
+
+      Train a Qwen3.5-4B vision-language planner in LIBERO and LIBERO-Pro with synchronous or asynchronous GRPO.
 
    .. grid-item-card:: rStar2
       :link: rstar2

@@ -15,9 +15,9 @@ Qwen3.5 多轮视觉 Agent 训练
    * - 项目
      - 说明
    * - **支持组合**
-     - 本地稠密 Qwen3.5 模型（``Qwen3_5ForConditionalGeneration``），使用默认 SGLang rollout，并通过 Megatron-Bridge 训练（支持 ``PP`` 与 ``CP`` 并行；``Qwen/Qwen3.5-4B`` 已在 1、2、8 张 NVIDIA A100 80 GB 上完成验证）。
+     - 本地稠密 Qwen3.5 模型（``Qwen3_5ForConditionalGeneration``），使用默认 SGLang rollout 或无 router 的 :doc:`Session Server <session_server>`\ （``rollout.router.type: null`` 且 ``session_server.verify_assembly: false``，参见 :doc:`../examples/agentic/rpent`），并通过 Megatron-Bridge 训练（支持 ``PP`` 与 ``CP`` 并行；``Qwen/Qwen3.5-4B`` 已在 1、2、8 张 NVIDIA A100 80 GB 上完成验证）。
    * - **暂不支持**
-     - 视频或音频输入、FSDP 训练、``session_server.enable: true``，以及部署独立 ``inference`` / ``actor_inference`` / ``critic_inference`` 节点的拓扑（logprob 与 value 须由训练节点重算）。
+     - 视频或音频输入、FSDP 训练、``session_server.verify_assembly: true``、经 router 转发的 ``session_server`` 多模态请求，以及部署独立 ``inference`` / ``actor_inference`` / ``critic_inference`` 节点的拓扑（logprob 与 value 须由训练节点重算）。
    * - **环境要求**
      - Python 3.12 ``agentic`` 环境，包含 SGLang ``0.5.12.post1`` 至 ``0.5.22+``\ （见 :doc:`version`）、Megatron Core 0.18.x、Megatron-Bridge 0.5.0（见 :doc:`../extending/mbridge`）与 ``fla-core``。
 
@@ -39,7 +39,7 @@ Qwen3.5 多轮视觉 Agent 训练
    agentloop:
      is_dynamic_rollout_batch: true
    session_server:
-     enable: false
+     enable: false  # 搭配 rollout.router.type: null 与 session_server.verify_assembly: false 时可设为 true（如 RPent）。
    rollout:
      model:
        model_type: qwen3_5

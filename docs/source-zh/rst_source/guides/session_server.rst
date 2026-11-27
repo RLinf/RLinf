@@ -17,9 +17,9 @@ Session Server 直接在 rollout 节点上收集多轮 Agent 轨迹并装配为�
    * - **适用场景**
      - 同组轨迹共享长前缀、每组数据量大（如长上下文或 R3）、node 0 内存紧张，或 Agent 直接调用 OpenAI chat completions 接口。
    * - **保持默认**
-     - 使用同步或评测 Runner、需要 ``pause_mode: drain``，或小规模训练不希望额外部署服务进程。
+     - 使用同步（RPent 同步 GRPO 除外）或评测 Runner、需要 ``pause_mode: drain``，或小规模训练不希望额外部署服务进程。
    * - **启动组件**
-     - Rollout 节点上的 ``session_server.num_servers`` 个 HTTP 服务、每个服务 ``payload_shards`` 个 payload channel，以及 1 个共享 SGLang Router。
+     - Rollout 节点上的 ``session_server.num_servers`` 个 HTTP 服务、每个服务 ``payload_shards`` 个 payload channel，以及 1 个共享 SGLang Router（``rollout.router.type: null`` 时不启动 router）。
 
 开启与启动
 ----------
@@ -40,17 +40,17 @@ Session Server 直接在 rollout 节点上收集多轮 Agent 轨迹并装配为�
    * - 配置项 / 依赖
      - 要求
    * - ``runner.async_mode`` 与 Actor
-     - ``True``，且 Actor 使用 Megatron
+     - ``True``\ （或 ``runner.synchronous: true``），且 Actor 使用 Megatron
    * - ``rollout.sglang.backend_type``
      - ``server``
    * - ``reward.reward_type``
-     - ``searchr1``\ （Search-R1 Agent）
+     - ``searchr1`` 或 ``null``\ （使用 Agent 回传奖励且 ``use_reward_model: false``）
    * - ``rollout.pause_mode``
      - ``retract`` 或 ``in_place``\ （不支持 ``drain``）
    * - ``cluster.auto_scheduler``
      - ``False``
    * - Python 包
-     - 已安装 ``sglang_router``
+     - 已安装 ``sglang_router``\ （``rollout.router.type: null`` 时除外）
 
 示例：Search-R1
 ~~~~~~~~~~~~~~~
@@ -209,6 +209,12 @@ Session Server 将调度（**控制面**）与轨迹存储（**数据面**）分
       * - ``chat_template_kwargs``
         - ``{}``
         - 固定传给 ``/v1/chat/completions`` 模板的参数（如 ``clear_thinking``）。
+      * - ``minimum_output_tokens``
+        - ``0``
+        - 裁剪多模态 prompt 时为输出预留的最小 token 空间（``0`` 表示不预留）。
+      * - ``fold_continuous_turns``
+        - ``False``
+        - 将同版本且共享前缀与图像历史的连续轮次折叠为单条训练序列。
 
    ``rollout.router``\ （与 :doc:`SGLang Server 与 Router <sglang_server>` 中的 ``router_server_args`` 相互独立）：
 
@@ -247,13 +253,15 @@ Session Server 将调度（**控制面**）与轨迹存储（**数据面**）分
       * - 维度
         - 限制说明
       * - Runner 与后端
-        - 仅支持异步 Runner、Megatron Actor、SGLang Server 后端与 Search-R1 Agent；接入自定义 Runner 见 :doc:`/rst_source/extending/session_server_runner`。
+        - 内置支持异步 Runner（Search-R1 Agent）以及 RPent 同步/异步 Runner（均需 Megatron Actor 与 SGLang Server 后端）；接入自定义 Runner 见 :doc:`/rst_source/extending/session_server_runner`。
       * - 流式输出
         - 不支持逐 token 流式返回：``stream: true`` 时整轮结果以单个 chunk 返回，随后发送 ``[DONE]``。
       * - Chat 参数
         - 不支持 ``tool_choice: required``、指定函数与 ``response_format``，且忽略 ``seed``。
       * - 装配校验
         - ``session_server.verify_assembly`` 仅支持 token-ID Agent，开启后拒绝 chat completions 请求。
+      * - 多模态输入
+        - 在 ``/v1/chat/completions`` 与 ``/generate`` 上启用多模态图像对齐时，须设置 ``rollout.sglang.align_multimodal_inputs: true``、``rollout.router.type: null`` 与 ``session_server.verify_assembly: false``\ （见 :doc:`qwen35_multi_turn_images`）。
       * - 额外字段与日志
         - 仅允许 ``extra_fields_train``；``agentloop.print_outputs`` 仅在开启 ``verify_assembly`` 时生效。
       * - 容错

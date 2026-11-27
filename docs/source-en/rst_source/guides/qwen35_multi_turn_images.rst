@@ -15,9 +15,9 @@ Scope and Requirements
    * - Item
      - Details
    * - **Supported setup**
-     - Local dense Qwen3.5 checkpoints (``Qwen3_5ForConditionalGeneration``) with the default SGLang rollout worker and Megatron-Bridge training (compatible with ``PP`` and ``CP``; ``Qwen/Qwen3.5-4B`` verified on 1, 2, and 8 NVIDIA A100 80 GB GPUs).
+     - Local dense Qwen3.5 checkpoints (``Qwen3_5ForConditionalGeneration``) with SGLang rollout (direct channel or routerless :doc:`Session Server <session_server>` with ``rollout.router.type: null`` and ``session_server.verify_assembly: false``, see :doc:`../examples/agentic/rpent`) and Megatron-Bridge training (compatible with ``PP`` and ``CP``; ``Qwen/Qwen3.5-4B`` verified on 1, 2, and 8 NVIDIA A100 80 GB GPUs).
    * - **Not supported**
-     - Video or audio inputs, FSDP training, ``session_server.enable: true``, or dedicated ``inference`` / ``actor_inference`` / ``critic_inference`` deployments (logprobs and values must be recomputed on the training nodes).
+     - Video or audio inputs, FSDP training, ``session_server.verify_assembly: true``, router-backed ``session_server`` multimodal forwarding, or dedicated ``inference`` / ``actor_inference`` / ``critic_inference`` deployments (logprobs and values must be recomputed on the training nodes).
    * - **Requirements**
      - Python 3.12 ``agentic`` environment with SGLang ``0.5.12.post1`` through ``0.5.22+`` (see :doc:`version`), Megatron Core 0.18.x, Megatron-Bridge 0.5.0 (:doc:`../extending/mbridge`), and ``fla-core``.
 
@@ -39,7 +39,7 @@ Multi-turn image alignment is off by default. Enable ``rollout.sglang.align_mult
    agentloop:
      is_dynamic_rollout_batch: true
    session_server:
-     enable: false
+     enable: false  # Or true with rollout.router.type: null and session_server.verify_assembly: false (e.g. RPent).
    rollout:
      model:
        model_type: qwen3_5

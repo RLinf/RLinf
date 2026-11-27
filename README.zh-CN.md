@@ -46,6 +46,7 @@ bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 新增对 RPent 的接入支持，可在 LIBERO-Pro 与 LIBERO 中通过同步与异步 GRPO 训练 `Qwen3.5-4B` 多轮视觉规划器；从 SFT checkpoint 出发经 96 步同步 GRPO 更新后，准入轨迹成功率从 26.88% 提升至 75.78%。文档：[在 LIBERO 中训练 RPent 规划器](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/rpent.html)。
 - [2026/11] 🔥 RLinf 支持 SuperMimic，在 MuJoCo Warp 中用可微世界模型训练 Unitree G1 全身动作跟踪 policy，并集成多卡 FSDP2、CUDAGraph 与 bf16 混合精度优化。在 NVIDIA A800 上，相较官方单卡实现（0.515 秒/更新），RLinf 单卡吞吐提升至 **1.34 倍**（0.383 秒/更新），4 卡提升至 **2.27 倍**（0.227 秒/更新，约 23 分钟完成 6000 次更新）；在 40 条 LAFAN1 片段上性能与论文对齐，归一化回报达 **0.856**（论文为 0.82）且 **0** 摔倒。文档：[SuperMimic](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/supermimic.html)。
 - [2026/11] 🔥 RLinf 新增 FlexRLT，可直接用冻结 VLA 的特征训练小型 actor 和 critic，并分别选择特征表示、网络、AC/TD3 算法及 STEAM 门控。文档：[FlexRLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/flexrlt.html)。
 - [2026/11] 🔥 RLinf 支持在 [DexJoCo](https://github.com/brave-eai/dexjoco) 灵巧操作基准上用 SFT 和 PPO 训练 CNN 和 π₀.₅ policy。PPO 将 π₀.₅ 在 `water_plant` 上的成功率从 SFT 后的 78.1% 提升至 98.4%。文档：[基于 DexJoCo 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html)。
@@ -252,7 +253,11 @@ RLinf 支持监督微调（SFT）、仿真强化学习和真机强化学习。�
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li><b>机器人智能体强化学习</b>（敬请期待）</li>
+          <li><b>机器人智能体强化学习</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/rpent.html">Qwen3.5-4B (RPent)</a> ✅</li>
+            </ul>
+          </li>
           <li><b>数学推理强化学习</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-1.5B</a> ✅</li>

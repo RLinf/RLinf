@@ -47,6 +47,7 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, read the [RLinf Walk
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports multi-turn RL training for `Qwen3.5-4B` visual planners on LIBERO-Pro and LIBERO with RPent, raising admitted rollout success from 26.88% to 75.78% over 96 synchronous GRPO updates. Doc: [RPent RL on LIBERO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/rpent.html).
 - [2026/11] 🔥 RLinf supports SuperMimic for Unitree G1 whole-body motion tracking with a differentiable world model in MuJoCo Warp, including multi-GPU FSDP2 scaling, CUDA graphs, and bf16 mixed precision. On NVIDIA A800, it reaches **1.34×** throughput on 1 GPU (0.383 s vs. 0.515 s/update) and **2.27×** on 4 GPUs (0.227 s/update, 6000 updates in ~23 min) over the official single-GPU code, and reaches **0.856** normalized return on 40 LAFAN1 clips (paper: 0.82) with **0** falls. Doc: [SuperMimic](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/supermimic.html).
 - [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
 - [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
@@ -252,7 +253,11 @@ RLinf supports supervised fine-tuning (SFT), simulation RL, and real-world RL. T
       </td>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li><b>Robot-Use-Agent RL</b> (coming soon)</li>
+          <li><b>Robot-Use-Agent RL</b>
+            <ul style="margin-left: 0; padding-left: 16px;">
+              <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/rpent.html">Qwen3.5-4B (RPent)</a> ✅</li>
+            </ul>
+          </li>
           <li><b>Math Reasoning RL</b>
             <ul style="margin-left: 0; padding-left: 16px;">
               <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">Qwen2.5-1.5B</a> ✅</li>

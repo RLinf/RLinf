@@ -17,9 +17,9 @@ At a Glance
    * - **When to enable**
      - Trajectories share long prefixes, groups have large payloads (for example long contexts or R3), node 0 memory is tight, or your agents call the OpenAI chat completions API.
    * - **Keep default when**
-     - You use a synchronous/evaluation runner, need ``pause_mode: drain``, or run small jobs that do not need extra server processes.
+     - You use a synchronous (except RPent sync GRPO) or evaluation runner, need ``pause_mode: drain``, or run small jobs that do not need extra server processes.
    * - **What starts**
-     - ``session_server.num_servers`` HTTP servers on rollout nodes, ``payload_shards`` payload channels per server, and one shared SGLang router.
+     - ``session_server.num_servers`` HTTP servers on rollout nodes, ``payload_shards`` payload channels per server, and one shared SGLang router (unless ``rollout.router.type: null``).
 
 Enable and Launch
 -----------------
@@ -40,17 +40,17 @@ Startup config validation requires:
    * - Setting / Package
      - Requirement
    * - ``runner.async_mode`` & Actor
-     - ``True`` with a Megatron actor
+     - ``True`` (or ``runner.synchronous: true``) with a Megatron actor
    * - ``rollout.sglang.backend_type``
      - ``server``
    * - ``reward.reward_type``
-     - ``searchr1`` (Search-R1 agent)
+     - ``searchr1`` or ``null`` (agent-reported rewards with ``use_reward_model: false``)
    * - ``rollout.pause_mode``
      - ``retract`` or ``in_place`` (not ``drain``)
    * - ``cluster.auto_scheduler``
      - ``False``
    * - Python package
-     - ``sglang_router`` installed
+     - ``sglang_router`` installed (unless ``rollout.router.type: null``)
 
 Example: Search-R1
 ~~~~~~~~~~~~~~~~~~
@@ -209,6 +209,12 @@ When onboarding a new token-ID agent, run a short check with ``session_server.ve
       * - ``chat_template_kwargs``
         - ``{}``
         - Fixed chat template kwargs for ``/v1/chat/completions`` (for example ``clear_thinking``).
+      * - ``minimum_output_tokens``
+        - ``0``
+        - Reserved minimum output token headroom left when trimming multimodal prompts (``0`` disables reservation).
+      * - ``fold_continuous_turns``
+        - ``False``
+        - Merge consecutive same-version turns sharing a token prefix and image history into one trajectory sequence.
 
    ``rollout.router`` (separate from ``router_server_args`` in :doc:`SGLang Server & Router <sglang_server>`):
 
@@ -247,13 +253,15 @@ When onboarding a new token-ID agent, run a short check with ``session_server.ve
       * - Area
         - Limitation
       * - Runner & backend
-        - Requires the async runner, Megatron actor, SGLang server backend, and Search-R1 agent. To wire another runner, see :doc:`/rst_source/extending/session_server_runner`.
+        - Built-in support covers the async runner with Search-R1 and the RPent sync/async runners (Megatron actor, SGLang server backend). To wire another runner, see :doc:`/rst_source/extending/session_server_runner`.
       * - Chat streaming
         - No token-by-token streaming: ``stream: true`` returns the full turn in one chunk followed by ``[DONE]``.
       * - Chat parameters
         - Does not support ``tool_choice: required``, named functions, or ``response_format``; ignores ``seed``.
       * - Assembly check
         - ``session_server.verify_assembly`` supports token-ID agent loops only and rejects chat completions requests.
+      * - Multimodal inputs
+        - Aligned multimodal forwarding on ``/v1/chat/completions`` and ``/generate`` requires ``rollout.sglang.align_multimodal_inputs: true``, ``rollout.router.type: null``, and ``session_server.verify_assembly: false`` (see :doc:`qwen35_multi_turn_images`).
       * - Extra fields & logging
         - Only ``extra_fields_train`` is accepted; ``agentloop.print_outputs`` prints only when ``verify_assembly`` is enabled.
       * - Fault tolerance
