@@ -4660,6 +4660,157 @@ def test_orbbec_reopens_a_stalled_stream_and_stops_its_reader(
     assert all(pipeline.stops == 1 for pipeline in orbbec_sdk.pipelines)
 
 
+def test_base_camera_capture_loop_respects_sleep_pacing_flag(monkeypatch):
+    import rlinf.robotics.parts.cameras.base as camera_base
+    from rlinf.robotics.parts.cameras.base import BaseCamera, CameraInfo
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(camera_base.time, "sleep", sleeps.append)
+
+    class _CountingCamera(BaseCamera):
+        def __init__(self, info: CameraInfo, limit: int = 3) -> None:
+            super().__init__(info)
+            self._limit = limit
+            self.reads = 0
+
+        def _open(self) -> object:
+            return object()
+
+        def _read_frame(self) -> tuple[bool, Optional[np.ndarray]]:
+            if self.reads >= self._limit:
+                self._frame_capturing_start = False
+                return False, None
+            self.reads += 1
+            return True, np.full((4, 4, 3), self.reads, dtype=np.uint8)
+
+        def _release(self, device: Any) -> None:
+            pass
+
+    class _UnpacedCamera(_CountingCamera):
+        PACE_CAPTURE_WITH_SLEEP = False
+
+    info = CameraInfo(name="cam", serial_number="MOCK", camera_type="orbbec", fps=25)
+
+    paced = _CountingCamera(info)
+    paced._frame_capturing_start = True
+    paced._capture_frames()
+    assert paced.reads == 3
+    assert len(sleeps) == 4
+    assert all(duration == pytest.approx(1 / 25) for duration in sleeps)
+
+    sleeps.clear()
+    unpaced = _UnpacedCamera(info)
+    unpaced._frame_capturing_start = True
+    unpaced._capture_frames()
+    assert unpaced.reads == 3
+    assert sleeps == []
+
+
+def test_orbbec_drains_queued_framesets_to_newest(orbbec_sdk):
+    from rlinf.robotics.parts.cameras.orbbec import OrbbecCamera
+
+    assert OrbbecCamera.PACE_CAPTURE_WITH_SLEEP is False
+    camera = cast(OrbbecCamera, _orbbec_camera(enable_depth=True))
+    pipeline = camera._open()
+    try:
+        config = pipeline.config
+        frames_cls = type(pipeline.wait_for_frames(100))
+
+        def make_frames(bgr: list[int], *, missing_depth: bool = False) -> Any:
+            orbbec_sdk.color_bgr[:] = bgr
+            return frames_cls(config, missing_depth=missing_depth)
+
+        pipeline.queued_frames.extend(
+            [
+                make_frames([10, 20, 30]),
+                make_frames([99, 99, 99], missing_depth=True),
+                make_frames([40, 50, 60]),
+                make_frames([70, 80, 90]),
+            ]
+        )
+        frame = camera._poll_frame(timeout_ms=100)
+        assert frame is not None
+        assert frame.shape == (48, 64, 4)
+        np.testing.assert_array_equal(frame[20, 20, :3], [70, 80, 90])
+        assert pipeline.queued_frames == []
+    finally:
+        camera._release(pipeline)
+
+
+def test_orbbec_drain_respects_max_drain_frames(orbbec_sdk):
+    from rlinf.robotics.parts.cameras.orbbec import OrbbecCamera
+
+    camera = cast(OrbbecCamera, _orbbec_camera(enable_depth=False))
+    pipeline = camera._open()
+    try:
+        config = pipeline.config
+        frames_cls = type(pipeline.wait_for_frames(100))
+        calls = 0
+
+        def endless_wait(_timeout_ms: int) -> Any:
+            nonlocal calls
+            calls += 1
+            orbbec_sdk.color_bgr[:] = [calls, calls, calls]
+            return frames_cls(config)
+
+        pipeline.wait_for_frames = endless_wait
+        camera.MAX_DRAIN_FRAMES = 4
+        frame = camera._poll_frame(timeout_ms=100)
+        assert frame is not None
+        assert calls == 5
+        np.testing.assert_array_equal(frame[20, 20], [5, 5, 5])
+    finally:
+        camera._release(pipeline)
+
+
+def test_realsense_drains_queued_framesets_via_poll_for_frames():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from rlinf.robotics.parts.cameras.base import CameraInfo
+        from rlinf.robotics.parts.cameras.realsense import RealSenseCamera
+
+        assert RealSenseCamera.PACE_CAPTURE_WITH_SLEEP is False
+        camera = RealSenseCamera(
+            CameraInfo(
+                name="wrist",
+                serial_number="MOCK0001",
+                camera_type="realsense",
+                fps=30,
+                resolution=(64, 48),
+            )
+        )
+        pipeline = camera._open()
+        try:
+
+            def make_frames(marker: int) -> Any:
+                image = np.full((48, 64, 3), marker, dtype=np.uint8)
+                color = SimpleNamespace(
+                    is_video_frame=lambda: True, get_data=lambda: image
+                )
+                return SimpleNamespace(get_color_frame=lambda: color)
+
+            pipeline.queued_frames.extend(
+                [make_frames(11), make_frames(22), make_frames(33)]
+            )
+            ok, frame = camera._read_frame()
+            assert ok
+            assert frame is not None
+            assert int(frame[0, 0, 0]) == 33
+            assert pipeline.queued_frames == []
+
+            # A minimal pipeline without poll_for_frames still works cleanly.
+            minimal = SimpleNamespace(wait_for_frames=lambda: make_frames(44))
+            camera._pipeline = minimal
+            ok, frame = camera._read_frame()
+            assert ok
+            assert frame is not None
+            assert int(frame[0, 0, 0]) == 44
+        finally:
+            camera._pipeline = made["pyrealsense2"].pipelines[0]
+            camera._release(camera._pipeline)
+
+
 @pytest.mark.placement
 @pytest.mark.parametrize("node_rank", [None, 0])
 def test_orbbec_camera_has_local_remote_observation_parity(node_rank):

@@ -81,6 +81,12 @@ class CameraInfo:
 class BaseCamera(Camera, ABC):
     """Base class for cameras captured on a background thread."""
 
+    #: Sleep ``1 / fps`` before each :meth:`_read_frame` call. Drivers whose
+    #: ``_read_frame`` already blocks on the camera's hardware cadence should
+    #: set this to ``False`` so the capture period does not exceed the camera's
+    #: native frame period and fill internal SDK queues with stale frames.
+    PACE_CAPTURE_WITH_SLEEP: bool = True
+
     def __init__(self, camera_info: CameraInfo) -> None:
         self._camera_info = camera_info
         self._frame_queue: queue.Queue = queue.Queue()
@@ -264,7 +270,8 @@ class BaseCamera(Camera, ABC):
 
     def _capture_frames(self) -> None:
         while self._frame_capturing_start:
-            time.sleep(1 / self._camera_info.fps)
+            if self.PACE_CAPTURE_WITH_SLEEP:
+                time.sleep(1 / self._camera_info.fps)
             try:
                 has_frame, frame = self._read_frame()
             except Exception as e:

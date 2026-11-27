@@ -30,6 +30,16 @@ class RealSenseCamera(BaseCamera):
 
     SDK = "pyrealsense2"
 
+    #: ``wait_for_frames`` already blocks on the hardware frame cadence; an
+    #: extra sleep in :meth:`BaseCamera._capture_frames` makes reads slower
+    #: than the stream and fills the SDK's internal frame queue with stale
+    #: frames.
+    PACE_CAPTURE_WITH_SLEEP: bool = False
+
+    #: Upper bound on extra queued framesets drained per capture iteration so a
+    #: non-blocking stream cannot starve frame delivery.
+    MAX_DRAIN_FRAMES: int = 32
+
     def __init__(self, camera_info: CameraInfo) -> None:
         super().__init__(camera_info)
         self._serial_number = camera_info.serial_number
@@ -78,8 +88,21 @@ class RealSenseCamera(BaseCamera):
         self._align = rs.align(rs.stream.color)
         return self._pipeline
 
+    def _newest_frameset(self, frames: Any) -> Any:
+        """Drain any newer framesets queued behind ``frames`` without blocking."""
+        poll = getattr(self._pipeline, "poll_for_frames", None)
+        if poll is None:
+            return frames
+        newest = frames
+        for _ in range(self.MAX_DRAIN_FRAMES):
+            candidate = poll()
+            if not candidate:
+                break
+            newest = candidate
+        return newest
+
     def _read_frame(self) -> tuple[bool, Optional[np.ndarray]]:
-        frames = self._pipeline.wait_for_frames()
+        frames = self._newest_frameset(self._pipeline.wait_for_frames())
         aligned_frames = self._align.process(frames)
         color_frame = aligned_frames.get_color_frame()
         depth_frame = None

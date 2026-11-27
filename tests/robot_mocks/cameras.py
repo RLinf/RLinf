@@ -73,10 +73,13 @@ class _Frames:
 def realsense(width: int = 64, height: int = 48) -> types.ModuleType:
     """Return a ``pyrealsense2`` module that yields synthetic frames."""
     opened: list[str] = []
+    pipelines: list[Any] = []
 
     class Pipeline:
         def __init__(self):
             self.started = False
+            self.queued_frames: list[Any] = []
+            pipelines.append(self)
 
         def start(self, config):
             self.started = True
@@ -94,7 +97,17 @@ def realsense(width: int = 64, height: int = 48) -> types.ModuleType:
         def wait_for_frames(self):
             if not self.started:
                 raise RuntimeError("pipeline not started")
+            if self.queued_frames:
+                return self.queued_frames.pop(0)
+            time.sleep(0.01)
             return _Frames((height, width), depth=True)
+
+        def poll_for_frames(self):
+            if not self.started:
+                raise RuntimeError("pipeline not started")
+            if self.queued_frames:
+                return self.queued_frames.pop(0)
+            return None
 
     class Config:
         def __init__(self):
@@ -132,6 +145,7 @@ def realsense(width: int = 64, height: int = 48) -> types.ModuleType:
         format=types.SimpleNamespace(bgr8="bgr8", z16="z16"),
     )
     fake.opened = opened
+    fake.pipelines = pipelines
     return fake
 
 
@@ -302,6 +316,7 @@ def orbbec(
             self.fault = None
             self.fault_reader = None
             self.fault_observed = threading.Event()
+            self.queued_frames: list[Any] = []
             fake.pipelines.append(self)
 
         def get_stream_profile_list(self, sensor: str):
@@ -327,8 +342,11 @@ def orbbec(
             if fake.no_frames or self.fault == "no_frames":
                 time.sleep(min(timeout_ms / 1000, 0.01))
                 return None
-            if fake.missing_depth or self.fault == "missing_depth":
-                time.sleep(min(timeout_ms / 1000, 0.01))
+            if self.queued_frames:
+                return self.queued_frames.pop(0)
+            if timeout_ms <= 1:
+                return None
+            time.sleep(min(timeout_ms / 1000, 0.01))
             return Frames(self.config, missing_depth=self.fault == "missing_depth")
 
         def stop(self):
