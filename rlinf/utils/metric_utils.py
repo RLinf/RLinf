@@ -326,7 +326,9 @@ def aggregate_agent_metrics(metrics_list: list[dict]) -> dict:
         METRIC_SUM_PREFIX: sum,
         "__max__/": max,
         "__min__/": min,
-        "__mean__/": lambda x: sum(i[0] for i in x) / sum(i[1] for i in x),
+        "__mean__/": lambda x: (
+            sum(i[0] for i in x) / denom if (denom := sum(i[1] for i in x)) else 0.0
+        ),
     }
     for key in all_keys:
         for stat_key in stat_methods:
@@ -336,8 +338,11 @@ def aggregate_agent_metrics(metrics_list: list[dict]) -> dict:
         else:
             stat_key, real_key = None, None
         if stat_key is not None:
-            values = [metric_dict[key] for metric_dict in metrics_list]
-            aggregated[real_key] = stat_methods[stat_key](values)
+            values = [
+                metric_dict[key] for metric_dict in metrics_list if key in metric_dict
+            ]
+            if values:
+                aggregated[real_key] = stat_methods[stat_key](values)
 
     return aggregated
 
