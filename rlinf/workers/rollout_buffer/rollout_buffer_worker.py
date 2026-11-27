@@ -496,6 +496,7 @@ class RolloutBufferWorker(Worker):
         # run_continuously; payloads are released through these.
         self._payload_channels: list[Channel] = []
         self._pending_fetch: Optional[asyncio.Future] = None
+        self._release_waiter: Optional[asyncio.Future] = None
 
     async def run_continuously(
         self,
@@ -530,6 +531,9 @@ class RolloutBufferWorker(Worker):
             return
         finally:
             self._resident_task = None
+            if self._release_waiter is not None and not self._release_waiter.done():
+                self._release_waiter.cancel()
+            self._release_waiter = None
             for task in (admission, receive):
                 task.cancel()
             await asyncio.gather(admission, receive, return_exceptions=True)
@@ -691,6 +695,10 @@ class RolloutBufferWorker(Worker):
                 await rollout_channel.put(delivery, async_op=True).async_wait()
             else:
                 await rollout_channel.put(result, async_op=True).async_wait()
+        if self._release_waiter is not None:
+            if not self._release_waiter.done():
+                self._release_waiter.set_result(None)
+            self._release_waiter = None
 
     async def _release_payload(self, metadata: GroupMetadata) -> None:
         """Drop a discarded group's payload from its channel.
@@ -707,12 +715,13 @@ class RolloutBufferWorker(Worker):
         channel = payload_channel_for(ref.locator, self._payload_channels)
         await channel.remove_key(key=ref.key, async_op=True).async_wait()
 
-    async def release_batch(self, version: int):
+    async def release_batch(self, version: int, wait_for_dispatch: bool = False):
         """Request a training batch of the oldest buffered groups.
 
         If the buffer already holds a full batch it is dispatched from
         here; otherwise the request is held and dispatched by the receive
-        coroutine once enough groups have arrived.
+        coroutine once enough groups have arrived. Shared GPU runners wait for
+        dispatch to finish before pausing generation.
         """
         assert self.buffer.pending_release_version is None, (
             "a release request is already pending; the runner must wait "
@@ -723,9 +732,15 @@ class RolloutBufferWorker(Worker):
             "release_batch was called before run_continuously wired the "
             "rollout channel."
         )
+        waiter = (
+            asyncio.get_running_loop().create_future() if wait_for_dispatch else None
+        )
+        self._release_waiter = waiter
         self.buffer.pending_release_version = version
         if self.buffer.can_release():
             await self._dispatch_release(self._rollout_channel)
+        if waiter is not None:
+            await waiter
 
     async def set_loaded_versions(self, versions: dict[int, int]):
         self.buffer.set_loaded_versions(versions)

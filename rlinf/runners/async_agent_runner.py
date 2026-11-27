@@ -29,18 +29,16 @@ from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.metric_utils import aggregate_agent_metrics
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress
-from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.agent.agent_loop import AgentLoopWorker
 from rlinf.workers.agent.tool_worker import ToolWorker, ToolWorkerInfo
-from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.rollout.session_server.payload import create_payload_channels
 from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
 
 if typing.TYPE_CHECKING:
-    # Type checking only: the session server worker imports fastapi,
-    # uvicorn and SGLang at module level, which a run without the session
-    # server (on vLLM, for example) may not have installed.
+    # Type checking only: avoid importing Megatron/FastAPI/SGLang at module load time.
+    from rlinf.workers.actor.megatron_actor_worker import MegatronActor
+    from rlinf.workers.inference.megatron_inference_worker import MegatronInference
     from rlinf.workers.rollout.session_server.server_worker import SessionServerWorker
     from rlinf.workers.rollout.sglang.router_worker import SGLangRouterWorker
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
@@ -74,8 +72,8 @@ class AsyncAgentRunner(AgentRunner):
         train_dataset: Dataset,
         val_dataset: Optional[Dataset],
         rollout: Union["SGLangWorker", "VLLMWorker"],
-        inference: Optional[MegatronInference],
-        actor: MegatronActor,
+        inference: Optional["MegatronInference"],
+        actor: "MegatronActor",
         reward: Optional[RewardWorker],
         agent_loop: AgentLoopWorker,
         rollout_buffer: RolloutBufferWorker,
@@ -84,10 +82,8 @@ class AsyncAgentRunner(AgentRunner):
         session_servers: Optional[list["SessionServerWorker"]] = None,
         session_router: Optional["SGLangRouterWorker"] = None,
     ):
-        assert placement.is_disaggregated, (
-            "AsyncAgentRunner: rollout and actor must be deployed "
-            "separately (disaggregated placement); with a shared placement "
-            "the runner does not manage weight offload / onload."
+        assert placement.is_disaggregated or placement.is_collocated, (
+            "AsyncAgentRunner requires collocated or disaggregated placement."
         )
         assert reward is None, (
             "AsyncAgentRunner: reward workers are invoked once per training "
@@ -111,6 +107,7 @@ class AsyncAgentRunner(AgentRunner):
             tool_workers,
             solid_rollouts,
         )
+        self.is_collocated = placement.is_collocated
         self.rollout_buffer = rollout_buffer
         self.pause_mode = cfg.rollout.pause_mode
         # With the session server: the entry script (which owns placement)
@@ -180,17 +177,20 @@ class AsyncAgentRunner(AgentRunner):
             "sync_model_to_rollout call, so a subset sync needs the actor "
             "side to change first."
         )
-        if pause_generation:
+        if pause_generation and not self.is_collocated:
             with self.timer("sync/pause"):
                 self._rollout_target(instance_ids).pause_generation(
                     self.pause_mode
                 ).wait()
         with self.timer("sync/transfer"):
-            self.actor.sync_model_to_rollout()
+            actor_sync_handle = self.actor.sync_model_to_rollout()
             self._rollout_target(instance_ids).sync_model_from_actor(
                 version=version
             ).wait()
+            actor_sync_handle.wait()
             self.actor.del_reshard_state_dict().wait()
+            if self.is_collocated:
+                self.rollout.onload_kv_cudagraph().wait()
         if pause_generation:
             with self.timer("sync/continue"):
                 self._rollout_target(instance_ids).continue_generation().wait()
@@ -398,34 +398,65 @@ class AsyncAgentRunner(AgentRunner):
                 payload_channels=payload_channels,
             )
             while self.global_steps < self.max_steps:
+                if self._session_servers is None:
+                    watched_handles = [agent_handle, buffer_handle, rollout_handle]
+                else:
+                    # The serve handles replace the rollout serverless
+                    # handle: a dead session server must end the run.
+                    watched_handles = [
+                        agent_handle,
+                        buffer_handle,
+                        *self._session_serve_handles,
+                    ]
                 with self.timer("step"):
-                    # The buffer worker releases the oldest finished
-                    # groups as soon as they form a batch; no need to
-                    # wait for the release to land.
-                    self.rollout_buffer.release_batch(version=self.global_steps)
-
-                    actor_handle: Handle = self.actor.run_training(
-                        input_channel=self.rollout_channel,
-                        version=self.global_steps,
-                        payload_channels=payload_channels,
-                    )
-                    step_start = time.perf_counter()
-                    if self._session_servers is None:
-                        watched_handles = [agent_handle, buffer_handle, rollout_handle]
+                    if self.is_collocated:
+                        with self.timer("wait_data"):
+                            release_handle = self.rollout_buffer.release_batch(
+                                version=self.global_steps, wait_for_dispatch=True
+                            )
+                            self._wait_actor(release_handle, watched_handles)
+                        with self.timer("rollout/pause"):
+                            self.rollout.pause_generation(self.pause_mode).wait()
+                        with self.timer("rollout/offload"):
+                            self.rollout.offload_engine().wait()
+                        actor_handle: Handle = self.actor.run_training(
+                            input_channel=self.rollout_channel,
+                            version=self.global_steps,
+                            payload_channels=payload_channels,
+                        )
+                        metrics = self._wait_actor(actor_handle, watched_handles)
+                        actor_wait_time = None
                     else:
-                        # The serve handles replace the rollout serverless
-                        # handle: a dead session server must end the run.
-                        watched_handles = [
-                            agent_handle,
-                            buffer_handle,
-                            *self._session_serve_handles,
-                        ]
-                    metrics = self._wait_actor(actor_handle, watched_handles)
-                    actor_wait_time = time.perf_counter() - step_start
+                        # The buffer worker releases the oldest finished
+                        # groups as soon as they form a batch; no need to
+                        # wait for the release to land.
+                        self.rollout_buffer.release_batch(version=self.global_steps)
+
+                        actor_handle: Handle = self.actor.run_training(
+                            input_channel=self.rollout_channel,
+                            version=self.global_steps,
+                            payload_channels=payload_channels,
+                        )
+                        step_start = time.perf_counter()
+                        metrics = self._wait_actor(actor_handle, watched_handles)
+                        actor_wait_time = time.perf_counter() - step_start
 
                     actor_rollout_metrics = metrics[0][0]
                     actor_training_metrics = metrics[0][1]
                     self.global_steps += 1
+
+                    run_time_exceeded = self.run_timer.is_finished()
+                    _, save_model, is_train_end = check_progress(
+                        self.global_steps,
+                        self.max_steps,
+                        self.cfg.runner.val_check_interval,
+                        self.cfg.runner.save_interval,
+                        1.0,
+                        run_time_exceeded=run_time_exceeded,
+                    )
+
+                    if save_model:
+                        self._save_checkpoint()
 
                     # Agent loop idle time since the last step, sampled while
                     # the sync has not yet replaced any rollout weights.
@@ -435,18 +466,19 @@ class AsyncAgentRunner(AgentRunner):
                         for idle_seconds, window_seconds in idle_stats_list
                         if window_seconds > 0
                     ]
-                    with self.timer("sync_weights"):
-                        num_inflight = self.agent_loop.num_inflight_groups().wait()
-                        # The buffer is a single-worker group; wait() returns
-                        # one result per worker.
-                        buffer_metrics = self.rollout_buffer.get_metrics().wait()[0]
-                        self._sync_weights_for_instances(
-                            version=self.global_steps,
-                        )
-                        self.rollout_buffer.set_loaded_versions(
-                            self._rollout_loaded_versions
-                        ).wait()
-                        self._push_loaded_versions_to_session_servers()
+                    num_inflight = self.agent_loop.num_inflight_groups().wait()
+                    # The buffer is a single-worker group; wait() returns
+                    # one result per worker.
+                    buffer_metrics = self.rollout_buffer.get_metrics().wait()[0]
+                    if not (self.is_collocated and (is_train_end or run_time_exceeded)):
+                        with self.timer("sync_weights"):
+                            self._sync_weights_for_instances(
+                                version=self.global_steps,
+                            )
+                            self.rollout_buffer.set_loaded_versions(
+                                self._rollout_loaded_versions
+                            ).wait()
+                            self._push_loaded_versions_to_session_servers()
                     # Called every step: the session server expires its
                     # discard records on this call, and its metrics join
                     # the step's rollout metrics. Every server-side value
@@ -477,25 +509,15 @@ class AsyncAgentRunner(AgentRunner):
                                 "session_server/forward_time_avg_s"
                             ] = forward_time_total_s / forward_count
 
-                    run_time_exceeded = self.run_timer.is_finished()
-                    _, save_model, is_train_end = check_progress(
-                        self.global_steps,
-                        self.max_steps,
-                        self.cfg.runner.val_check_interval,
-                        self.cfg.runner.save_interval,
-                        1.0,
-                        run_time_exceeded=run_time_exceeded,
-                    )
-
-                    if save_model:
-                        self._save_checkpoint()
-
                 time_metrics = self.timer.consume_durations()
                 time_metrics["training"] = actor_handle.consume_duration()
-                # Wall-clock wait minus the actor's training time: how long
-                # the actor spent waiting for rollout data. The synchronous
-                # runner's time/rollout has no source here.
-                time_metrics["wait_data"] = actor_wait_time - time_metrics["training"]
+                if actor_wait_time is not None:
+                    # Wall-clock wait minus the actor's training time: how long
+                    # the actor spent waiting for rollout data. The synchronous
+                    # runner's time/rollout has no source here.
+                    time_metrics["wait_data"] = (
+                        actor_wait_time - time_metrics["training"]
+                    )
                 logging_steps = (
                     self.global_steps - 1
                 ) * self.cfg.algorithm.n_minibatches
@@ -593,6 +615,12 @@ class AsyncAgentRunner(AgentRunner):
 
                 global_pbar.set_postfix(logging_metrics, refresh=False)
                 global_pbar.update(1)
+                self._on_step_logged(
+                    time_metrics=time_metrics,
+                    agent_metrics=agent_metrics,
+                    rollout_metrics=rollout_metrics,
+                    actor_training_metrics=actor_training_metrics,
+                )
 
                 if is_train_end or run_time_exceeded:
                     # Exit only after this step's metrics are logged.
@@ -627,6 +655,16 @@ class AsyncAgentRunner(AgentRunner):
             except Exception as e:
                 logging.error(f"Closing the progress bar failed: {e}")
             self.metric_logger.finish()
+
+    def _on_step_logged(
+        self,
+        *,
+        time_metrics: dict,
+        agent_metrics: dict,
+        rollout_metrics: dict,
+        actor_training_metrics: list[dict],
+    ) -> None:
+        """Optional hook for subclasses to emit concise step logs or audits."""
 
     def _push_loaded_versions_to_session_servers(self):
         """Send the loaded versions to every session server.

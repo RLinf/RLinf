@@ -826,11 +826,7 @@ class LiberoEnv(gym.Env):
     def _extract_image_and_state(
         self, obs: dict[str, np.ndarray]
     ) -> dict[str, np.ndarray]:
-        return {
-            "full_image": get_libero_image(obs, is_libero_mem=self.is_libero_mem),
-            "wrist_image": get_libero_wrist_image(
-                obs, is_libero_mem=self.is_libero_mem
-            ),
+        extracted: dict[str, np.ndarray] = {
             "state": np.concatenate(
                 [
                     obs["robot0_eef_pos"],
@@ -839,6 +835,15 @@ class LiberoEnv(gym.Env):
                 ]
             ),
         }
+        if "agentview_image" in obs:
+            extracted["full_image"] = get_libero_image(
+                obs, is_libero_mem=self.is_libero_mem
+            )
+        if "robot0_eye_in_hand_image" in obs:
+            extracted["wrist_image"] = get_libero_wrist_image(
+                obs, is_libero_mem=self.is_libero_mem
+            )
+        return extracted
 
     def _wrap_obs(self, obs_list: Iterable[dict[str, np.ndarray]]) -> dict[str, Any]:
         images_and_states_list = []
@@ -852,12 +857,14 @@ class LiberoEnv(gym.Env):
 
         states = images_and_states["state"]
 
-        obs = {
-            "main_images": images_and_states["full_image"],
-            "wrist_images": images_and_states["wrist_image"],
+        obs: dict[str, Any] = {
             "states": states,
             "task_descriptions": self.task_descriptions,
         }
+        if "full_image" in images_and_states:
+            obs["main_images"] = images_and_states["full_image"]
+        if "wrist_image" in images_and_states:
+            obs["wrist_images"] = images_and_states["wrist_image"]
         return obs
 
     def _append_history(self, obs: dict[str, Any], env_idx: Iterable[int]) -> None:

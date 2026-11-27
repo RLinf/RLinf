@@ -1,0 +1,53 @@
+defaults:
+  - train_qwen3.5_4b_rpent_grpo
+  - _self_
+
+runner:
+  experiment_name: rpent-robolab-robotwin-smoke
+  max_steps: 1
+  seq_length: 16384
+  max_tokens_per_mbs: 16384
+
+algorithm:
+  group_size: 2
+  sampling_params:
+    max_new_tokens: 2048
+
+data:
+  rollout_batch_size: 2
+  sampling_batch_size: 2
+
+env:
+  rpent: ${smoke_pools}
+
+smoke_pools:
+  robolab:
+    endpoint: ${oc.env:ROBOLAB_POOL_URL,http://127.0.0.1:28566}
+    train_data_paths: ${oc.env:RPENT_ROOT,/path/to/rpent_ppo}/data/robolab/train.jsonl
+    rollout_episodes: 2
+    sampling_episodes: 2
+  robotwin:
+    endpoint: ${oc.env:ROBOTWIN_POOL_URL,http://127.0.0.1:28562}
+    train_data_paths: ${oc.env:RPENT_ROOT,/path/to/rpent_ppo}/data/robotwin/train.jsonl
+    rollout_episodes: 2
+    sampling_episodes: 2
+
+agentloop:
+  max_turns: 16
+  history_compaction:
+    max_messages: 20
+    keep_messages: 6
+    context_window: 16384
+    max_fraction: 0.5
+
+tools:
+  rpent:
+    image_size: 512
+    sleep_sim_pools_during_training: true
+
+rollout:
+  gpu_memory_utilization: 0.45
+  max_running_requests: 4
+  cuda_graph_max_bs: 4
+  sglang:
+    context_length: 16384

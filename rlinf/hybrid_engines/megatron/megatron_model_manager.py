@@ -306,7 +306,7 @@ class MegatronModelManager:
         # Only override user-controllable runtime fields
         # e.g. multi_latent_attention=True -> False
         _model_type = getattr(self._cfg.model, "model_type", None)
-        if _model_type in ("deepseek_v3", "glm4_moe_lite"):
+        if _model_type in ("deepseek_v3", "glm4_moe_lite", "qwen3_5"):
             _mbridge_user_override_fields = {
                 "fp16",
                 "bf16",
@@ -317,8 +317,10 @@ class MegatronModelManager:
                 "sequence_parallel",
                 "tensor_model_parallel_size",
                 "pipeline_model_parallel_size",
+                "virtual_pipeline_model_parallel_size",
                 "expert_model_parallel_size",
                 "context_parallel_size",
+                "attention_backend",
                 "gradient_accumulation_fusion",
                 "moe_aux_loss_coeff",
                 "moe_router_bias_update_rate",
@@ -339,6 +341,13 @@ class MegatronModelManager:
         provider.position_embedding_type = position_embedding_type
         if hasattr(provider, "vision_config"):
             provider.vision_config._attn_implementation = resolve_attn_implementation()
+        if _model_type == "qwen3_5":
+            text_config = provider.hf_text_config
+            if self._cfg.model.get("load_mtp", False):
+                provider.mtp_num_layers = text_config.mtp_num_hidden_layers
+            else:
+                provider.mtp_num_layers = 0
+                text_config.mtp_num_hidden_layers = 0
 
         # the Mbridge run the qwen3-vl-moe model will freeze the language model and vision model by default.
         provider.freeze_language_model = getattr(
