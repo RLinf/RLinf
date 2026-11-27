@@ -26,14 +26,15 @@ from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress
-from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.agent.agent_loop import AgentLoopWorker
 from rlinf.workers.agent.tool_worker import ToolChannelInfo, ToolWorker, ToolWorkerInfo
-from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
-from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
 
 if typing.TYPE_CHECKING:
+    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
+    from rlinf.workers.actor.megatron_actor_worker import MegatronActor
+    from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
+    from rlinf.workers.inference.megatron_inference_worker import MegatronInference
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
     from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
@@ -50,13 +51,13 @@ class AgentRunner(ReasoningRunner):
         train_dataset: Dataset,
         val_dataset: Optional[Dataset],
         rollout: Union["SGLangWorker", "VLLMWorker"],
-        inference: Optional[MegatronInference],
-        actor: MegatronActor,
+        inference: Optional["MegatronInference"],
+        actor: Union["MegatronActor", "FSDPActor"],
         reward: Optional[RewardWorker],
         agent_loop: AgentLoopWorker,
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
         solid_rollouts: dict[str, Union["SGLangWorker", "VLLMWorker"]] = {},
-        critic: MAMegatronCritic | None = None,
+        critic: Optional["MAMegatronCritic"] = None,
     ):
         super().__init__(
             cfg,
@@ -187,7 +188,7 @@ class AgentRunner(ReasoningRunner):
 
     def _sync_weights(self):
         super()._sync_weights()
-        if not self.is_pipeline:
+        if self.component_placement.is_collocated:
             onload_handles = []
             for solid_rollout in self.solid_rollouts.values():
                 onload_handles.append(solid_rollout.onload_engine())
@@ -212,7 +213,7 @@ class AgentRunner(ReasoningRunner):
                 compute_ref_logprobs=self.compute_ref_logprobs,
             )
             input_channel = self.inference_channel
-        if self.is_pipeline:
+        if not self.component_placement.is_collocated:
             rollout_handle.wait()
         handles["training"] = self.actor.run_training(input_channel=input_channel)
         rollout_metrics, training_metrics = handles["training"].wait()[0]
@@ -265,7 +266,7 @@ class AgentRunner(ReasoningRunner):
                             output_channel=self.rollout_channel,
                         )
 
-                        if not self.is_pipeline:
+                        if self.component_placement.is_collocated:
                             agent_metrics = rollout_handle.wait()[0]
                             offload_handles = [self.rollout.offload_engine()]
                             for solid_rollout in self.solid_rollouts.values():

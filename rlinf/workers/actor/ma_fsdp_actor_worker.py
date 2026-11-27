@@ -34,6 +34,7 @@ from rlinf.data.schema.actor_batch import (
 )
 from rlinf.data.schema.reasoning_results import (
     DynamicRolloutResult,
+    RolloutResult,
 )
 from rlinf.hybrid_engines.fsdp.utils import (
     pack_fsdp_input,
@@ -47,11 +48,13 @@ from rlinf.utils.data_iter_utils import (
     split_dynamic_batch_size,
 )
 from rlinf.utils.distributed import (
-    balance_rollout_groups,
     compute_rollout_metrics_dynamic,
+    receive_balanced_groups,
 )
+from rlinf.utils.metric_utils import compute_dp_staleness_metrics
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
+    PlacementMode,
 )
 from rlinf.utils.torch_functionals import batch_pad_to_fixed_len
 from rlinf.utils.utils import (
@@ -62,14 +65,11 @@ from rlinf.utils.utils import (
 from rlinf.workers.actor.fsdp_actor_worker import (
     FSDPActor,
 )
+from rlinf.workers.rollout.session_server.assembly import receive_rollout_result
 
 
 class MAFSDPActor(FSDPActor):
-    """FSDP actor for Search-R1 multi-agent dynamic rollouts.
-
-    The actor requires collocated placement because dynamic rollout batches are
-    consumed and trained within the same actor group.
-    """
+    """FSDP actor for multi-agent dynamic rollouts."""
 
     def __init__(
         self,
@@ -78,13 +78,20 @@ class MAFSDPActor(FSDPActor):
         cfg_fsdp: Optional[DictConfig] = None,
     ) -> None:
         super().__init__(cfg, placement, cfg_fsdp)
+        # Set by run_training for the duration of get_step_batch and read by
+        # _receive_rollout_result.
+        self._payload_channels: Optional[list[Channel]] = None
         self.is_dynamic_rollout_batch = self.cfg.agentloop.is_dynamic_rollout_batch
         assert self.is_dynamic_rollout_batch, (
             "MAFSDPActor requires agentloop.is_dynamic_rollout_batch=True"
         )
         self.placement = placement
-        assert self.placement.is_collocated, (
-            "Only collocated placement is supported for multi-agent actor"
+        assert self.placement.placement_mode in (
+            PlacementMode.COLLOCATED,
+            PlacementMode.DISAGGREGATED,
+        ), (
+            "Multi-agent FSDP actor supports only collocated or disaggregated "
+            f"placement, got {self.placement.placement_mode}"
         )
         if self.cfg.algorithm.get("importance_sampling_fix", False):
             raise ValueError(
@@ -93,6 +100,16 @@ class MAFSDPActor(FSDPActor):
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
+
+    def _use_streaming_pipeline(self) -> bool:
+        """MAFSDPActor gathers the full step batch instead of streaming chunks."""
+        return False
+
+    def _receive_rollout_result(
+        self, channel: Channel
+    ) -> RolloutResult | DynamicRolloutResult:
+        """Fetch one rollout result, assembling delivered groups when needed."""
+        return receive_rollout_result(channel, self._payload_channels, self.cfg)
 
     def _get_num_rollout_results_per_dp(self) -> int:
         """Count question groups; each group can contain a different turn count."""
@@ -113,17 +130,15 @@ class MAFSDPActor(FSDPActor):
         Unlike get_batch, which receives one rollout result, this receives
         all of the step's groups and returns them as a list.
         """
-        results = [channel.get() for _ in range(self._get_num_rollout_results_per_dp())]
-        if not channel.is_local:
-            for result in results:
-                result.extra_fields_train["source_dp"] = [
-                    torch.distributed.get_rank()
-                ] * result.num_sequence
-            if self.enable_dp_load_balance:
-                with self.worker_timer("group_dp_balance"):
-                    results = balance_rollout_groups(
-                        results, torch.distributed.group.WORLD
-                    )
+        results = receive_balanced_groups(
+            lambda: self._receive_rollout_result(channel),
+            self._get_num_rollout_results_per_dp(),
+            is_local=channel.is_local,
+            source_rank=(None if channel.is_local else torch.distributed.get_rank()),
+            dp_group=(None if channel.is_local else torch.distributed.group.WORLD),
+            balance=self.enable_dp_load_balance,
+            timer_ctx=self.worker_timer,
+        )
         batch = DynamicRolloutResult.merge_batches(
             [result.to_actor_batch() for result in results],
             self.cfg.algorithm.group_size,
@@ -277,7 +292,6 @@ class MAFSDPActor(FSDPActor):
         compute_ref_logprobs: bool,
     ):
         """Compute real-length probabilities and retain the balanced group order."""
-        assert not self.is_pipeline, "MAFSDPActor supports collocated inference."
         batch, results = self.get_step_batch(input_channel)
         self._load_weight_and_optimizer()
         self.model.eval()
@@ -436,16 +450,21 @@ class MAFSDPActor(FSDPActor):
         return rollout_metrics
 
     def run_training(
-        self, input_channel: Channel, do_offload=False
+        self,
+        input_channel: Channel,
+        do_offload: bool = False,
+        version: Optional[int] = None,
+        payload_channels: Optional[list[Channel]] = None,
     ) -> tuple[dict, list]:
         assert not do_offload, (
             "do_offload argument of run_inference/run_training is not supported in FSDP for now"
         )
-        assert not self.is_pipeline, (
-            "MAFSDPActor currently only supports collocated training"
-        )
 
-        global_batch, _ = self.get_step_batch(input_channel)
+        self._payload_channels = payload_channels
+        try:
+            global_batch, rollout_results = self.get_step_batch(input_channel)
+        finally:
+            self._payload_channels = None
         assert (
             "recomputed_logprobs" in global_batch or "rollout_logprobs" in global_batch
         )
@@ -461,6 +480,13 @@ class MAFSDPActor(FSDPActor):
             )
 
         rollout_metrics = self._compute_rollout_metrics(global_batch)
+        staleness_metrics = compute_dp_staleness_metrics(
+            rollout_results, version, self.get_rollout_metrics_group(global_batch)
+        )
+        if staleness_metrics is not None:
+            if rollout_metrics is None:
+                rollout_metrics = {}
+            rollout_metrics.update(staleness_metrics)
 
         scale_context = {
             "folding_scale": [],
@@ -506,7 +532,7 @@ class MAFSDPActor(FSDPActor):
 
         self.model.train()
         training_metrics_list = []
-        with self.worker_timer():
+        with self.worker_timer("run_training"):
             for mini_batch in mini_batches:
                 if not mini_batch["input_ids"]:
                     continue

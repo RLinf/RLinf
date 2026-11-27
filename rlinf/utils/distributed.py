@@ -14,8 +14,16 @@
 
 import pickle
 from collections import UserDict
-from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Union
+from contextlib import contextmanager, nullcontext
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ContextManager,
+    Optional,
+    Sequence,
+    Union,
+)
 
 import numpy as np
 import torch
@@ -127,6 +135,35 @@ def balance_rollout_groups(
             owned.update(pickle.loads(received[offset : offset + size]))
         offset += size
     return [owned[idx] for idx in partitions[rank]]
+
+
+def receive_balanced_groups(
+    receive: Callable[[], "DynamicRolloutResult"],
+    count: int,
+    *,
+    is_local: bool,
+    source_rank: Optional[int],
+    dp_group: Optional[ProcessGroup],
+    balance: bool,
+    timer_ctx: Optional[Callable[[str], ContextManager]] = None,
+    timer_name: str = "group_dp_balance",
+) -> list["DynamicRolloutResult"]:
+    """Receive one step's groups on this DP rank, tag ``source_dp``, and optionally balance.
+
+    When ``is_local`` is True, distributed ``source_dp`` tagging and DP
+    balancing are skipped (``source_rank`` and ``dp_group`` are unused).
+    ``timer_ctx``, when given, wraps ``balance_rollout_groups`` under
+    ``timer_name``.
+    """
+    results = [receive() for _ in range(count)]
+    if not is_local:
+        for result in results:
+            result.extra_fields_train["source_dp"] = [source_rank] * result.num_sequence
+        if balance:
+            ctx = timer_ctx(timer_name) if timer_ctx is not None else nullcontext()
+            with ctx:
+                results = balance_rollout_groups(results, dp_group)
+    return results
 
 
 def compute_rollout_metrics_dynamic(

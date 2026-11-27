@@ -148,9 +148,13 @@ class FSDPActor(FSDPModelManager, Worker):
 
         self._rollout_group_name = cfg.rollout.group_name
         self._component_placement = placement
-        self.is_pipeline = self._component_placement.is_disaggregated
+        self.is_disaggregated = self._component_placement.is_disaggregated
+        self.is_pipeline = self._use_streaming_pipeline()
         self.ref_policy_state_dict = None
-        if self.is_pipeline:
+        if (
+            self.is_disaggregated
+            and self._component_placement.has_dedicated_actor_inference
+        ):
             self._inference_group_name = cfg.inference.group_name
             self._inference_world_size = self._component_placement.get_world_size(
                 "inference"
@@ -161,7 +165,7 @@ class FSDPActor(FSDPModelManager, Worker):
             self._inference_world_size = 0
             self._inference_dst_map = None
         self.loss_agg_func = get_loss_agg_func(cfg.algorithm.loss_agg_func)
-        self.enable_offload = not self.is_pipeline and cfg.actor.get(
+        self.enable_offload = not self.is_disaggregated and cfg.actor.get(
             "enable_offload", False
         )
         self.micro_batch_size = cfg.actor.micro_batch_size
@@ -185,6 +189,10 @@ class FSDPActor(FSDPModelManager, Worker):
             "variable_seq_lengths", False
         )
 
+    def _use_streaming_pipeline(self) -> bool:
+        """Whether this actor streams rollout chunks through the base pipeline path."""
+        return self.is_disaggregated
+
     def init_worker(self) -> None:
         """
         Initialize the actor worker. build the model and use corresponding training backend
@@ -202,7 +210,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 is_fsdp=True,
             )
 
-        if self.enable_offload and not self.is_pipeline:
+        if self.enable_offload and not self.is_disaggregated:
             self.offload_param_and_grad()
             self.offload_optimizer()
         self._setup_rollout_weight_dst_ranks()
@@ -301,7 +309,7 @@ class FSDPActor(FSDPModelManager, Worker):
                     v = v.full_tensor()
                 if rollout_dtype is not None:
                     v = v.to(rollout_dtype)
-                if not self.is_pipeline:
+                if not self.is_disaggregated:
                     v = reduce_tensor(v)
                 buffer[k] = v
             if bucket_idx == 0:
@@ -314,7 +322,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 send_handle.wait()
             send_handles = []
 
-            if not self.is_pipeline:
+            if not self.is_disaggregated:
                 send_handle = self.send(
                     buffer,
                     self._rollout_group_name,

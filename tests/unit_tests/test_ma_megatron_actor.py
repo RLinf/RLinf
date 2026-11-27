@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Multi-turn Megatron batches, packing, and weight-version bookkeeping.
+"""Multi-turn actor helpers, packing, and weight-version bookkeeping.
 
-The actor is built only in Megatron environments, so every test skips when
-`megatron.core` is absent. No Ray or GPUs are launched.
+Megatron-specific tests skip when `megatron.core` is absent. No Ray or GPUs
+are launched.
 """
 
 import copy
+from contextlib import contextmanager
 from datetime import timedelta
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -27,20 +29,22 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 
-from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+from rlinf.data.schema.reasoning_results import (
+    DynamicRolloutResult,
+    GroupDelivery,
+    PayloadRef,
+)
+from rlinf.utils.distributed import receive_balanced_groups
+from rlinf.utils.metric_utils import (
+    compute_dp_staleness_metrics,
+    extract_versioned_trajectory_records,
+)
+from rlinf.workers.rollout.session_server.assembly import receive_rollout_result
+from rlinf.workers.rollout.session_server.payload import GroupPayload, PayloadPart
 
 
 class TestExtractVersionedTrajectoryRecords:
-    """The actor's record extraction from DynamicRolloutResult objects."""
-
-    @staticmethod
-    def _make_actor():
-        pytest.importorskip("megatron.core")
-        # __new__ bypasses Megatron init; only the private extraction
-        # method is exercised.
-        from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
-
-        return MAMegatronActor.__new__(MAMegatronActor)
+    """Record extraction from DynamicRolloutResult objects."""
 
     @staticmethod
     def _dynamic_result(
@@ -63,7 +67,6 @@ class TestExtractVersionedTrajectoryRecords:
         )
 
     def test_extracts_per_trajectory_records(self):
-        actor = self._make_actor()
         # One result = one group (result_index 0); its trajectories are
         # trajectory 0 (two turns) and trajectory 1 (one turn).
         result = DynamicRolloutResult(
@@ -78,7 +81,7 @@ class TestExtractVersionedTrajectoryRecords:
             version_start=[5, 6, 7],
             version_end=[6, 6, 7],
         )
-        records = actor._extract_versioned_trajectory_records([result])
+        records = extract_versioned_trajectory_records([result])
         assert len(records) == 2
         first, second = records
         # Every trajectory of one result shares the result's group index.
@@ -95,83 +98,329 @@ class TestExtractVersionedTrajectoryRecords:
         assert second.reward == 2.0
 
     def test_returns_none_without_versions(self):
-        actor = self._make_actor()
         result = self._dynamic_result()
-        assert actor._extract_versioned_trajectory_records([result]) is None
+        assert extract_versioned_trajectory_records([result]) is None
 
     def test_returns_none_if_any_result_lacks_versions(self):
-        actor = self._make_actor()
         versioned = self._dynamic_result(version_start=[1, 2], version_end=[1, 2])
         assert (
-            actor._extract_versioned_trajectory_records(
-                [versioned, self._dynamic_result()]
-            )
+            extract_versioned_trajectory_records([versioned, self._dynamic_result()])
             is None
         )
 
 
 class _LocalDeliveryChannel:
-    """A local input channel that returns one delivered group."""
+    """A local input channel that returns one item per get."""
 
     is_local = True
 
-    def __init__(self, delivery):
-        self._delivery = delivery
+    def __init__(self, item):
+        self._item = item
         self.get_count = 0
 
     def get(self):
         self.get_count += 1
-        return self._delivery
+        return self._item
 
 
-def test_get_step_batch_assembles_delivered_groups(monkeypatch):
-    """get_step_batch assembles a group delivered by the session server.
+class _StubPayloadChannel:
+    """In-memory stand-in for one payload channel shard."""
 
-    A delivered group arrives as a GroupDelivery whose data is in a payload
-    channel, and only MAMegatronActor._receive_rollout_result turns it into
-    training data. If get_step_batch received the group with a plain
-    channel.get(), the GroupDelivery would reach the batch code and the
-    first training step would fail.
-    """
-    pytest.importorskip("megatron.core")
-    from megatron.core import parallel_state
+    def __init__(self, name: str, items: dict):
+        self.name = name
+        self._items = dict(items)
+        self.removed_keys: list[tuple] = []
 
-    from rlinf.data.schema.reasoning_results import GroupDelivery, PayloadRef
-    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+    def get(self, key):
+        return self._items[key]
 
-    actor = MAMegatronActor.__new__(MAMegatronActor)
-    actor.cfg = OmegaConf.create(
-        {"data": {"rollout_batch_size": 1}, "algorithm": {"group_size": 1}}
+    def remove_key(self, key, async_op: bool = False):
+        self.removed_keys.append((key, async_op))
+        self._items.pop(key, None)
+
+
+def _sample_group_payload(group_id: int = 7) -> GroupPayload:
+    turn = PayloadPart(
+        group_id=group_id,
+        traj_index=0,
+        turn_index=0,
+        input_ids=[1, 2],
+        output_ids=[3, 4],
+        logprobs=[-0.1, -0.2],
+        version_start=2,
+        weight_version=2,
+        finish_reason={"type": "stop"},
     )
+    finalize = PayloadPart(
+        group_id=group_id,
+        traj_index=0,
+        turn_index=0,
+        input_ids=[],
+        output_ids=[],
+        logprobs=None,
+        version_start=None,
+        weight_version=None,
+        finish_reason={},
+        last=True,
+        verdicts={
+            0: {
+                "kept_lens": {0: 2},
+                "continues_prev": {0: False},
+                "is_end": {0: True},
+                "not_training": {},
+            }
+        },
+        rewards=[1.0],
+    )
+    return GroupPayload(group_id=group_id, parts=[turn, finalize])
+
+
+def test_receive_rollout_result_passes_through_and_assembles_delivery():
+    """receive_rollout_result returns inline results untouched, assembles
+    GroupDelivery payloads and removes their keys, and asserts when payload
+    channels are missing."""
+    cfg = OmegaConf.create({"algorithm": {"recompute_logprobs": False}})
+    inline = _versioned_group(0)
+    assert receive_rollout_result(_LocalDeliveryChannel(inline), None, cfg) is inline
+
     delivery = GroupDelivery(
         group_id=7,
         task_name="searchr1",
         payload_ref=PayloadRef(locator="channel://Payload", key=7),
     )
-    assembled = DynamicRolloutResult(
-        num_sequence=1,
-        group_size=1,
-        idx_to_traj=[0],
-        input_ids=[[1, 2, 3]],
-        prompt_lengths=[2],
-        response_lengths=[1],
-        is_end=[True],
-        rewards=[0.0],
+    with pytest.raises(AssertionError, match="payload channels"):
+        receive_rollout_result(_LocalDeliveryChannel(delivery), None, cfg)
+
+    payload_channel = _StubPayloadChannel("Payload", {7: _sample_group_payload(7)})
+    assembled = receive_rollout_result(
+        _LocalDeliveryChannel(delivery), [payload_channel], cfg
     )
-    assembled_calls = []
+    assert isinstance(assembled, DynamicRolloutResult)
+    assert assembled.group_id == 7
+    assert assembled.task_name == "searchr1"
+    assert assembled.input_ids == [[1, 2, 3, 4]]
+    assert assembled.rollout_logprobs == [[-0.1, -0.2]]
+    assert payload_channel.removed_keys == [(7, True)]
+
+
+def test_receive_balanced_groups_tags_and_times_balance(monkeypatch):
+    """receive_balanced_groups skips tagging/balancing for local channels and
+    tags source_dp + wraps balance_rollout_groups in group_dp_balance otherwise."""
+    import rlinf.utils.distributed as dist_mod
+
+    local_group = _versioned_group(0)
+    local_results = receive_balanced_groups(
+        lambda: local_group,
+        1,
+        is_local=True,
+        source_rank=None,
+        dp_group=None,
+        balance=True,
+    )
+    assert local_results == [local_group]
+    assert "source_dp" not in local_group.extra_fields_train
+
+    remote_group = _versioned_group(1)
+    timers = []
+    balance_calls = []
+
+    @contextmanager
+    def _timer(name):
+        timers.append(name)
+        yield
+
     monkeypatch.setattr(
-        actor,
-        "_assemble_delivery",
-        lambda delivery: assembled_calls.append(delivery) or assembled,
+        dist_mod,
+        "balance_rollout_groups",
+        lambda results, dp_group: balance_calls.append((results, dp_group)) or results,
+    )
+    sentinel_group = object()
+    remote_results = receive_balanced_groups(
+        lambda: remote_group,
+        1,
+        is_local=False,
+        source_rank=3,
+        dp_group=sentinel_group,
+        balance=True,
+        timer_ctx=_timer,
+    )
+    assert remote_results == [remote_group]
+    assert remote_group.extra_fields_train["source_dp"] == [3, 3]
+    assert timers == ["group_dp_balance"]
+    assert balance_calls == [([remote_group], sentinel_group)]
+
+
+def test_get_step_batch_assembles_delivered_groups(monkeypatch):
+    """MAMegatronActor.get_step_batch assembles a GroupDelivery through
+    receive_rollout_result."""
+    pytest.importorskip("megatron.core")
+    from megatron.core import parallel_state
+
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+    actor = MAMegatronActor.__new__(MAMegatronActor)
+    actor.cfg = OmegaConf.create(
+        {
+            "data": {"rollout_batch_size": 1},
+            "algorithm": {"group_size": 1, "recompute_logprobs": False},
+        }
+    )
+    actor.enable_dp_load_balance = False
+    payload_channel = _StubPayloadChannel("Payload", {7: _sample_group_payload(7)})
+    actor._payload_channels = [payload_channel]
+    delivery = GroupDelivery(
+        group_id=7,
+        task_name="searchr1",
+        payload_ref=PayloadRef(locator="channel://Payload", key=7),
     )
     monkeypatch.setattr(parallel_state, "get_data_parallel_world_size", lambda: 1)
     channel = _LocalDeliveryChannel(delivery)
 
     _batch, results = actor.get_step_batch(channel)
 
-    assert assembled_calls == [delivery]
-    assert results == [assembled]
+    assert len(results) == 1
+    assert results[0].group_id == 7
+    assert results[0].task_name == "searchr1"
+    assert payload_channel.removed_keys == [(7, True)]
     assert channel.get_count == 1
+
+
+def test_ma_fsdp_actor_get_step_batch_assembles_delivered_groups(monkeypatch):
+    """MAFSDPActor.get_step_batch assembles a GroupDelivery through the shared
+    read-side helpers."""
+    from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
+
+    actor = MAFSDPActor.__new__(MAFSDPActor)
+    actor.cfg = OmegaConf.create(
+        {
+            "data": {"rollout_batch_size": 1},
+            "algorithm": {"group_size": 1, "recompute_logprobs": False},
+        }
+    )
+    actor.enable_dp_load_balance = False
+    payload_channel = _StubPayloadChannel("Payload", {7: _sample_group_payload(7)})
+    actor._payload_channels = [payload_channel]
+    delivery = GroupDelivery(
+        group_id=7,
+        task_name="searchr1",
+        payload_ref=PayloadRef(locator="channel://Payload", key=7),
+    )
+    monkeypatch.setattr(dist, "get_world_size", lambda: 1)
+    channel = _LocalDeliveryChannel(delivery)
+
+    _batch, results = actor.get_step_batch(channel)
+
+    assert len(results) == 1
+    assert results[0].group_id == 7
+    assert results[0].task_name == "searchr1"
+    assert payload_channel.removed_keys == [(7, True)]
+    assert channel.get_count == 1
+
+
+def test_fsdp_streaming_pipeline_decoupled_from_disaggregated_placement(monkeypatch):
+    """Base FSDPActor enables streaming pipeline under disaggregated placement,
+    while MAFSDPActor keeps is_disaggregated=True and is_pipeline=False so
+    DP load balance, dynamic batching, and disaggregated run_inference work."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+    from rlinf.scheduler import Worker
+    from rlinf.utils.placement import PlacementMode
+    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
+    from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
+
+    monkeypatch.setattr(Worker, "__init__", lambda self: None)
+    monkeypatch.setattr(FSDPModelManager, "__init__", lambda self, *a, **kw: None)
+
+    def _make_cfg(*, dp_balance: bool, dynamic_bs: bool):
+        return OmegaConf.create(
+            {
+                "runner": {
+                    "task_type": "reasoning",
+                    "enable_dynamic_batch_size": dynamic_bs,
+                    "max_tokens_per_mbs": 4096,
+                },
+                "data": {"max_prompt_length": 512, "rollout_batch_size": 4},
+                "algorithm": {
+                    "group_size": 2,
+                    "n_minibatches": 1,
+                    "calculate_entropy": False,
+                    "entropy_bonus": 0.0,
+                    "kl_beta": 0.0,
+                    "kl_penalty_type": "low_var_kl",
+                    "loss_agg_func": "token-mean",
+                    "loss_scales": [],
+                },
+                "agentloop": {"is_dynamic_rollout_batch": True},
+                "rollout": {"group_name": "RolloutGroup"},
+                "actor": {
+                    "micro_batch_size": 1,
+                    "enable_dp_load_balance": dp_balance,
+                    "enable_offload": True,
+                    "model": {"encoder_seq_length": 1024},
+                },
+            }
+        )
+
+    placement = MagicMock()
+    placement.is_disaggregated = True
+    placement.has_dedicated_actor_inference = False
+    placement.placement_mode = PlacementMode.DISAGGREGATED
+
+    # Base FSDPActor still rejects DP load balance and dynamic batching in pipeline mode.
+    base = FSDPActor.__new__(FSDPActor)
+    base._world_size = 4
+    base._rank = 0
+    with pytest.raises(AssertionError, match="DP load balance"):
+        FSDPActor.__init__(
+            base, _make_cfg(dp_balance=True, dynamic_bs=False), placement
+        )
+
+    base2 = FSDPActor.__new__(FSDPActor)
+    base2._world_size = 4
+    base2._rank = 0
+    with pytest.raises(AssertionError, match="Dynamic batch size"):
+        FSDPActor.__init__(
+            base2, _make_cfg(dp_balance=False, dynamic_bs=True), placement
+        )
+
+    # MAFSDPActor is disaggregated without streaming pipeline: offload is disabled,
+    # cfg.inference is not required, and both DP balance & dynamic batching are allowed.
+    actor = MAFSDPActor.__new__(MAFSDPActor)
+    actor._world_size = 4
+    actor._rank = 0
+    MAFSDPActor.__init__(actor, _make_cfg(dp_balance=True, dynamic_bs=True), placement)
+
+    assert actor.is_disaggregated is True
+    assert actor.is_pipeline is False
+    assert actor.enable_offload is False
+    assert actor._inference_group_name is None
+    assert actor._inference_world_size == 0
+    assert actor._payload_channels is None
+
+    # Disaggregated MAFSDPActor.run_inference succeeds (e.g. synchronous disaggregated
+    # runs with recompute_logprobs=True and no dedicated inference group).
+    group = _versioned_group(0)
+    out_items = []
+
+    class _OutChannel:
+        def put(self, item):
+            out_items.append(item)
+
+    actor.get_step_batch = lambda ch: (group.to_actor_batch(), [group])
+    actor._load_weight_and_optimizer = lambda: None
+    actor.model = SimpleNamespace(eval=lambda: None)
+    actor.worker_timer = lambda: nullcontext()
+    actor.inference_step = lambda batch, compute_ref: (
+        [torch.zeros(len(r)) for r in batch["input_ids"]],
+        None,
+    )
+    actor.run_inference(None, _OutChannel(), compute_ref_logprobs=False)
+
+    assert len(out_items) == 1
+    assert out_items[0].recomputed_logprobs is not None
+    assert len(out_items[0].recomputed_logprobs) == group.num_sequence
 
 
 def _versioned_group(identity):
@@ -194,7 +443,6 @@ def _versioned_group(identity):
 
 def _distributed_staleness_process(rank, counts, balance, missing, init_file):
     from rlinf.utils.distributed import balance_rollout_groups
-    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 
     dist.init_process_group(
         "gloo",
@@ -210,9 +458,8 @@ def _distributed_staleness_process(rank, counts, balance, missing, init_file):
             results[0].version_start = results[0].version_end = None
         if balance:
             results = balance_rollout_groups(results, dist.group.WORLD)
-        actor = object.__new__(MAMegatronActor)
-        metrics = actor._compute_staleness_metrics(results, 10, dist.group.WORLD)
-        assert actor._compute_staleness_metrics(results, None, dist.group.WORLD) is None
+        metrics = compute_dp_staleness_metrics(results, 10, dist.group.WORLD)
+        assert compute_dp_staleness_metrics(results, None, dist.group.WORLD) is None
         if missing:
             assert metrics is None
             return
@@ -246,7 +493,6 @@ def _distributed_staleness_process(rank, counts, balance, missing, init_file):
 def test_staleness_survives_ragged_dp_redistribution(
     tmp_path, counts, balance, missing
 ):
-    pytest.importorskip("megatron.core")
     mp.spawn(
         _distributed_staleness_process,
         args=(counts, balance, missing, str(tmp_path / "versions")),

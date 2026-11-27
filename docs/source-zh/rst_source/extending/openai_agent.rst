@@ -118,7 +118,7 @@
 3. 启动与验证
 -------------
 
-参照 ``examples/agent/searchr1/train.py`` 在入口脚本中启动上述自定义 Agent Loop 类；即便由自定义 Worker 自行打分，配置里也须保留 ``reward.reward_type: searchr1`` 以通过启动校验。
+参照 ``examples/agent/searchr1/train.py`` 在入口脚本中启动上述自定义 Agent Loop 类。
 
 启动后在 ``rollout/session_server/`` 下核对关键指标（完整列表见 :ref:`监控指标 <session-server-metrics>`）：
 

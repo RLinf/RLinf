@@ -199,7 +199,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                         )
                     )
 
-                    if not self.is_pipeline:
+                    if self.component_placement.is_collocated:
                         agent_metrics = rollout_handle.wait()[0]
                         offload_handles = []
                         if self.use_pre_process_policy:
@@ -218,7 +218,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                         infer_handle = None
                         inference_channel = self.rollout_channel
 
-                    if self.is_pipeline:
+                    if not self.component_placement.is_collocated:
                         agent_metrics = rollout_handle.wait()[0]
                     actor_handle: Handle = self.actor.run_training(
                         input_channel=inference_channel,

@@ -134,4 +134,4 @@ Staleness
 限制
 ----
 
-异步 agentic RL 目前只支持它所基于的组合：Megatron actor、多轮 agent loop、SGLang server 后端，以及 actor 与 rollout 分离部署的 placement。训练时不做 off-policy 修正，rollout 返回的 logprob 直接作为 PPO 的 old logprob，因此要靠前面介绍的 staleness 上界，让训练数据与当前 policy 保持接近。
+异步 agentic RL 需要 Megatron 或 FSDP actor、多轮 agent loop、SGLang server 后端，以及 actor 与 rollout 分离部署的 placement。训练时不做 off-policy 修正，rollout 返回的 logprob 直接作为 PPO 的 old logprob，因此要靠前面介绍的 staleness 上界，让训练数据与当前 policy 保持接近。

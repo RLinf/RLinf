@@ -618,6 +618,99 @@ class TestSessionServerConfig:
         with pytest.raises(ValueError, match="is not supported for runner.task_type"):
             validate_reasoning_eval_cfg(cfg)
 
+    @pytest.mark.parametrize(
+        ("training_backend", "reward_type"),
+        [
+            ("megatron", "searchr1"),
+            ("fsdp", "searchr1"),
+            ("fsdp", "custom_agent"),
+            ("fsdp", None),
+        ],
+    )
+    def test_enabled_session_server_accepts_megatron_fsdp_and_any_task(
+        self, training_backend, reward_type, monkeypatch
+    ):
+        """Session server validation accepts both Megatron and FSDP actors
+        and does not restrict reward.reward_type to searchr1."""
+        import sys
+
+        import rlinf.config as cfg_mod
+
+        placement = SimpleNamespace(rollout_num_model_instances=2)
+        monkeypatch.setitem(sys.modules, "sglang_router", SimpleNamespace())
+        monkeypatch.setattr(cfg_mod, "Cluster", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            cfg_mod, "ModelParallelComponentPlacement", lambda *a, **kw: placement
+        )
+        cfg_dict = {
+            "cluster": {},
+            "runner": {"async_mode": True},
+            "actor": {"training_backend": training_backend},
+            "rollout": {
+                "sglang": {"backend_type": "server"},
+                "pause_mode": "retract",
+            },
+            "session_server": {"enable": True},
+        }
+        if reward_type is not None:
+            cfg_dict["reward"] = {"reward_type": reward_type}
+        cfg = validate_session_server_cfg(OmegaConf.create(cfg_dict))
+        assert cfg.session_server.enable is True
+        assert cfg.rollout.router.policy == "manual"
+
+    def test_enabled_session_server_rejects_unsupported_backend(self):
+        """An unsupported actor.training_backend is still rejected."""
+        cfg = OmegaConf.create(
+            {
+                "runner": {"async_mode": True},
+                "actor": {"training_backend": "unknown_backend"},
+                "rollout": {
+                    "sglang": {"backend_type": "server"},
+                    "pause_mode": "retract",
+                },
+                "session_server": {"enable": True},
+            }
+        )
+        with pytest.raises(ValueError, match="actor.training_backend"):
+            validate_session_server_cfg(cfg)
+
+    def test_agentic_tokenizer_parser_mismatch_rejected_for_non_searchr1_task(
+        self, monkeypatch
+    ):
+        """Non-Search-R1 tasks still validate agentloop.agentic_tokenizer
+        against rollout.sglang.tool_call_parser."""
+        import sys
+
+        import rlinf.config as cfg_mod
+
+        placement = SimpleNamespace(rollout_num_model_instances=2)
+        monkeypatch.setitem(sys.modules, "sglang_router", SimpleNamespace())
+        monkeypatch.setattr(cfg_mod, "Cluster", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            cfg_mod, "ModelParallelComponentPlacement", lambda *a, **kw: placement
+        )
+        base_cfg = {
+            "cluster": {},
+            "runner": {"async_mode": True},
+            "actor": {"training_backend": "fsdp"},
+            "reward": {"reward_type": "custom_agent"},
+            "agentloop": {"agentic_tokenizer": "glm47"},
+            "rollout": {
+                "sglang": {"backend_type": "server", "tool_call_parser": "hermes"},
+                "pause_mode": "retract",
+            },
+            "session_server": {"enable": True},
+        }
+        with pytest.raises(ValueError, match="tool_call_parser='glm47'"):
+            validate_session_server_cfg(OmegaConf.create(base_cfg))
+        with pytest.raises(ValueError, match="tool_call_parser='glm47'"):
+            cfg_mod.validate_searchr1_cfg(OmegaConf.create(base_cfg))
+
+        matched_cfg = OmegaConf.create(base_cfg)
+        matched_cfg.rollout.sglang.tool_call_parser = "glm47"
+        assert validate_session_server_cfg(matched_cfg).session_server.enable is True
+        assert cfg_mod.validate_searchr1_cfg(matched_cfg) is matched_cfg
+
 
 class TestAssembly:
     def test_assembled_result_matches_get_rollout_result(self):

@@ -53,7 +53,6 @@ class CodingOnlineRLRunner:
         """"""
         self.cfg = cfg
         self.component_placement = placement
-        self.is_pipeline = self.component_placement.is_disaggregated
         self.has_dedicated_inference = inference is not None
 
         # Workers

@@ -22,12 +22,27 @@ produces one sequence — the layout the agent loop's
 ``get_rollout_result`` produced on the channel path.
 """
 
-from typing import Any
+from typing import Any, Optional
 
-from rlinf.data.schema.reasoning_results import DynamicRolloutResult
-from rlinf.workers.rollout.session_server.payload import GroupPayload, PayloadPart
+from omegaconf import DictConfig
 
-__all__ = ["assemble_group_payload", "verify_group_assembly"]
+from rlinf.data.schema.reasoning_results import (
+    DynamicRolloutResult,
+    GroupDelivery,
+    RolloutResult,
+)
+from rlinf.scheduler import Channel
+from rlinf.workers.rollout.session_server.payload import (
+    GroupPayload,
+    PayloadPart,
+    payload_channel_for,
+)
+
+__all__ = [
+    "assemble_group_payload",
+    "receive_rollout_result",
+    "verify_group_assembly",
+]
 
 # Compared against the agent-side reference, field by field. The version
 # fields stay out: the reference carries None for them (the agent never saw
@@ -261,3 +276,37 @@ def verify_group_assembly(result: DynamicRolloutResult, verify: dict, cfg) -> No
                 f"with the caller's override: forwarded {got!r}, expected "
                 f"{expected!r}"
             )
+
+
+def receive_rollout_result(
+    channel: Channel,
+    payload_channels: Optional[list[Channel]],
+    cfg: DictConfig,
+) -> RolloutResult | DynamicRolloutResult:
+    """Fetch one rollout result from ``channel``, assembling a GroupDelivery if needed.
+
+    Inline results pass through unchanged. For a :class:`GroupDelivery`, the
+    payload is fetched from its payload channel, removed from that key,
+    assembled into a :class:`DynamicRolloutResult`, and verified when the
+    finalize part carries a verify record.
+    """
+    result = channel.get()
+    if not isinstance(result, GroupDelivery):
+        return result
+    assert payload_channels is not None, (
+        "a group arrived as a GroupDelivery but no payload channels were "
+        "passed to run_training: run_training must receive them when the "
+        "session server is enabled."
+    )
+    payload_channel = payload_channel_for(result.payload_ref.locator, payload_channels)
+    payload = payload_channel.get(key=result.payload_ref.key)
+    # Remove the now-empty keyed queue; the synchronous get above has already
+    # consumed the single delivery for this group.
+    payload_channel.remove_key(key=result.payload_ref.key, async_op=True)
+    assembled = assemble_group_payload(payload, not cfg.algorithm.recompute_logprobs)
+    assembled.group_id = result.group_id
+    assembled.task_name = result.task_name
+    verify = next(part.verify for part in payload.parts if part.last)
+    if verify is not None:
+        verify_group_assembly(assembled, verify, cfg)
+    return assembled

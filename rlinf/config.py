@@ -2359,6 +2359,31 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def _validate_agentic_tokenizer_cfg(cfg: DictConfig) -> None:
+    """Validate that agentloop.agentic_tokenizer matches rollout.sglang.tool_call_parser."""
+    agentic_tokenizer = OmegaConf.select(
+        cfg, "agentloop.agentic_tokenizer", default=None
+    )
+    if agentic_tokenizer is None or agentic_tokenizer == "default":
+        return
+    # Imported lazily: a top-level import would be circular, since
+    # rlinf.agents imports rlinf.models, which imports rlinf.config.
+    from rlinf.agents.tokenization.agentic_tokenizer import (
+        agentic_tokenizer_tool_call_parser,
+    )
+
+    expected_parser = agentic_tokenizer_tool_call_parser(agentic_tokenizer)
+    actual_parser = OmegaConf.select(
+        cfg, "rollout.sglang.tool_call_parser", default=None
+    )
+    if expected_parser is not None and actual_parser != expected_parser:
+        raise ValueError(
+            f"agentloop.agentic_tokenizer={agentic_tokenizer!r} binds "
+            f"tool_call_parser={expected_parser!r}, but "
+            f"rollout.sglang.tool_call_parser={actual_parser!r}."
+        )
+
+
 def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
     """Validate SearchR1 multi-agent training requirements before launch."""
     expected_adv_type = (
@@ -2374,6 +2399,7 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             f"Multi-turn training requires algorithm.adv_type={expected_adv_type!r}, "
             f"got {cfg.algorithm.adv_type!r}."
         )
+    _validate_agentic_tokenizer_cfg(cfg)
     reward_cfg = cfg.get("reward", None)
     if reward_cfg is None or reward_cfg.get("reward_type", None) != "searchr1":
         return cfg
@@ -2407,23 +2433,6 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             "data.apply_chat_template is False: the kwargs only reach the chat "
             "template through dataset prompt rendering. Set "
             "data.apply_chat_template: True or remove the kwargs."
-        )
-    agentic_tokenizer = cfg.agentloop.get("agentic_tokenizer", "default")
-    # Imported lazily: a top-level import would be circular, since
-    # rlinf.agents imports rlinf.models, which imports rlinf.config.
-    from rlinf.agents.tokenization.agentic_tokenizer import (
-        agentic_tokenizer_tool_call_parser,
-    )
-
-    expected_parser = agentic_tokenizer_tool_call_parser(agentic_tokenizer)
-    actual_parser = OmegaConf.select(
-        cfg, "rollout.sglang.tool_call_parser", default=None
-    )
-    if expected_parser is not None and actual_parser != expected_parser:
-        raise ValueError(
-            f"agentloop.agentic_tokenizer={agentic_tokenizer!r} binds "
-            f"tool_call_parser={expected_parser!r}, but "
-            f"rollout.sglang.tool_call_parser={actual_parser!r}."
         )
 
     if cfg.critic.get("use_critic_model", False):
@@ -2485,202 +2494,207 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             "to share the same GPUs."
         )
     if not component_placement.is_collocated:
-        # The Megatron MA actor gathers the full rollout batch before
-        # training, so it also runs under disaggregated placement. The FSDP
-        # MA actor still asserts collocated placement internally.
-        if cfg.actor.training_backend != "megatron":
+        # Both the Megatron and FSDP multi-agent actors gather the full
+        # rollout batch before training, so they also run under disaggregated
+        # placement.
+        if cfg.actor.training_backend not in ("megatron", "fsdp"):
             raise ValueError(
                 "SearchR1 multi-agent actors support only collocated component "
-                "placement unless actor.training_backend is megatron."
+                "placement unless actor.training_backend is 'megatron' or 'fsdp', "
+                f"found {cfg.actor.training_backend!r}."
             )
-    if cfg.runner.get("async_mode", False):
-        if not component_placement.is_disaggregated:
-            raise ValueError(
-                "SearchR1 async training requires the actor and the rollout "
-                "to be deployed on separate GPUs (disaggregated placement); "
-                "the current placement mode is "
-                f"{component_placement.placement_mode.name}."
-            )
-        # Deliberately no setdefault for backend_type: this runs after
-        # validate_sglang_cfg, and filling a default here would bypass its
-        # mutual-exclusion check between serving_mode and the server backend.
-        rollout_backend = cfg.rollout.get("rollout_backend", None)
-        backend_type = OmegaConf.select(
-            cfg, "rollout.sglang.backend_type", default="engine"
+    return cfg
+
+
+def validate_async_agent_cfg(cfg: DictConfig) -> DictConfig:
+    """Validate generic async agentic training settings and fill rollout_buffer defaults."""
+    if not cfg.runner.get("async_mode", False):
+        return cfg
+
+    component_placement = ModelParallelComponentPlacement(cfg, Cluster())
+    if not component_placement.is_disaggregated:
+        raise ValueError(
+            "Async agent training requires the actor and the rollout "
+            "to be deployed on separate GPUs (disaggregated placement); "
+            "the current placement mode is "
+            f"{component_placement.placement_mode.name}."
         )
-        if rollout_backend != "sglang" or backend_type != "server":
-            raise ValueError(
-                "SearchR1 async training requires "
-                "rollout.rollout_backend: sglang with "
-                "rollout.sglang.backend_type: server: the weight sync "
-                "pauses and resumes generation through the SGLang server "
-                f"HTTP interface. Found rollout.rollout_backend="
-                f"{rollout_backend!r} and rollout.sglang.backend_type="
-                f"{backend_type!r}."
-            )
-        if cfg.algorithm.get("staleness_threshold", None) is not None:
-            raise ValueError(
-                f"algorithm.staleness_threshold is the embodied async "
-                f"runner's admission setting and is not used by async agent "
-                f"training (found {cfg.algorithm.staleness_threshold}). "
-                "Admission is controlled by rollout_buffer."
-                "max_inflight_groups and rollout_buffer.max_buffered_groups; "
-                "how stale training data may be is bounded by "
-                "rollout_buffer.max_buffered_groups and agentloop."
-                "max_actor_accept_staleness. Remove the field."
-            )
-        task_name = OmegaConf.select(cfg, "agentloop.task_name", default=None)
-        if task_name is None:
-            raise ValueError(
-                "agentloop.task_name is required in async training: it keys "
-                "the rollout buffer's per-task state and is stamped on "
-                "every rollout request. Set it to the agent task's name "
-                "(e.g. 'searchr1')."
-            )
-        max_actor_accept_staleness = OmegaConf.select(
-            cfg, "agentloop.max_actor_accept_staleness", default=None
+    # Deliberately no setdefault for backend_type: this runs after
+    # validate_sglang_cfg, and filling a default here would bypass its
+    # mutual-exclusion check between serving_mode and the server backend.
+    rollout_backend = cfg.rollout.get("rollout_backend", None)
+    backend_type = OmegaConf.select(
+        cfg, "rollout.sglang.backend_type", default="engine"
+    )
+    if rollout_backend != "sglang" or backend_type != "server":
+        raise ValueError(
+            "Async agent training requires "
+            "rollout.rollout_backend: sglang with "
+            "rollout.sglang.backend_type: server: the weight sync "
+            "pauses and resumes generation through the SGLang server "
+            f"HTTP interface. Found rollout.rollout_backend="
+            f"{rollout_backend!r} and rollout.sglang.backend_type="
+            f"{backend_type!r}."
         )
-        if max_actor_accept_staleness is not None and (max_actor_accept_staleness < 0):
-            raise ValueError(
-                f"agentloop.max_actor_accept_staleness must be >= 0, found "
-                f"{max_actor_accept_staleness}: a negative value would drop "
-                "every group as stale."
-            )
-        # Defaults are set here once; the async runner and the rollout
-        # buffer read the fields without further fallbacks.
-        with open_dict(cfg):
-            if cfg.rollout.get("pause_mode", None) is None:
-                cfg.rollout.pause_mode = "retract"
-            rollout_batch_size = cfg.data.get("rollout_batch_size", None)
-            max_running_requests = cfg.rollout.get("max_running_requests", None)
-            if cfg.get("rollout_buffer", None) is None:
-                cfg.rollout_buffer = {}
-            if cfg.rollout_buffer.get("max_dropped_groups_per_step", None) is None:
-                if rollout_batch_size is not None:
-                    cfg.rollout_buffer.max_dropped_groups_per_step = (
-                        10 * rollout_batch_size
-                    )
-            if cfg.rollout_buffer.get("max_inflight_groups", None) is None:
-                if rollout_batch_size is not None and max_running_requests is not None:
-                    group_size = cfg.algorithm.group_size
-                    num_instances = component_placement.rollout_num_model_instances
-                    # In-flight groups' trajectories run at about 1.2x the
-                    # engine capacity: the margin covers in-flight groups
-                    # whose trajectories are waiting on tools or on the
-                    # group's slowest member.
-                    cfg.rollout_buffer.max_inflight_groups = math.ceil(
-                        max_running_requests * num_instances * 1.2 / group_size
-                    )
-            if cfg.rollout_buffer.get("max_buffered_groups", None) is None:
-                if rollout_batch_size is not None:
-                    cfg.rollout_buffer.max_buffered_groups = 2 * rollout_batch_size
-        if cfg.rollout_buffer.get("max_inflight_groups", None) is None:
-            raise ValueError(
-                "rollout_buffer.max_inflight_groups is not set and cannot "
-                "be derived: async training derives it from "
-                "rollout.max_running_requests. Set rollout."
-                "max_running_requests or rollout_buffer.max_inflight_groups."
-            )
-        if cfg.rollout_buffer.max_inflight_groups < 1:
-            raise ValueError(
-                f"rollout_buffer.max_inflight_groups must be >= 1, found "
-                f"{cfg.rollout_buffer.max_inflight_groups}."
-            )
+    if cfg.algorithm.get("staleness_threshold", None) is not None:
+        raise ValueError(
+            f"algorithm.staleness_threshold is the embodied async "
+            f"runner's admission setting and is not used by async agent "
+            f"training (found {cfg.algorithm.staleness_threshold}). "
+            "Admission is controlled by rollout_buffer."
+            "max_inflight_groups and rollout_buffer.max_buffered_groups; "
+            "how stale training data may be is bounded by "
+            "rollout_buffer.max_buffered_groups and agentloop."
+            "max_actor_accept_staleness. Remove the field."
+        )
+    task_name = OmegaConf.select(cfg, "agentloop.task_name", default=None)
+    if task_name is None:
+        raise ValueError(
+            "agentloop.task_name is required in async training: it keys "
+            "the rollout buffer's per-task state and is stamped on "
+            "every rollout request. Set it to the agent task's name "
+            "(e.g. 'searchr1')."
+        )
+    max_actor_accept_staleness = OmegaConf.select(
+        cfg, "agentloop.max_actor_accept_staleness", default=None
+    )
+    if max_actor_accept_staleness is not None and (max_actor_accept_staleness < 0):
+        raise ValueError(
+            f"agentloop.max_actor_accept_staleness must be >= 0, found "
+            f"{max_actor_accept_staleness}: a negative value would drop "
+            "every group as stale."
+        )
+    # Defaults are set here once; the async runner and the rollout
+    # buffer read the fields without further fallbacks.
+    with open_dict(cfg):
+        if cfg.rollout.get("pause_mode", None) is None:
+            cfg.rollout.pause_mode = "retract"
         rollout_batch_size = cfg.data.get("rollout_batch_size", None)
-        if rollout_batch_size is not None and (
-            cfg.rollout_buffer.max_buffered_groups < rollout_batch_size
-        ):
+        max_running_requests = cfg.rollout.get("max_running_requests", None)
+        if cfg.get("rollout_buffer", None) is None:
+            cfg.rollout_buffer = {}
+        if cfg.rollout_buffer.get("max_dropped_groups_per_step", None) is None:
+            if rollout_batch_size is not None:
+                cfg.rollout_buffer.max_dropped_groups_per_step = 10 * rollout_batch_size
+        if cfg.rollout_buffer.get("max_inflight_groups", None) is None:
+            if rollout_batch_size is not None and max_running_requests is not None:
+                group_size = cfg.algorithm.group_size
+                num_instances = component_placement.rollout_num_model_instances
+                # In-flight groups' trajectories run at about 1.2x the
+                # engine capacity: the margin covers in-flight groups
+                # whose trajectories are waiting on tools or on the
+                # group's slowest member.
+                cfg.rollout_buffer.max_inflight_groups = math.ceil(
+                    max_running_requests * num_instances * 1.2 / group_size
+                )
+        if cfg.rollout_buffer.get("max_buffered_groups", None) is None:
+            if rollout_batch_size is not None:
+                cfg.rollout_buffer.max_buffered_groups = 2 * rollout_batch_size
+    if cfg.rollout_buffer.get("max_inflight_groups", None) is None:
+        raise ValueError(
+            "rollout_buffer.max_inflight_groups is not set and cannot "
+            "be derived: async training derives it from "
+            "rollout.max_running_requests. Set rollout."
+            "max_running_requests or rollout_buffer.max_inflight_groups."
+        )
+    if cfg.rollout_buffer.max_inflight_groups < 1:
+        raise ValueError(
+            f"rollout_buffer.max_inflight_groups must be >= 1, found "
+            f"{cfg.rollout_buffer.max_inflight_groups}."
+        )
+    rollout_batch_size = cfg.data.get("rollout_batch_size", None)
+    if rollout_batch_size is not None and (
+        cfg.rollout_buffer.max_buffered_groups < rollout_batch_size
+    ):
+        raise ValueError(
+            f"rollout_buffer.max_buffered_groups "
+            f"({cfg.rollout_buffer.max_buffered_groups}) must be >= "
+            f"data.rollout_batch_size ({rollout_batch_size}): a smaller "
+            "buffer can never hold a full training batch."
+        )
+    if cfg.rollout_buffer.max_dropped_groups_per_step < 1:
+        raise ValueError(
+            f"rollout_buffer.max_dropped_groups_per_step must be >= 1, "
+            f"found {cfg.rollout_buffer.max_dropped_groups_per_step}."
+        )
+    if (
+        max_actor_accept_staleness is not None
+        and rollout_batch_size is not None
+        and max_actor_accept_staleness
+        < math.ceil(cfg.rollout_buffer.max_buffered_groups / rollout_batch_size)
+    ):
+        # When the actor is the bottleneck, the oldest buffered group
+        # has waited about max_buffered_groups / rollout_batch_size
+        # steps; a stricter staleness cap would systematically drop it
+        # and waste the generate compute behind it.
+        logging.warning(
+            f"agentloop.max_actor_accept_staleness "
+            f"({max_actor_accept_staleness}) is below the buffer's "
+            f"depth in steps (rollout_buffer.max_buffered_groups "
+            f"{cfg.rollout_buffer.max_buffered_groups} / "
+            f"data.rollout_batch_size {rollout_batch_size}). When "
+            "training is the bottleneck, the oldest buffered groups "
+            "have waited about that many steps and will be dropped "
+            "as stale, wasting the generate compute behind them; the "
+            "actor only waits for new groups when so many are dropped "
+            "that the buffer cannot fill a batch. Raise "
+            "max_actor_accept_staleness or lower max_buffered_groups."
+        )
+    down_sampling_cfg = cfg.algorithm.get("down_sampling", None) or {}
+    if down_sampling_cfg.get("do_down_sampling", False):
+        down_sampling_config = down_sampling_cfg.get("down_sampling_config", None) or {}
+        if not down_sampling_config.get("reject_equal_reward", False):
             raise ValueError(
-                f"rollout_buffer.max_buffered_groups "
-                f"({cfg.rollout_buffer.max_buffered_groups}) must be >= "
-                f"data.rollout_batch_size ({rollout_batch_size}): a smaller "
-                "buffer can never hold a full training batch."
+                "Async runs support only reject_equal_reward under "
+                "algorithm.down_sampling.down_sampling_config: group "
+                "filtering runs in the RolloutBufferWorker and "
+                "within-group down sampling is not implemented there."
             )
-        if cfg.rollout_buffer.max_dropped_groups_per_step < 1:
+        unsupported = {
+            key: value
+            for key, value in down_sampling_config.items()
+            if key != "reject_equal_reward" and value
+        }
+        if unsupported:
             raise ValueError(
-                f"rollout_buffer.max_dropped_groups_per_step must be >= 1, "
-                f"found {cfg.rollout_buffer.max_dropped_groups_per_step}."
+                f"Async runs support only reject_equal_reward under "
+                f"algorithm.down_sampling.down_sampling_config; found "
+                f"enabled options {sorted(unsupported.keys())}. Group "
+                "filtering runs in the RolloutBufferWorker and "
+                "within-group down sampling is not implemented there."
             )
-        if (
-            max_actor_accept_staleness is not None
-            and rollout_batch_size is not None
-            and max_actor_accept_staleness
-            < math.ceil(cfg.rollout_buffer.max_buffered_groups / rollout_batch_size)
-        ):
-            # When the actor is the bottleneck, the oldest buffered group
-            # has waited about max_buffered_groups / rollout_batch_size
-            # steps; a stricter staleness cap would systematically drop it
-            # and waste the generate compute behind it.
-            logging.warning(
-                f"agentloop.max_actor_accept_staleness "
-                f"({max_actor_accept_staleness}) is below the buffer's "
-                f"depth in steps (rollout_buffer.max_buffered_groups "
-                f"{cfg.rollout_buffer.max_buffered_groups} / "
-                f"data.rollout_batch_size {rollout_batch_size}). When "
-                "training is the bottleneck, the oldest buffered groups "
-                "have waited about that many steps and will be dropped "
-                "as stale, wasting the generate compute behind them; the "
-                "actor only waits for new groups when so many are dropped "
-                "that the buffer cannot fill a batch. Raise "
-                "max_actor_accept_staleness or lower max_buffered_groups."
-            )
-        down_sampling_cfg = cfg.algorithm.get("down_sampling", None) or {}
-        if down_sampling_cfg.get("do_down_sampling", False):
-            down_sampling_config = (
-                down_sampling_cfg.get("down_sampling_config", None) or {}
-            )
-            if not down_sampling_config.get("reject_equal_reward", False):
-                raise ValueError(
-                    "Async runs support only reject_equal_reward under "
-                    "algorithm.down_sampling.down_sampling_config: group "
-                    "filtering runs in the RolloutBufferWorker and "
-                    "within-group down sampling is not implemented there."
-                )
-            unsupported = {
-                key: value
-                for key, value in down_sampling_config.items()
-                if key != "reject_equal_reward" and value
-            }
-            if unsupported:
-                raise ValueError(
-                    f"Async runs support only reject_equal_reward under "
-                    f"algorithm.down_sampling.down_sampling_config; found "
-                    f"enabled options {sorted(unsupported.keys())}. Group "
-                    "filtering runs in the RolloutBufferWorker and "
-                    "within-group down sampling is not implemented there."
-                )
-            if cfg.runner.get("max_steps", -1) < 0:
-                raise ValueError(
-                    "algorithm.down_sampling.down_sampling_config."
-                    "reject_equal_reward requires an explicit "
-                    "runner.max_steps: dropped groups consume prompts "
-                    "faster than steps, so the epoch-derived step count "
-                    "is wrong."
-                )
-        if cfg.rollout.pause_mode not in ("in_place", "retract", "drain"):
+        if cfg.runner.get("max_steps", -1) < 0:
             raise ValueError(
-                f"rollout.pause_mode must be one of in_place/retract/drain, "
-                f"found {cfg.rollout.pause_mode!r}."
+                "algorithm.down_sampling.down_sampling_config."
+                "reject_equal_reward requires an explicit "
+                "runner.max_steps: dropped groups consume prompts "
+                "faster than steps, so the epoch-derived step count "
+                "is wrong."
             )
-        if cfg.data.get("rollout_batch_size", None) is not None:
-            actor_dp_size = component_placement.actor_dp_size
-            if cfg.data.rollout_batch_size % actor_dp_size != 0:
-                raise ValueError(
-                    f"data.rollout_batch_size ({cfg.data.rollout_batch_size}) "
-                    f"must be divisible by the actor data-parallel size "
-                    f"({actor_dp_size}): each DP rank takes "
-                    f"rollout_batch_size // {actor_dp_size} groups per step, "
-                    "and a remainder would leave groups behind in "
-                    "rollout_channel to be picked up by the next step."
-                )
-        if cfg.rollout.pause_mode == "in_place":
-            logging.warning(
-                "rollout.pause_mode=in_place keeps the prefix cache across "
-                "weight syncs, so later requests reuse prefix KV computed "
-                "with older weights; this staleness is not reflected in "
-                "version_start/version_end. retract is recommended for "
-                "training."
+    if cfg.rollout.pause_mode not in ("in_place", "retract", "drain"):
+        raise ValueError(
+            f"rollout.pause_mode must be one of in_place/retract/drain, "
+            f"found {cfg.rollout.pause_mode!r}."
+        )
+    if cfg.data.get("rollout_batch_size", None) is not None:
+        actor_dp_size = component_placement.actor_dp_size
+        if cfg.data.rollout_batch_size % actor_dp_size != 0:
+            raise ValueError(
+                f"data.rollout_batch_size ({cfg.data.rollout_batch_size}) "
+                f"must be divisible by the actor data-parallel size "
+                f"({actor_dp_size}): each DP rank takes "
+                f"rollout_batch_size // {actor_dp_size} groups per step, "
+                "and a remainder would leave groups behind in "
+                "rollout_channel to be picked up by the next step."
             )
+    if cfg.rollout.pause_mode == "in_place":
+        logging.warning(
+            "rollout.pause_mode=in_place keeps the prefix cache across "
+            "weight syncs, so later requests reuse prefix KV computed "
+            "with older weights; this staleness is not reflected in "
+            "version_start/version_end. retract is recommended for "
+            "training."
+        )
     return cfg
 
 
@@ -2744,26 +2758,19 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
     if not cfg.session_server.enable:
         return cfg
 
-    reward_cfg = cfg.get("reward", None)
-    reward_type = (
-        reward_cfg.get("reward_type", None) if reward_cfg is not None else None
-    )
-    if reward_type != "searchr1":
-        raise ValueError(
-            f"session_server.enable requires reward.reward_type 'searchr1', "
-            f"found {reward_type!r}."
-        )
+    _validate_agentic_tokenizer_cfg(cfg)
+
     if not cfg.runner.get("async_mode", False):
         raise ValueError(
             "session_server.enable requires runner.async_mode: only the "
             "async runner drives the session servers (the synchronous and "
             "eval runners keep the generate channels)."
         )
-    if cfg.actor.training_backend != "megatron":
+    if cfg.actor.training_backend not in ("megatron", "fsdp"):
         raise ValueError(
-            f"session_server.enable requires actor.training_backend "
-            f"'megatron' (the session payload is assembled by "
-            f"MAMegatronActor), found {cfg.actor.training_backend!r}."
+            f"session_server.enable requires actor.training_backend to be "
+            f"'megatron' or 'fsdp' (the session payload is assembled by "
+            f"MAMegatronActor or MAFSDPActor), found {cfg.actor.training_backend!r}."
         )
     backend_type = OmegaConf.select(
         cfg, "rollout.sglang.backend_type", default="engine"
@@ -3140,6 +3147,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     if cfg.runner.task_type == "reasoning":
         cfg = validate_searchr1_cfg(cfg)
 
+    cfg = validate_async_agent_cfg(cfg)
     cfg = validate_session_server_cfg(cfg)
     return cfg
 

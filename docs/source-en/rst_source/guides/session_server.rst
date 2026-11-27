@@ -40,11 +40,9 @@ Startup config validation requires:
    * - Setting / Package
      - Requirement
    * - ``runner.async_mode`` & Actor
-     - ``True`` with a Megatron actor
+     - ``True`` with a Megatron or FSDP actor
    * - ``rollout.sglang.backend_type``
      - ``server``
-   * - ``reward.reward_type``
-     - ``searchr1`` (Search-R1 agent)
    * - ``rollout.pause_mode``
      - ``retract`` or ``in_place`` (not ``drain``)
    * - ``cluster.auto_scheduler``
@@ -65,6 +63,15 @@ Start a 2-node Ray cluster (:doc:`multi_node`) and the retrieval server (:doc:`S
      'data.train_data_paths=["./data/searchr1_train.jsonl"]' \
      rollout.model.model_path=./models/Qwen2.5-3B-Instruct \
      tools.search.server_addr=0.0.0.0:8000
+
+For a single-node 8-GPU run without multi-node Ray setup, use ``examples/agent/searchr1/config/train_qwen2.5_fsdp_async_session_server.yaml`` (FSDP2 actor on GPUs 0–3, 4 TP1 SGLang rollout instances on GPUs 4–7):
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp_async_session_server \
+     'data.train_data_paths=["./data/searchr1_train.jsonl"]' \
+     rollout.model.model_path=./models/Qwen2.5-3B-Instruct \
+     tools.search.server_addr=localhost:8000
 
 How It Works & Routing
 ----------------------
@@ -247,7 +254,7 @@ When onboarding a new token-ID agent, run a short check with ``session_server.ve
       * - Area
         - Limitation
       * - Runner & backend
-        - Requires the async runner, Megatron actor, SGLang server backend, and Search-R1 agent. To wire another runner, see :doc:`/rst_source/extending/session_server_runner`.
+        - Requires the async runner, Megatron or FSDP actor, and SGLang server backend. To wire another runner, see :doc:`/rst_source/extending/session_server_runner`.
       * - Chat streaming
         - No token-by-token streaming: ``stream: true`` returns the full turn in one chunk followed by ``[DONE]``.
       * - Chat parameters

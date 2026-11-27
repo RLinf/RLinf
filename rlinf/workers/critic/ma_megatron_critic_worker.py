@@ -49,13 +49,19 @@ class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
         role: str = "critic",
     ) -> None:
         super().__init__(cfg, placement, role)
-        assert cfg.agentloop.is_dynamic_rollout_batch and not self.is_pipeline, (
-            "Multi-agent critic requires dynamic rollout batches and synchronous execution."
+        assert cfg.agentloop.is_dynamic_rollout_batch and placement.is_collocated, (
+            "Multi-agent critic requires dynamic rollout batches and collocated placement."
         )
         assert self.enable_dp_load_balance, (
             "Multi-agent critic requires enable_dp_load_balance=True."
         )
         self.pack_traj = cfg.actor.get("pack_traj", True)
+
+    def _use_streaming_pipeline(
+        self, placement: ModelParallelComponentPlacement
+    ) -> bool:
+        """MAMegatronCritic gathers the full step batch instead of streaming chunks."""
+        return False
 
     def get_forward_step_func(self):
         """Align full-sequence state values with generated action tokens."""

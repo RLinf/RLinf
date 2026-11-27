@@ -137,12 +137,12 @@ Search-R1 强化学习训练
               --load-path "${CKPT_PATH_MF}" --save-path "${CKPT_PATH_HF}" --model qwen_2.5_3b --use-gpu-num 0 --process-num 16
             # FSDP
             python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
-              convertor.train_config_path=/path/to/config.yaml \
-              convertor.ckpt_path=/path/to/checkpoints/global_step_xxx/actor/model_state_dict/full_weights.pt \
-              convertor.save_path=/path/to/hf_model
+              convertor.train_config_path=./examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml \
+              convertor.ckpt_path=./logs/checkpoints/global_step_xxx/actor/model_state_dict/full_weights.pt \
+              convertor.save_path=./hf_model
             # 评测导出的 HF 模型
             bash examples/agent/searchr1/run_eval.sh eval_qwen2.5 \
-              rollout.model.model_path=/path/to/hf_model 'data.val_data_paths=["./Search-R1-Data/eval.jsonl"]'
+              rollout.model.model_path=./hf_model 'data.val_data_paths=["./Search-R1-Data/eval.jsonl"]'
 
    .. tab-item:: 3. GLM-4.7-Flash
       :sync: searchr1-glm
@@ -207,7 +207,7 @@ Search-R1 强化学习训练
            'data.train_data_paths=["./Search-R1-Data/searchr1_train_glm.jsonl"]' \
            tools.search.server_addr=localhost:8000
 
-      ``max_inflight_groups``、``max_buffered_groups``、``max_actor_accept_staleness`` 与 ``rollout.pause_mode``\ （retract、in_place、drain）的调优原理见 :doc:`异步 Agent RL </rst_source/guides/async_agentic>`。如需启用 Session Server，追加 ``session_server.enable=true``\ （要求见 :doc:`Session Server </rst_source/guides/session_server>`\ ）。
+      ``max_inflight_groups``、``max_buffered_groups``、``max_actor_accept_staleness`` 与 ``rollout.pause_mode``\ （retract、in_place、drain）的调优原理见 :doc:`异步 Agent RL </rst_source/guides/async_agentic>`。如需启用 Session Server（含单机 8 卡 FSDP2 示例），参见 :doc:`Session Server </rst_source/guides/session_server>`。
 
       .. dropdown:: 异步指标、断点续训与限制
 
@@ -215,7 +215,7 @@ Search-R1 强化学习训练
 
          **断点续训：** checkpoint 将 dataloader 进度保存在 ``data/data.pt``，恢复时跳过存档前已投放的 prompt（Qwen 默认配置实测跳过 192 个：在途与缓冲 128 个加预取 64 个）。
 
-         **限制：** 需配合 Megatron actor、多轮 agent loop、SGLang server 后端与分离式 placement 使用；直接使用 rollout logprob（``algorithm.recompute_logprobs: False``）；开启 ``reject_equal_reward`` 时需监控 ``dropped_groups``\ （``max_dropped_groups_per_step`` 默认为 10 × batch size）。
+         **限制：** 需配合 Megatron 或 FSDP actor、多轮 agent loop、SGLang server 后端与分离式 placement 使用；直接使用 rollout logprob（``algorithm.recompute_logprobs: False``）；开启 ``reject_equal_reward`` 时需监控 ``dropped_groups``\ （``max_dropped_groups_per_step`` 默认为 10 × batch size）。
 
 可视化与结果
 ------------

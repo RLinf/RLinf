@@ -612,6 +612,12 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
     @property
     def is_pipeline(self):
+        """Whether this placement supports intra-step streaming pipeline execution.
+
+        True when components run on separate GPUs (disaggregated or auto).
+        Placement-only checks (offload, IPC vs NCCL sync, dedicated inference)
+        should use ``is_collocated`` or ``is_disaggregated`` directly.
+        """
         return self.is_disaggregated or self.is_auto
 
     def has_dedicated_inference_for_role(self, role):
@@ -950,6 +956,7 @@ class ModelParallelEvalComponentPlacement(ComponentPlacement):
 
     @property
     def is_pipeline(self):
+        """Hybrid placement is always collocated and never streams intra-step."""
         return False
 
     @property

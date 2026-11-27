@@ -40,11 +40,9 @@ Session Server 直接在 rollout 节点上收集多轮 Agent 轨迹并装配为�
    * - 配置项 / 依赖
      - 要求
    * - ``runner.async_mode`` 与 Actor
-     - ``True``，且 Actor 使用 Megatron
+     - ``True``，且 Actor 使用 Megatron 或 FSDP
    * - ``rollout.sglang.backend_type``
      - ``server``
-   * - ``reward.reward_type``
-     - ``searchr1``\ （Search-R1 Agent）
    * - ``rollout.pause_mode``
      - ``retract`` 或 ``in_place``\ （不支持 ``drain``）
    * - ``cluster.auto_scheduler``
@@ -65,6 +63,15 @@ Session Server 直接在 rollout 节点上收集多轮 Agent 轨迹并装配为�
      'data.train_data_paths=["./data/searchr1_train.jsonl"]' \
      rollout.model.model_path=./models/Qwen2.5-3B-Instruct \
      tools.search.server_addr=0.0.0.0:8000
+
+单机 8 卡运行（无需多节点 Ray 集群）可直接用 ``examples/agent/searchr1/config/train_qwen2.5_fsdp_async_session_server.yaml``\ （GPU 0–3 运行 FSDP2 Actor，GPU 4–7 运行 4 个 TP1 SGLang Rollout 实例）：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp_async_session_server \
+     'data.train_data_paths=["./data/searchr1_train.jsonl"]' \
+     rollout.model.model_path=./models/Qwen2.5-3B-Instruct \
+     tools.search.server_addr=localhost:8000
 
 工作原理与路由策略
 ------------------
@@ -247,7 +254,7 @@ Session Server 将调度（**控制面**）与轨迹存储（**数据面**）分
       * - 维度
         - 限制说明
       * - Runner 与后端
-        - 仅支持异步 Runner、Megatron Actor、SGLang Server 后端与 Search-R1 Agent；接入自定义 Runner 见 :doc:`/rst_source/extending/session_server_runner`。
+        - 仅支持异步 Runner、Megatron 或 FSDP Actor 与 SGLang Server 后端；接入自定义 Runner 见 :doc:`/rst_source/extending/session_server_runner`。
       * - 流式输出
         - 不支持逐 token 流式返回：``stream: true`` 时整轮结果以单个 chunk 返回，随后发送 ``[DONE]``。
       * - Chat 参数

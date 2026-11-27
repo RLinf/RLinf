@@ -118,7 +118,7 @@ Client contract:
 3. Launch and Verify
 --------------------
 
-Launch your chat agent loop class in your entry script the same way ``examples/agent/searchr1/train.py`` launches its agent loop worker, and keep ``reward.reward_type: searchr1`` in the config to satisfy startup validation (even when your worker scores trajectories itself).
+Launch your chat agent loop class in your entry script the same way ``examples/agent/searchr1/train.py`` launches its agent loop worker.
 
 Monitor training under ``rollout/session_server/`` (see :ref:`Metrics to Watch <session-server-metrics>`):
 

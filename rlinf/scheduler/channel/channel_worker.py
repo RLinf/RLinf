@@ -557,13 +557,14 @@ class ChannelWorker(Worker):
                 weighted_item = WeightedItem(weight=0, item=None)
         else:
             weighted_item: WeightedItem = await self._take(key, consumer, False)
-        self.send(
+        send_work = self.send(
             weighted_item.item,
             dst_addr.root_group_name,
             dst_addr.rank_path,
             async_op=True,
             piggyback_payload=query_id,
         )
+        await send_work.async_wait()
 
     async def get_via_ray(self, key: Any = DEFAULT_KEY, nowait: bool = False) -> Any:
         """Get an item from the channel queue via Ray's communication. Useful when there is no worker.
@@ -611,13 +612,14 @@ class ChannelWorker(Worker):
             if current_weight >= target_weight:
                 break
 
-        self.send(
+        send_work = self.send(
             batch,
             dst_addr.root_group_name,
             dst_addr.rank_path,
             async_op=True,
             piggyback_payload=query_id,
         )
+        await send_work.async_wait()
 
     async def get_batch_via_ray(
         self, target_weight: int, key: Any = DEFAULT_KEY
