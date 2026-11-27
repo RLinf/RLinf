@@ -23,6 +23,7 @@ from rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf import (
 )
 from rlinf.utils.ckpt_convertor.fsdp_convertor.utils import (
     copy_model_config_and_code,
+    save_state_dict_sharded_safetensors,
 )
 from rlinf.utils.ckpt_convertor.openpi.jax_to_openpi import _unwrap_value_leaves
 
@@ -72,6 +73,7 @@ def test_copy_model_config_and_code_preserves_chat_template_and_merges(tmp_path)
     (src / "chat_template.jinja").write_text("{{ messages }}", encoding="utf-8")
     (src / "merges.txt").write_text("#version: 0.2\n", encoding="utf-8")
     (src / "model.safetensors").write_bytes(b"weights")
+    (src / "model.safetensors.index.json").write_text("{}", encoding="utf-8")
 
     copy_model_config_and_code(str(src), str(dst))
 
@@ -79,3 +81,25 @@ def test_copy_model_config_and_code_preserves_chat_template_and_merges(tmp_path)
     assert (dst / "chat_template.jinja").read_text(encoding="utf-8") == "{{ messages }}"
     assert (dst / "merges.txt").read_text(encoding="utf-8") == "#version: 0.2\n"
     assert not (dst / "model.safetensors").exists()
+    assert not (dst / "model.safetensors.index.json").exists()
+
+
+def test_save_state_dict_sharded_safetensors_handles_tied_weights(tmp_path):
+    from safetensors.torch import load_file
+
+    shared = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+    state_dict = {
+        "lm_head.weight": shared,
+        "model.embed_tokens.weight": shared,
+        "model.slice_a": shared[:1],
+        "model.slice_b": shared[1:],
+    }
+
+    num_shards, _ = save_state_dict_sharded_safetensors(state_dict, str(tmp_path))
+
+    assert num_shards == 1
+    loaded = load_file(str(tmp_path / "model-00001-of-00001.safetensors"))
+    torch.testing.assert_close(loaded["lm_head.weight"], shared)
+    torch.testing.assert_close(loaded["model.embed_tokens.weight"], shared)
+    torch.testing.assert_close(loaded["model.slice_a"], shared[:1])
+    torch.testing.assert_close(loaded["model.slice_b"], shared[1:])

@@ -223,6 +223,7 @@ def save_state_dict_sharded_safetensors(
         for idx, (keys, _) in enumerate(shards_plan):
             shard_idx = idx + 1
             shard_dict = {}
+            seen_storage_ptrs: set[int] = set()
 
             # (CPU transfer happens here)
             for k in keys:
@@ -234,6 +235,13 @@ def save_state_dict_sharded_safetensors(
                     t = t.to(dtype=dtype)
                 if not t.is_contiguous():
                     t = t.contiguous()
+                # safetensors rejects tensors sharing storage within one shard.
+                storage_ptr = t.untyped_storage().data_ptr()
+                if storage_ptr in seen_storage_ptrs:
+                    t = t.clone()
+                    storage_ptr = t.untyped_storage().data_ptr()
+                if storage_ptr:
+                    seen_storage_ptrs.add(storage_ptr)
                 shard_dict[k] = t
 
             fname = f"{base_name}-{shard_idx:05d}-of-{num_shards:05d}.safetensors"
@@ -283,10 +291,13 @@ def copy_model_config_and_code(
 
     for root, _, files in os.walk(model_path):
         for file in files:
-            if file.endswith(suffixes):
-                src_file = os.path.join(root, file)
-                rel_path = os.path.relpath(src_file, model_path)
-                dst_file = os.path.join(save_path, rel_path)
+            if file.endswith(
+                (".safetensors.index.json", ".bin.index.json")
+            ) or not file.endswith(suffixes):
+                continue
+            src_file = os.path.join(root, file)
+            rel_path = os.path.relpath(src_file, model_path)
+            dst_file = os.path.join(save_path, rel_path)
 
-                os.makedirs(os.path.dirname(dst_file), exist_ok=True)
-                shutil.copy2(src_file, dst_file)
+            os.makedirs(os.path.dirname(dst_file), exist_ok=True)
+            shutil.copy2(src_file, dst_file)
