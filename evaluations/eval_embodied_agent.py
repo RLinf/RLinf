@@ -155,6 +155,8 @@ def main(cfg) -> None:
                     # accelerator the rollout placement already uses, so the
                     # service follows the configured placement instead of
                     # hard-coding GPU 0.
+                    from collections.abc import Mapping
+
                     from rlinf.scheduler.placement import PackedPlacementStrategy
 
                     rollout_ranks = sorted(
@@ -162,9 +164,21 @@ def main(cfg) -> None:
                         for rank in component_placement.get_hardware_ranks("rollout")
                     )
                     server_rank = rollout_ranks[0] if rollout_ranks else 0
+                    rollout_node_group = None
+                    for names, spec in cfg.cluster.component_placement.items():
+                        if "rollout" in [c.strip() for c in str(names).split(",")]:
+                            if isinstance(spec, Mapping) and "node_group" in spec:
+                                ng = spec["node_group"]
+                                rollout_node_group = (
+                                    [s.strip() for s in ng.split(",")]
+                                    if isinstance(ng, str) and "," in ng
+                                    else ng
+                                )
+                            break
                     server_placement = PackedPlacementStrategy(
                         start_hardware_rank=server_rank,
                         end_hardware_rank=server_rank,
+                        node_group=rollout_node_group,
                     )
                 gateway_urls, service_group = launch_phyai_gateway_and_server(
                     cfg,
@@ -184,7 +198,12 @@ def main(cfg) -> None:
         runner.run()
     finally:
         if service_group is not None:
-            service_group.stop().wait()
+            try:
+                service_group.stop().wait()
+            except Exception as error:
+                get_logger().warning(
+                    f"[eval] failed to stop PhyAI service group cleanly: {error}"
+                )
 
 
 if __name__ == "__main__":
