@@ -239,7 +239,7 @@ def install_autodoc_mock_shims() -> None:
 
     def _mock_object_getattr(self: _MockObject, key: str) -> Any:
         # inspect.signature() inspects __signature__ and loops over __wrapped__.
-        if key in ("__signature__", "__wrapped__"):
+        if key in ("__signature__", "__wrapped__", "__type_params__"):
             raise AttributeError(key)
         return orig_obj_getattr(self, key)
 

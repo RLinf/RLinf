@@ -351,6 +351,14 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             )
             self._placement_mode = PlacementMode.COLLOCATED
             logging.info("Running in collocated mode")
+        elif (
+            self._critic_gpus == self._actor_gpus
+            and set(self._actor_gpus).isdisjoint(self._rollout_gpus)
+            and self._inference_gpus is None
+            and self._critic_inference_gpus is None
+        ):
+            self._placement_mode = PlacementMode.HYBRID
+            logging.info("Running with shared actor/critic and dedicated rollout GPUs")
         elif self._is_disaggregated():
             if self._inference_gpus is not None:
                 assert self.inference_tp_size <= self.inference_world_size, (
@@ -473,6 +481,7 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                 gpus[0],
                 gpus[-1],
                 num_hardware_per_process=self.rollout_gpus_per_process,
+                node_group=self._component_node_groups["rollout"],
             )
         assert self.is_disaggregated, (
             f"Discontinuous rollout GPUs {gpus} are only supported in "
@@ -484,7 +493,10 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             for group in self._rollout_gpu_groups
             for i in range(0, len(group), per_process)
         ]
-        return FlexiblePlacementStrategy(hardware_ranks_list)
+        return FlexiblePlacementStrategy(
+            hardware_ranks_list,
+            node_group_label=self._component_node_groups["rollout"],
+        )
 
     def _recompute_rollout_node_layout(self) -> None:
         """(Re)derive the per-node rollout GPU groups and node layout.
@@ -506,7 +518,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
     def _generate_placements(self):
         if self._placement_mode == PlacementMode.COLLOCATED:
             self._placements["actor"] = PackedPlacementStrategy(
-                self._actor_gpus[0], self._actor_gpus[-1]
+                self._actor_gpus[0],
+                self._actor_gpus[-1],
+                node_group=self._component_node_groups["actor"],
             )
 
             if self.actor_tp_size > self.rollout_tp_size:
@@ -523,13 +537,20 @@ class ModelParallelComponentPlacement(ComponentPlacement):
             self._placements["rollout"] = self._rollout_placement_strategy()
             if self._reward_gpus:
                 self._placements["reward"] = PackedPlacementStrategy(
-                    self._reward_gpus[0], self._reward_gpus[-1]
+                    self._reward_gpus[0],
+                    self._reward_gpus[-1],
+                    node_group=self._component_node_groups["reward"],
                 )
             if self._critic_gpus is not None:
                 self._placements["critic"] = PackedPlacementStrategy(
-                    self._critic_gpus[0], self._critic_gpus[-1]
+                    self._critic_gpus[0],
+                    self._critic_gpus[-1],
+                    node_group=self._component_node_groups["critic"],
                 )
-        elif self._placement_mode == PlacementMode.DISAGGREGATED:
+        elif self._placement_mode in (
+            PlacementMode.DISAGGREGATED,
+            PlacementMode.HYBRID,
+        ):
             self._placements["rollout"] = self._rollout_placement_strategy()
             if self._inference_gpus is not None:
                 # TODO check the placement name
@@ -538,27 +559,43 @@ class ModelParallelComponentPlacement(ComponentPlacement):
                     if self._critic_inference_gpus is None
                     else "actor_inference"
                 ] = PackedPlacementStrategy(
-                    self._inference_gpus[0], self._inference_gpus[-1]
+                    self._inference_gpus[0],
+                    self._inference_gpus[-1],
+                    node_group=self._component_node_groups[
+                        "inference"
+                        if self._critic_inference_gpus is None
+                        else "actor_inference"
+                    ],
                 )
             if self._critic_inference_gpus is not None:
                 self._placements["critic_inference"] = PackedPlacementStrategy(
-                    self._critic_inference_gpus[0], self._critic_inference_gpus[-1]
+                    self._critic_inference_gpus[0],
+                    self._critic_inference_gpus[-1],
+                    node_group=self._component_node_groups["critic_inference"],
                 )
             self._placements["actor"] = PackedPlacementStrategy(
-                self._actor_gpus[0], self._actor_gpus[-1]
+                self._actor_gpus[0],
+                self._actor_gpus[-1],
+                node_group=self._component_node_groups["actor"],
             )
             if self._reward_gpus:
                 self._placements["reward"] = PackedPlacementStrategy(
-                    self._reward_gpus[0], self._reward_gpus[-1]
+                    self._reward_gpus[0],
+                    self._reward_gpus[-1],
+                    node_group=self._component_node_groups["reward"],
                 )
             if self._critic_gpus is not None:
                 self._placements["critic"] = PackedPlacementStrategy(
-                    self._critic_gpus[0], self._critic_gpus[-1]
+                    self._critic_gpus[0],
+                    self._critic_gpus[-1],
+                    node_group=self._component_node_groups["critic"],
                 )
         elif self._placement_mode == PlacementMode.AUTO:
             # In AUTO mode, actor will be placed on all GPUs
             self._placements["actor"] = PackedPlacementStrategy(
-                0, self._cluster_num_gpus - 1
+                0,
+                self._cluster_num_gpus - 1,
+                node_group=self._component_node_groups["actor"],
             )
 
             if self._critic_gpus is not None:
@@ -591,11 +628,15 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
             if self._inference_gpus is not None:
                 self._placements["inference"] = PackedPlacementStrategy(
-                    self._inference_gpus[0], self._inference_gpus[-1]
+                    self._inference_gpus[0],
+                    self._inference_gpus[-1],
+                    node_group=self._component_node_groups["inference"],
                 )
             if self._reward_gpus:
                 self._placements["reward"] = PackedPlacementStrategy(
-                    self._reward_gpus[0], self._reward_gpus[-1]
+                    self._reward_gpus[0],
+                    self._reward_gpus[-1],
+                    node_group=self._component_node_groups["reward"],
                 )
 
     @property
@@ -612,7 +653,9 @@ class ModelParallelComponentPlacement(ComponentPlacement):
 
     @property
     def is_pipeline(self):
-        return self.is_disaggregated or self.is_auto
+        return (self.is_disaggregated or self.is_auto) and not self._config.get(
+            "runner", {}
+        ).get("synchronous", False)
 
     def has_dedicated_inference_for_role(self, role):
         if role == "actor":
@@ -930,10 +973,13 @@ class ModelParallelEvalComponentPlacement(ComponentPlacement):
             self._rollout_gpus[-1],
             num_hardware_per_process=self.rollout_gpus_per_process,
             stride=1,
+            node_group=self._component_node_groups["rollout"],
         )
         if self._reward_gpus:
             self._placements["reward"] = PackedPlacementStrategy(
-                self._reward_gpus[0], self._reward_gpus[-1]
+                self._reward_gpus[0],
+                self._reward_gpus[-1],
+                node_group=self._component_node_groups["reward"],
             )
 
     @property
@@ -1235,6 +1281,7 @@ class MultiAgentModelParallelComponentPlacement(ModelParallelComponentPlacement)
                 "rollout"
             ]._num_hardware_per_process,
             stride=self._placements["rollout"]._stride,
+            node_group=self._component_node_groups[component_name],
         )
         self._validate_component_placement_strategy(
             component_name, component_placement_strategy
@@ -1336,6 +1383,7 @@ class MultiAgentModelParallelEvalComponentPlacement(
                 "rollout"
             ]._num_hardware_per_process,
             stride=self._placements["rollout"]._stride,
+            node_group=self._component_node_groups[component_name],
         )
         self._validate_component_placement_strategy(
             component_name, component_placement_strategy

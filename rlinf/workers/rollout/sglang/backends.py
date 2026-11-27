@@ -87,8 +87,42 @@ class SGLangEngineBackend(RolloutBackend):
         sampling_params: list[dict] | dict,
         image_data: Optional[list],
         return_logprob: list[bool] | bool,
+        return_prompt_token_ids: bool = False,
+        mm_token_expansion_start_len: Optional[int] = None,
     ) -> dict:
+        if sampling_params is None:
+            processor = None
+        elif isinstance(sampling_params, dict):
+            sampling_params = dict(sampling_params)
+            processor = sampling_params.pop("custom_logit_processor", None)
+        else:
+            sampling_params = [dict(params) for params in sampling_params]
+            processors = [
+                params.pop("custom_logit_processor", None) for params in sampling_params
+            ]
+            processor = (
+                processors if any(item is not None for item in processors) else None
+            )
+        if return_prompt_token_ids or mm_token_expansion_start_len is not None:
+            from sglang.srt.managers.io_struct import GenerateReqInput
+
+            request = GenerateReqInput(
+                text=prompt,
+                input_ids=input_ids,
+                sampling_params=sampling_params,
+                image_data=image_data,
+                return_logprob=return_logprob,
+                custom_logit_processor=processor,
+                return_prompt_token_ids=return_prompt_token_ids,
+                mm_token_expansion_start_len=mm_token_expansion_start_len,
+            )
+            responses = self.engine.tokenizer_manager.generate_request(request, None)
+            try:
+                return await anext(responses)
+            finally:
+                await responses.aclose()
         return await self.engine.async_generate(
+            custom_logit_processor=processor,
             prompt=prompt,
             sampling_params=sampling_params,
             input_ids=input_ids,
@@ -96,9 +130,13 @@ class SGLangEngineBackend(RolloutBackend):
             return_logprob=return_logprob,
         )
 
-    async def sync_weights(self, pause_mode: Optional[str] = None) -> None:
+    async def sync_weights(
+        self, pause_mode: Optional[str] = None, weight_version: Optional[int] = None
+    ) -> None:
         await self.engine.tokenizer_manager.sync_hf_weight(
-            obj=io_struct.SyncHFWeightInput(pause_mode=pause_mode)
+            obj=io_struct.SyncHFWeightInput(
+                pause_mode=pause_mode, weight_version=weight_version
+            )
         )
 
     async def offload(self, tags: Optional[list[str]] = None) -> None:
@@ -117,20 +155,10 @@ class SGLangEngineBackend(RolloutBackend):
         )
 
     async def pause_generation(self, mode: str) -> None:
-        raise NotImplementedError(
-            "Pausing generation for a weight sync requires the sglang HTTP "
-            f"server routes (/pause_generation), i.e. rollout.sglang.backend_type: "
-            f"server; the in-process engine backend does not support it (got "
-            f"mode={mode!r})"
-        )
+        raise NotImplementedError("SGLang pause requires the HTTP server backend")
 
     async def continue_generation(self) -> None:
-        raise NotImplementedError(
-            "Continuing generation after a pause requires the sglang HTTP "
-            "server routes (/continue_generation), i.e. rollout.sglang."
-            "backend_type: server; the in-process engine backend does not "
-            "support it"
-        )
+        raise NotImplementedError("SGLang resume requires the HTTP server backend")
 
     async def get_running_state(self) -> RolloutEngineStats:
         state = await self.engine.tokenizer_manager.run_task_method(
@@ -321,11 +349,18 @@ class SGLangServerBackend(RolloutBackend):
         sampling_params: list[dict] | dict,
         image_data: Optional[list],
         return_logprob: list[bool] | bool,
+        return_prompt_token_ids: bool = False,
+        mm_token_expansion_start_len: Optional[int] = None,
     ) -> dict:
         # A request can still race the server closing an idle keep-alive
         # connection, or hit a transient disconnect. Resending only draws
         # another sample, so retry connection errors; HTTP status errors
         # are not retried.
+        extra = {}
+        if return_prompt_token_ids:
+            extra["return_prompt_token_ids"] = True
+        if mm_token_expansion_start_len is not None:
+            extra["mm_token_expansion_start_len"] = mm_token_expansion_start_len
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -335,6 +370,7 @@ class SGLangServerBackend(RolloutBackend):
                     sampling_params=sampling_params,
                     return_logprob=return_logprob,
                     image_data=image_data,
+                    **extra,
                 )
             except aiohttp.ClientConnectionError as e:
                 self._log_info(
@@ -348,11 +384,16 @@ class SGLangServerBackend(RolloutBackend):
             sampling_params=sampling_params,
             return_logprob=return_logprob,
             image_data=image_data,
+            **extra,
         )
 
-    async def sync_weights(self, pause_mode: Optional[str] = None) -> None:
+    async def sync_weights(
+        self, pause_mode: Optional[str] = None, weight_version: Optional[int] = None
+    ) -> None:
         await self.http_client.async_sync_hf_weight(
-            obj=io_struct.SyncHFWeightInput(pause_mode=pause_mode)
+            obj=io_struct.SyncHFWeightInput(
+                pause_mode=pause_mode, weight_version=weight_version
+            )
         )
 
     async def update_weight_version(self, version: int) -> None:
@@ -384,7 +425,6 @@ class SGLangServerBackend(RolloutBackend):
         )
 
     async def pause_generation(self, mode: str) -> None:
-        # Native sglang routes, JSON body: no pickled payload involved.
         await self.http_client.async_pause_generation(mode)
 
     async def continue_generation(self) -> None:

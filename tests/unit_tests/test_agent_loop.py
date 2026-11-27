@@ -81,6 +81,8 @@ def _request(n_groups=1, group_size=2, group_ids=None, task_names=None):
         n=group_size,
         group_ids=group_ids,
         task_names=task_names,
+        cohort_id=None,
+        weight_version=None,
     )
 
 
@@ -609,6 +611,9 @@ def _single_turn_output(
         prompt_ids=[1, 2],
         response_ids=[3],
         response_logprobs=[0.5],
+        response_weight_versions=None,
+        response_images=None,
+        response_mask=None,
         is_end=True,
         reward_score=0.0,
         extra_fields={"not_training": not_training},
@@ -620,6 +625,8 @@ def _single_turn_output(
 def _make_multi_worker():
     worker = MultiAgentLoopWorker.__new__(MultiAgentLoopWorker)
     worker.session_server_client = None
+    worker._next_rollout_id = 0
+    worker._world_size = 1
     worker.print_outputs = False
     worker.return_logprobs = True
     return worker
@@ -854,6 +861,8 @@ class TestTaskNamePassthrough:
 
         async def run():
             worker = _make_group_worker(MultiAgentLoopWorker)
+            worker._next_rollout_id = 0
+            worker._world_size = 1
             worker.return_logprobs = True
             worker.extra_keys_turn = None
             worker.extra_keys_traj = None
@@ -909,3 +918,285 @@ class TestTaskNamePassthrough:
             assert seen == [(None, None), (None, None)]
 
         asyncio.run(run())
+
+
+def _candidate_worker(query):
+    worker = _make_group_worker(MultiAgentLoopWorker)
+    worker.cfg.algorithm.group_size = 1
+    worker._rank, worker._world_size, worker._next_rollout_id = 0, 1, 0
+    worker._candidate_cohort = None
+    worker._candidate_started = {}
+    worker._candidate_admissions = {}
+    worker._generation_cohort_id = None
+    worker.extra_keys_turn = worker.extra_keys_traj = None
+    worker.run_one_query = query
+    worker.worker_timer = _NullContext
+    return worker
+
+
+def _candidate_output(reward=0.0, version=2):
+    from rlinf.workers.agent.agent_loop import AgentLoopOutput, MultiAgentLoopOutput
+
+    return MultiAgentLoopOutput(
+        single_turn_outputs=[
+            AgentLoopOutput(
+                prompt_ids=[1],
+                response_ids=[2],
+                response_mask=[1],
+                is_end=True,
+                reward_score=reward,
+                version_start=version,
+                version_end=version,
+            )
+        ]
+    )
+
+
+@pytest.mark.parametrize("is_end", [True, False])
+def test_sync_candidates_emit_completed_failures_and_cancel_tail_after_cleanup(is_end):
+    async def run():
+        gates = [asyncio.Event() for _ in range(5)]
+        cleaned = set()
+        metadata = {}
+
+        async def query(input_ids, answer):
+            metadata[answer] = MultiAgentLoopWorker.rollout_candidate()
+            try:
+                await gates[answer].wait()
+                output = _candidate_output(reward=1.0 if answer == 0 else 0.0)
+                output.single_turn_outputs[-1].is_end = is_end
+                return output
+            finally:
+                await asyncio.sleep(0)
+                cleaned.add(answer)
+
+        worker = _candidate_worker(query)
+        channel = _QueueChannel()
+        request = _request(n_groups=5, group_size=1, group_ids=list(range(5)))
+        request.answers = list(range(5))
+        request.cohort_id, request.weight_version = "cohort-a", 2
+        rollout = asyncio.create_task(
+            worker.run_agentloop_rollout(SimpleNamespace(get=lambda: request), channel)
+        )
+        events = []
+        for candidate_id in (2, 0, 4):
+            gates[candidate_id].set()
+            event = await channel.get(async_op=True).async_wait()
+            events.append(event)
+        assert [event["candidate_id"] for event in events] == [2, 0, 4]
+        assert events[0]["terminal_reward"] == 0.0
+        assert all("result" not in event for event in events)
+        assert all(event["status"] == "complete" for event in events)
+        assert not rollout.done()
+        receipt = await worker.cancel_rollout_candidates("cohort-a", [2, 0, 4])
+        await asyncio.wait_for(rollout, timeout=3)
+        assert cleaned == set(range(5))
+        records = {row["candidate_id"]: row for row in receipt["candidates"]}
+        assert {key for key, row in records.items() if row["kept"]} == {0, 2, 4}
+        assert records[1]["status"] == records[3]["status"] == "cancelled"
+        assert all(row["cleanup_complete"] for row in records.values())
+        assert all(
+            metadata[key]
+            == {
+                "cohort_id": "cohort-a",
+                "candidate_id": key,
+                "weight_version": 2,
+            }
+            for key in range(5)
+        )
+        assert worker._candidate_cohort is None
+        assert worker._generation_cohort_id is None
+        assert channel._queue.empty()
+        learner = _QueueChannel()
+        admitted = await worker.admit_rollout_candidates("cohort-a", [learner])
+        assert admitted["admitted"] == 3
+        admitted_results = [await learner.get().async_wait() for _ in range(3)]
+        assert sorted(result.group_id for result in admitted_results) == [0, 2, 4]
+        assert not worker._candidate_admissions
+
+    asyncio.run(run())
+
+
+def test_sync_sampling_counts_remain_worker_local_after_metric_gather():
+    async def run():
+        gates = [asyncio.Event() for _ in range(3)]
+
+        async def query(input_ids, answer):
+            await gates[answer].wait()
+            return _candidate_output()
+
+        worker = _candidate_worker(query)
+        worker._world_size = 2
+        worker._group_name = "AgentGroup"
+        remote_messages = iter(
+            [
+                [{}],
+                [
+                    {
+                        "__sum__/sampling/candidates": 3,
+                        "__sum__/sampling/selected": 1,
+                        "__sum__/sampling/dropped": 2,
+                        "__sum__/sampling/cancelled": 2,
+                    }
+                ],
+            ]
+        )
+        worker.recv = lambda *args, **kwargs: next(remote_messages)
+        channel = _QueueChannel()
+        request = _request(n_groups=3, group_size=1, group_ids=[0, 1, 2])
+        request.answers = [0, 1, 2]
+        request.cohort_id, request.weight_version = "counted-cohort", 2
+        rollout = asyncio.create_task(
+            worker.run_agentloop_rollout(SimpleNamespace(get=lambda: request), channel)
+        )
+        for candidate in (0, 1):
+            gates[candidate].set()
+            await channel.get(async_op=True).async_wait()
+        receipt = await worker.cancel_rollout_candidates("counted-cohort", [0, 1, 3])
+        metrics = await asyncio.wait_for(rollout, timeout=3)
+        assert metrics["sampling/candidates"] == 6
+        assert metrics["sampling/selected"] == 3
+        assert metrics["sampling/dropped"] == 3
+        assert metrics["sampling/cancelled"] == 3
+        assert sum(row["kept"] for row in receipt["candidates"]) == 2
+        learner = _QueueChannel()
+        admitted = await worker.admit_rollout_candidates("counted-cohort", [learner])
+        assert admitted["admitted"] == 2
+
+    asyncio.run(run())
+
+
+def test_sync_candidate_failure_remains_an_error_not_a_replacement_or_zero_reward():
+    async def run():
+        async def query(input_ids, answer):
+            if answer == 0:
+                raise RuntimeError("environment transport failed after retry")
+            await asyncio.Event().wait()
+
+        worker = _candidate_worker(query)
+        request = _request(n_groups=2, group_size=1, group_ids=[0, 1])
+        request.answers = [0, 1]
+        request.cohort_id, request.weight_version = "failed-cohort", 2
+        channel = _QueueChannel()
+        rollout = asyncio.create_task(
+            worker.run_agentloop_rollout(SimpleNamespace(get=lambda: request), channel)
+        )
+        event = await channel.get(async_op=True).async_wait()
+        assert event["status"] == "error" and "result" not in event
+        assert "after retry" in event["error"]
+        receipt = await worker.cancel_rollout_candidates("failed-cohort", [])
+        await asyncio.wait_for(rollout, timeout=3)
+        assert receipt["candidates"][0]["status"] == "error"
+        assert not any(row["kept"] for row in receipt["candidates"])
+        await worker.admit_rollout_candidates("failed-cohort", None)
+
+    asyncio.run(run())
+
+
+def test_sync_cohort_cancel_waits_for_workers_not_started_yet():
+    async def run():
+        started = []
+
+        async def query(input_ids, answer):
+            started.append(answer)
+            await asyncio.Event().wait()
+
+        worker = _candidate_worker(query)
+        cancellation = asyncio.create_task(
+            worker.cancel_rollout_candidates("late-cohort", [])
+        )
+        await asyncio.sleep(0)
+        assert not cancellation.done()
+        request = _request(n_groups=2, group_size=1, group_ids=[0, 1])
+        request.cohort_id, request.weight_version = "late-cohort", 2
+        rollout = asyncio.create_task(
+            worker.run_agentloop_rollout(
+                SimpleNamespace(get=lambda: request), _QueueChannel()
+            )
+        )
+        receipt = await asyncio.wait_for(cancellation, timeout=3)
+        await asyncio.wait_for(rollout, timeout=3)
+        assert len(receipt["candidates"]) == 2
+        assert all(row["status"] == "cancelled" for row in receipt["candidates"])
+        await worker.admit_rollout_candidates("late-cohort", None)
+
+    asyncio.run(run())
+
+
+def test_sync_candidate_mixed_weight_version_is_fatal():
+    async def run():
+        async def query(input_ids, answer):
+            return _candidate_output(version=3)
+
+        worker = _candidate_worker(query)
+        request = _request(n_groups=1, group_size=1, group_ids=[0])
+        request.cohort_id, request.weight_version = "wrong-policy", 2
+        channel = _QueueChannel()
+        rollout = asyncio.create_task(
+            worker.run_agentloop_rollout(SimpleNamespace(get=lambda: request), channel)
+        )
+        event = await channel.get(async_op=True).async_wait()
+        assert event["status"] == "error" and "weight versions" in event["error"]
+        await worker.cancel_rollout_candidates("wrong-policy", [])
+        await asyncio.wait_for(rollout, timeout=3)
+        await worker.admit_rollout_candidates("wrong-policy", None)
+
+    asyncio.run(run())
+
+
+def test_sync_selection_waits_for_selected_publication_without_cancelling_it():
+    async def run():
+        acknowledged = asyncio.Event()
+
+        class PublicationChannel(_QueueChannel):
+            def put(self, item, key=None, async_op=False):
+                self._queue.put_nowait(item)
+                return SimpleNamespace(async_wait=acknowledged.wait)
+
+        async def query(input_ids, answer):
+            return _candidate_output()
+
+        worker = _candidate_worker(query)
+        channel = PublicationChannel()
+        request = _request(n_groups=1, group_size=1, group_ids=[0])
+        request.cohort_id, request.weight_version = "publishing", 2
+        rollout = asyncio.create_task(
+            worker.run_agentloop_rollout(SimpleNamespace(get=lambda: request), channel)
+        )
+        await channel.get().async_wait()
+        cancellation = asyncio.create_task(
+            worker.cancel_rollout_candidates("publishing", [0])
+        )
+        await asyncio.sleep(0)
+        assert not cancellation.done()
+        acknowledged.set()
+        receipt = await asyncio.wait_for(cancellation, timeout=3)
+        await asyncio.wait_for(rollout, timeout=3)
+        assert receipt["candidates"][0]["kept"]
+        assert receipt["candidates"][0]["status"] == "complete"
+        await worker.admit_rollout_candidates("publishing", None)
+
+    asyncio.run(run())
+
+
+def test_cancelled_sync_generation_drains_its_reply_before_releasing_candidate():
+    async def run():
+        worker = _make_worker()
+        worker.cfg = OmegaConf.create(
+            {"data": {"rollout_batch_size": 1, "sampling_batch_size": 2}}
+        )
+        worker._generation_cohort_id = "cancel-request"
+        worker.generate_input_channel = _QueueChannel()
+        worker.generate_output_channel = _QueueChannel()
+        generate = asyncio.create_task(worker.generate([1]))
+        request = await worker.generate_input_channel.get().async_wait()
+        assert request["cohort_id"] == "cancel-request"
+        generate.cancel()
+        await asyncio.sleep(0)
+        assert not generate.done()
+        worker.generate_output_channel.put({"output_ids": [2]})
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(generate, timeout=3)
+        assert worker.generate_output_channel._queue.empty()
+
+    asyncio.run(run())

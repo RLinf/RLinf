@@ -1,0 +1,43 @@
+# Run the paired RPent deployment-local.yaml on this host first.
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 2-3
+    critic: 2-3
+    rollout: 2-3
+    reward: 2-3
+    agentloop: 2-3
+
+runner:
+  output_dir: ${oc.env:RPENT_RUN_DIR}
+  experiment_name: grpo
+  max_steps: 1
+  save_interval: 1
+
+data:
+  train_data_paths: null
+  rollout_batch_size: 2
+  sampling_batch_size: 4
+
+algorithm:
+  group_size: 2
+
+rollout:
+  model:
+    model_path: ${oc.env:RPENT_MODEL_PATH}
+
+tools:
+  rpent:
+    repo_path: ${oc.env:RPENT_ROOT}
+    python: ${oc.env:RPENT_PYTHON,python}
+    output_dir: ${runner.output_dir}/episodes
+    remote_toolkit_endpoint: null
+
+env:
+  rpent:
+    libero:
+      endpoint: http://127.0.0.1:28561
+      train_data_paths: ["${oc.env:RPENT_LIBERO_TASKS}"]
+    robotwin:
+      endpoint: http://127.0.0.1:28562
+      train_data_paths: ["${oc.env:RPENT_ROBOTWIN_TASKS}"]

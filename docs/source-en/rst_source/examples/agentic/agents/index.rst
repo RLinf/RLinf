@@ -18,6 +18,12 @@ Reinforcement learning recipes for multi-turn tool use, multi-agent coordination
 
       End-to-end online RL for IDE code completion combining RLinf with the Continue extension.
 
+   .. grid-item-card:: RPent Mixed-Simulator GRPO
+      :link: ../rpent_episode_sync
+      :link-type: doc
+
+      Train a Qwen3.5 planner with groups from LIBERO and RoboTwin.
+
    .. grid-item-card:: rStar2
       :link: ../rstar2
       :link-type: doc
@@ -46,6 +52,7 @@ Reinforcement learning recipes for multi-turn tool use, multi-agent coordination
 
    AgentLightning <../agentlightning_calc_x>
    Coding Online RL <../coding_online_rl>
+   RPent <../rpent_episode_sync>
    rStar2 <../rstar2>
    Search-R1 <../searchr1/index>
    WideSeek-R1 <../wideseek_r1/index>

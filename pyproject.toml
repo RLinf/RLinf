@@ -21,7 +21,6 @@ classifiers = [
     #   4 - Beta
     #   5 - Production/Stable
     "Development Status :: 2 - Pre-Alpha",
-    "Environment :: GPU :: NVIDIA CUDA :: 12 :: 12.8",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
 ]

@@ -33,13 +33,28 @@ sglang_version = None
 
 if package_version is None:
     raise ValueError("sglang is not installed.")
-elif package_version >= parse("0.4.4") and package_version <= parse("0.5.19"):
+elif parse("0.4.4") <= package_version <= parse("0.5.19"):
     sglang_version = package_version
 else:
-    raise ValueError(
-        f"sglang version {package_version} is not supported "
-        "(supported range: >=0.4.4, <=0.5.19)."
-    )
+    from rlinf.hybrid_engines.sglang.multimodal.token_space import is_token_space_build
+
+    if not is_token_space_build():
+        raise ValueError(
+            f"sglang version {package_version} is not supported "
+            "(supported range: >=0.4.4, <=0.5.19 or the pinned token-space build)."
+        )
+    sglang_version = package_version
+
+
+def require_supported_sglang(*, token_space: bool = False) -> None:
+    """Restrict the pinned development build to explicit token-space rollout."""
+    if not parse("0.4.4") <= sglang_version <= parse("0.5.19") and not token_space:
+        raise ValueError(
+            "The pinned experimental SGLang build requires "
+            "rollout.sglang.enable_shared_multi_modal_processor=true. "
+            "Use a supported release for other rollout, reward and embodied servers."
+        )
+
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from rlinf.hybrid_engines.sglang.common import io_struct

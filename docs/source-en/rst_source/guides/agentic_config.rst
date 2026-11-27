@@ -664,3 +664,58 @@ reward
    * - ``reward.reward_scale``
      - A correct answer receives ``reward_scale``; an incorrect one receives
        ``-reward_scale``.
+
+Reduce Logprob Memory
+---------------------
+
+For Megatron agent training with dynamic batches, set ``actor.logprob_chunk_size``
+to a positive value to compute vocabulary softmax in token chunks. The backward
+pass recomputes each chunk instead of retaining the full FP32 softmax output.
+Disable entropy calculation when setting a positive chunk size.
+With the default value of 0, softmax runs in one pass unless response-only
+scoring is enabled with entropy off. That mode uses 256-token chunks.
+
+Add these settings to your agent training config:
+
+.. code-block:: yaml
+
+   actor:
+     logprob_chunk_size: 256
+   algorithm:
+     calculate_entropy: false
+     entropy_bonus: 0.0
+
+A chunk size of 256 limits each softmax chunk to 256 sequence positions.
+This setting applies after the vocabulary projection. Smaller chunks use less
+temporary memory and can increase step time. Measure both on your workload
+before choosing a chunk size.
+
+To reduce memory in the projection itself on a Qwen3.5 MBridge Actor, set
+``actor.model.lm_head_chunk_size`` to a positive token count, such as 256.
+The Actor projects one chunk of decoder states at a time and recomputes that
+chunk during backpropagation. This mode requires dynamic batches, PP1 and CP1.
+The Qwen3.5 training provider disables multi-token prediction. Keep
+``algorithm.entropy_bonus`` at zero. You can still log entropy.
+A chunk size of 0 keeps the model's default output layer.
+
+For packed batches with long prompts, ``actor.response_only_logits: true``
+projects only positions that predict response tokens. This option requires
+context parallel size 1 and defaults to false.
+A chunked LM head already selects response positions when entropy is disabled.
+Logging entropy requires scoring every position.
+
+.. list-table:: Megatron scoring options
+   :header-rows: 1
+
+   * - Setting
+     - Default
+     - Effect
+   * - ``actor.logprob_chunk_size``
+     - ``0``
+     - Token positions per vocabulary softmax chunk.
+   * - ``actor.response_only_logits``
+     - ``false``
+     - Project positions that predict response tokens in packed batches.
+   * - ``actor.model.lm_head_chunk_size``
+     - ``0``
+     - Token positions per output projection chunk.

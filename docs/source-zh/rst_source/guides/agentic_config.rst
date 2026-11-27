@@ -647,3 +647,40 @@ reward
      - 训练使用的奖励类型（例如 ``math``）。
    * - ``reward.reward_scale``
      - 答案正确时获得 ``reward_scale``；错误时获得 ``-reward_scale``。
+
+降低 Logprob 计算的显存开销
+----------------------------------------
+
+Megatron 智能体训练使用动态批次时，将 ``actor.logprob_chunk_size`` 设为正数，可按 token 分块计算词表 softmax。反向传播时重新计算各块，无需保留完整的 FP32 softmax 结果。显式设置分块大小时需关闭熵计算。默认值为 0，通常一次算完 softmax；如果只对回复打分且关闭熵计算，默认按 256 个 token 分块。
+
+在智能体训练配置中添加：
+
+.. code-block:: yaml
+
+   actor:
+     logprob_chunk_size: 256
+   algorithm:
+     calculate_entropy: false
+     entropy_bonus: 0.0
+
+块大小为 256 时，每次 softmax 处理最多 256 个序列位置。此设置作用于词表投影后的 softmax。块越小，临时显存占用越低，但单步耗时可能变长。在实际任务上测量峰值显存和单步耗时，再选择块大小。
+
+Qwen3.5 MBridge Actor 还可以在词表投影时节省显存。将 ``actor.model.lm_head_chunk_size`` 设为每块的 token 数（如 256），Actor 会分块投影解码器的隐状态，反向传播时再逐块重算。此模式要求使用动态批次、PP1 和 CP1。Qwen3.5 训练时默认关闭多 token 预测。熵可以作为指标记录，熵奖励系数须为零。分块大小默认为 0，沿用模型原有的输出层。
+
+长提示词的打包批次还可以设置 ``actor.response_only_logits: true``，只对预测回复 token 的位置做投影。此选项要求 CP1，默认关闭。启用分块词表投影时，如果关闭熵计算，输出层会自动选择回复位置；记录熵则需要对所有位置做投影。
+
+.. list-table:: Megatron 打分选项
+   :header-rows: 1
+
+   * - 设置
+     - 默认值
+     - 用途
+   * - ``actor.logprob_chunk_size``
+     - ``0``
+     - 每个词表 softmax 分块处理的 token 位置数。
+   * - ``actor.response_only_logits``
+     - ``false``
+     - 打包批次中只投影用于预测回复 token 的位置。
+   * - ``actor.model.lm_head_chunk_size``
+     - ``0``
+     - 每个输出层投影分块处理的 token 位置数。

@@ -1,0 +1,55 @@
+# Run the paired RPent deployment-384.yaml on all service nodes first.
+runner:
+  output_dir: ${oc.env:RPENT_RUN_DIR}
+  experiment_name: grpo
+  save_interval: 5
+
+data:
+  train_data_paths: null
+  rollout_batch_size: 32
+  sampling_batch_size: 48
+
+agentloop:
+  max_turns: 40
+
+rollout:
+  gpu_memory_utilization: 0.55
+  env_vars:
+    SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE: ""
+  sglang:
+    decode_log_interval: 500000
+    disable_fast_image_processor: true
+    enable_metrics: true
+    enable_cache_report: true
+  model:
+    model_path: ${oc.env:RPENT_MODEL_PATH}
+
+tools:
+  rpent:
+    repo_path: ${oc.env:RPENT_ROOT}
+    python: ${oc.env:RPENT_PYTHON,python}
+    output_dir: ${runner.output_dir}/episodes
+    remote_toolkit_endpoint: null
+    episodes_per_worker: 16
+    max_env_initializations_per_worker: 8
+    full_cohort_ready_timeout_s: 1800
+
+env:
+  rpent:
+    libero:
+      endpoint: ${oc.env:RPENT_LIBERO_ENDPOINT}
+      train_data_paths: ["${oc.env:RPENT_LIBERO_TASKS}"]
+      group_router: true
+      rollout_episodes: 128
+      sampling_episodes: 192
+    robotwin:
+      endpoint: ${oc.env:RPENT_ROBOTWIN_ENDPOINT}
+      train_data_paths: ["${oc.env:RPENT_ROBOTWIN_TASKS}"]
+      group_router: true
+      rollout_episodes: 128
+      sampling_episodes: 192
+
+actor:
+  multimodal:
+    prefetch_batches: 2
+    prefetch_bytes: 1073741824

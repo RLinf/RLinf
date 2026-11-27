@@ -42,6 +42,18 @@ Pick these guides when selecting or tuning a rollout engine: switching SGLang an
 
       Run in-process Rust/CUDA rollouts for OpenPI π₀.₅ evaluation on LIBERO.
 
+   .. grid-item-card:: Qwen3.5 Weight Synchronization
+      :link: ../qwen35_weight_sync
+      :link-type: doc
+
+      Synchronize the learner’s Qwen3.5 weights with SGLang.
+
+   .. grid-item-card:: RPent Multimodal Training
+      :link: ../rpent_multimodal
+      :link-type: doc
+
+      Replay the image inputs used during rollout in the learner.
+
 .. toctree::
    :hidden:
 
@@ -51,3 +63,5 @@ Pick these guides when selecting or tuning a rollout engine: switching SGLang an
    Session Server <../session_server>
    PhyAI Rollout Backend <phyai>
    ApxInf Rollout Backend <../apxinf>
+   ../qwen35_weight_sync
+   ../rpent_multimodal

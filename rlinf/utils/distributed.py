@@ -293,7 +293,7 @@ def compute_rollout_metrics_dynamic(
         "reward_scores_turn": sum_turn_rewards / num_seq,
         "avg_turns_per_traj": num_seq / num_trajectories,
         "fraction_of_samples_properly_ended": sum_end / num_seq,
-        "advantages_mean": sum_adv / n_valid_token,
+        "advantages_mean": sum_adv / max(n_valid_token, 1),
         "advantages_max": adv_max,
         "advantages_min": adv_min,
     }
@@ -413,7 +413,7 @@ def compute_rollout_metrics(
         "total_length": (sum_plen + sum_rlen) / num_seq,
         "reward_scores": sum_rewards / num_seq,
         "fraction_of_samples_properly_ended": sum_end / num_seq,
-        "advantages_mean": sum_adv / n_valid_token,
+        "advantages_mean": sum_adv / max(n_valid_token, 1),
         "advantages_max": adv_max,
         "advantages_min": -adv_min,
     }
@@ -1300,11 +1300,71 @@ def vocab_parallel_entropy_and_log_probs(
     return entropy, log_probs
 
 
-def vocab_parallel_log_probs_from_logits(logits, labels):
+class _ChunkedVocabParallelLogProbs(torch.autograd.Function):
+    """Recompute vocabulary softmax in bounded token chunks during backward."""
+
+    @staticmethod
+    def forward(ctx, logits, labels, chunk_size, temperature):
+        from megatron.core import tensor_parallel
+
+        ctx.save_for_backward(logits, labels)
+        ctx.chunk_size = chunk_size
+        ctx.temperature = temperature
+        output = torch.empty_like(labels, dtype=torch.float32)
+        for start in range(0, logits.shape[-2], chunk_size):
+            stop = start + chunk_size
+            # Megatron cross-entropy mutates its FP32 input into probabilities.
+            chunk = logits[..., start:stop, :].to(torch.float32, copy=True)
+            chunk.div_(temperature)
+            output[..., start:stop] = -tensor_parallel.vocab_parallel_cross_entropy(
+                chunk, labels[..., start:stop]
+            )
+        return output
+
+    @staticmethod
+    @torch.autograd.function.once_differentiable
+    def backward(ctx, grad_output):
+        from megatron.core import tensor_parallel
+
+        logits, labels = ctx.saved_tensors
+        grad_input = torch.empty_like(logits)
+        for start in range(0, logits.shape[-2], ctx.chunk_size):
+            stop = start + ctx.chunk_size
+            with torch.enable_grad():
+                chunk = (
+                    logits[..., start:stop, :]
+                    .detach()
+                    .to(torch.float32, copy=True)
+                    .requires_grad_(True)
+                )
+                log_probs = -tensor_parallel.vocab_parallel_cross_entropy(
+                    chunk / ctx.temperature, labels[..., start:stop]
+                )
+                (gradient,) = torch.autograd.grad(
+                    log_probs, chunk, grad_outputs=grad_output[..., start:stop]
+                )
+            grad_input[..., start:stop, :].copy_(gradient)
+        return grad_input, None, None, None
+
+
+def vocab_parallel_log_probs_from_logits(
+    logits, labels, *, chunk_size=0, temperature=1.0
+):
+    """Compute log probabilities, optionally recomputing FP32 softmax by chunk.
+
+    Tensor-parallel peers must use the same token count and chunk size.
+    Chunking preserves the input logits and stores no full FP32 softmax.
+    """
+    if chunk_size > 0:
+        return _ChunkedVocabParallelLogProbs.apply(
+            logits, labels, chunk_size, temperature
+        )
+
     from megatron.core import tensor_parallel
 
     return -tensor_parallel.vocab_parallel_cross_entropy(
-        vocab_parallel_logits=logits, target=labels
+        vocab_parallel_logits=logits / temperature if temperature != 1.0 else logits,
+        target=labels,
     )
 
 

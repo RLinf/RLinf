@@ -379,6 +379,24 @@ class Channel:
         target_actor = self._get_channel_actor(target_rank)
         return ray.get(target_actor.qsize.remote(key, consumer))
 
+    def peek_all(self, key: Any = DEFAULT_KEY) -> list[Any]:
+        """Snapshot a key's shared queue without consuming its items.
+
+        Args:
+            key (Any): The shared queue to snapshot.
+
+        Returns:
+            list[Any]: Queued payloads in FIFO order, excluding pending puts.
+
+        """
+        if self._local_channel is not None:
+            items = self._local_channel.peek_all(key)
+        else:
+            target_rank = self._get_channel_rank_by_key(key)
+            target_actor = self._get_channel_actor(target_rank)
+            items = ray.get(target_actor.peek_all.remote(key=key))
+        return [item.item for item in items]
+
     def empty(self, key: Any = DEFAULT_KEY) -> bool:
         """Check if the channel queue is empty.
 

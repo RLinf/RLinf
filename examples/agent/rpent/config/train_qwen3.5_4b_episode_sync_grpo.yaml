@@ -1,0 +1,52 @@
+# Whole groups are selected after all eight episodes finish.
+defaults:
+  - base_episode
+  - preprocessing@_global_: token_space
+  - _self_
+
+cluster:
+  num_nodes: 4
+  component_placement:
+    actor: 0-31
+    critic: 0-31
+    rollout: 0-31
+    reward: 0-31
+    agentloop: 0-31
+
+runner:
+  max_steps: 150
+  max_epochs: 150
+  save_interval: 10
+  experiment_name: rpent-episode-qwen3.5-4b-sync-grpo
+
+algorithm:
+  sampling_params:
+    max_new_tokens: 16384
+  clip_ratio_high: 0.28
+  loss_scales: ["group_level", "agent_level", "turn_level"]
+  group_size: 8
+  adv_type: grpo_dynamic
+  advantage_mode: trajectory
+  # GRPO already normalizes within each group; skip a second batch whitening.
+  normalize_advantages: false
+  down_sampling:
+    do_down_sampling: false
+
+data:
+  rollout_batch_size: 32
+  sampling_batch_size: 40
+
+critic:
+  use_critic_model: false
+
+
+agentloop:
+  max_turns: 50
+
+tools:
+  rpent:
+    episodes_per_worker: 10
+
+actor:
+  lr_sched:
+    lr_decay_iters: 150

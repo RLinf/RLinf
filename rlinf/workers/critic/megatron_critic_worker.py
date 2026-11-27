@@ -40,8 +40,7 @@ class MegatronCritic(MegatronWorker):
         self.value_clip = self.cfg.algorithm.value_cliprange
 
     def process_inference_output(self, rollout_result, infer_out):
-        values = infer_out
-        rollout_result.values = values
+        rollout_result.values = infer_out.detach().clone()
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
@@ -96,11 +95,11 @@ class MegatronCritic(MegatronWorker):
         batch: dict[str, torch.Tensor],
         mask: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Compute clipped value loss and reduce metrics across data parallel ranks."""
+        """Compute the configured value loss and reduce metrics across DP ranks."""
         loss, metrics_data = compute_ppo_critic_loss(
             values=values,
             returns=batch["returns"],
-            prev_values=batch["values"],
+            prev_values=batch.get("values"),
             value_clip=self.value_clip,
             huber_delta=10000,
             loss_agg_func=self.loss_agg_func,
@@ -109,7 +108,7 @@ class MegatronCritic(MegatronWorker):
         if self.cfg.algorithm.get("use_valid_token_scale", False):
             loss_scale = (
                 mask.sum()
-                / self.global_valid_token
+                / self.global_valid_token.clamp_min(1)
                 * parallel_state.get_data_parallel_world_size()
                 * self.num_microbatches
             )
