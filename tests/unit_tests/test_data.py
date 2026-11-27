@@ -6688,3 +6688,163 @@ def test_dynamic_result_filters_all_none_and_validates_image_rows():
         DynamicRolloutResult.merge_result_list([bad])
     with pytest.raises(ValueError, match="one entry per sequence"):
         DynamicRolloutResult.split_results(bad, [1, 1])
+
+
+def test_dynamic_rollout_result_response_mask_and_turn_fields():
+    result = DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[1, 2, 8, 3]],
+        prompt_lengths=[1],
+        response_lengths=[3],
+        response_mask=[[True, False, True]],
+        is_end=[True],
+        rewards=[1.0],
+        extra_fields_turn={
+            "rollout_weight_versions": [[2, 3]],
+            "generate_calls": [2],
+        },
+    )
+    meta = result.group_metadata()
+    assert meta.num_gen_tokens == 2
+    assert meta.num_generate_calls == 2
+    batch = result.to_actor_batch()
+    assert batch["response_mask"][0].tolist() == [False, True, False, True]
+
+    merged = DynamicRolloutResult.merge_result_list([result, result])
+    restored = DynamicRolloutResult.split_results(merged, [1, 1])[1]
+    assert restored.response_mask == result.response_mask
+    assert restored.extra_fields_turn == result.extra_fields_turn
+
+    # Heterogeneous merge of a folded multi-turn result and a plain 1-call result.
+    plain = DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[4, 5, 6]],
+        prompt_lengths=[1],
+        response_lengths=[2],
+        is_end=[True],
+        rewards=[0.0],
+        extra_fields_turn={"rollout_weight_versions": [[4, 4]]},
+    )
+    heterogeneous = DynamicRolloutResult.merge_result_list([result, plain])
+    assert heterogeneous.response_mask == [[True, False, True], [True, True]]
+    assert heterogeneous.extra_fields_turn["generate_calls"] == [2, 1]
+    assert heterogeneous.extra_fields_turn["rollout_weight_versions"] == [
+        [2, 3],
+        [4, 4],
+    ]
+
+    without_versions = DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[4, 5, 6]],
+        prompt_lengths=[1],
+        response_lengths=[2],
+        is_end=[True],
+        rewards=[0.0],
+    )
+    with pytest.raises(ValueError, match="rollout_weight_versions"):
+        DynamicRolloutResult.merge_result_list([result, without_versions])
+
+    bad_mask = DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[1, 2, 3]],
+        prompt_lengths=[1],
+        response_lengths=[2],
+        response_mask=[[True]],
+        is_end=[True],
+        rewards=[1.0],
+    )
+    with pytest.raises(ValueError, match="Response mask length"):
+        bad_mask.to_actor_batch()
+
+
+def test_rpent_prepare_tasks_seeds_assets_and_manifest(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location(
+        "rpent_prepare_tasks",
+        Path(__file__).resolve().parents[2] / "examples/agent/rpent/prepare_tasks.py",
+    )
+    prepare_tasks = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(prepare_tasks)
+
+    assert prepare_tasks.parse_seeds("2-4,0,2") == [0, 2, 3, 4]
+    with pytest.raises(ValueError, match="Seed range"):
+        prepare_tasks.parse_seeds("4-2")
+    with pytest.raises(ValueError, match="nonnegative"):
+        prepare_tasks.parse_seeds("abc")
+
+    tasks = [
+        {"suite": "libero_goal", "task": 0, "language": "pick up", "initial_states": 2}
+    ]
+    rows = prepare_tasks.build_rows(tasks, [0, 1], "train")
+    assert len(rows) == 2
+    assert json.loads(rows[1]["answer"]) == {
+        "environment": "libero",
+        "init_state_id": 1,
+        "seed": 1,
+        "suite": "libero_goal",
+        "task": 0,
+    }
+    with pytest.raises(ValueError, match="would alias seed"):
+        prepare_tasks.build_rows(tasks, [2], "train")
+
+    pkg_dir = tmp_path / "liberopro_pkg"
+    pkg_dir.mkdir()
+    fake_init = pkg_dir / "__init__.py"
+    fake_init.write_text("", encoding="utf-8")
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("assets: /old\nbenchmark_root: /wrong\n", encoding="utf-8")
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    repointed = []
+
+    fake_bench = SimpleNamespace(
+        n_tasks=1,
+        get_task=lambda idx: SimpleNamespace(language="move bowl"),
+        get_task_init_states=lambda idx: [0, 1, 2],
+    )
+    fake_core = SimpleNamespace(
+        __file__=str(fake_init),
+        config_file=str(cfg_file),
+        get_libero_path=lambda key: "/wrong",
+        set_libero_default_path=lambda path: repointed.append(path),
+        benchmark=SimpleNamespace(get_benchmark=lambda suite: lambda: fake_bench),
+    )
+    monkeypatch.setitem(sys.modules, "liberopro", SimpleNamespace(liberopro=fake_core))
+    monkeypatch.setitem(sys.modules, "liberopro.liberopro", fake_core)
+
+    loaded = prepare_tasks.load_tasks("pro", ["libero_goal"], assets_dir=assets_dir)
+    assert repointed == [str(pkg_dir.resolve())]
+    assert f"assets: {assets_dir.resolve()}" in cfg_file.read_text(encoding="utf-8")
+    assert loaded[0]["initial_states"] == 3
+
+    out_dir = tmp_path / "out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare_tasks.py",
+            "--libero-type",
+            "pro",
+            "--suites",
+            "libero_goal",
+            "--seeds",
+            "0-1",
+            "--assets-dir",
+            str(assets_dir),
+            "--split",
+            "eval",
+            "--output-dir",
+            str(out_dir),
+        ],
+    )
+    prepare_tasks.main()
+    written = (out_dir / "eval.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(written) == 2
+    assert json.loads(written[0])["query_id"] == "eval-libero_goal-0-0"

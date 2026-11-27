@@ -3353,6 +3353,10 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_coding_online_rl_cfg(cfg)
     elif cfg.runner.task_type == "reasoning_eval":
         cfg = validate_reasoning_eval_cfg(cfg)
+        if OmegaConf.select(cfg, "tools.rpent") is not None:
+            from rlinf.agents.rpent.config_validation import validate_rpent_eval_cfg
+
+            cfg = validate_rpent_eval_cfg(cfg)
         return cfg
     elif cfg.runner.task_type == "sft":
         cfg = validate_sft_cfg(cfg)
@@ -3423,10 +3427,20 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             cfg.critic = validate_fsdp_cfg(cfg.critic)
 
     validate_multimodal_learner_cfg(cfg)
-    if cfg.runner.task_type == "reasoning":
+    if (
+        cfg.runner.task_type == "reasoning"
+        and OmegaConf.select(cfg, "tools.rpent") is None
+    ):
         cfg = validate_searchr1_cfg(cfg)
 
     cfg = validate_session_server_cfg(cfg)
+    if (
+        cfg.runner.task_type == "reasoning"
+        and OmegaConf.select(cfg, "tools.rpent") is not None
+    ):
+        from rlinf.agents.rpent.config_validation import validate_rpent_cfg
+
+        validate_rpent_cfg(cfg)
     return cfg
 
 

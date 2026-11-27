@@ -32,7 +32,12 @@ from omegaconf import OmegaConf, open_dict
 from torch.utils.data import Dataset
 
 from rlinf.data.datasets.common.item import DatasetItem
-from rlinf.data.schema import DiscardedGroup, GroupMetadata, PayloadRef
+from rlinf.data.schema import (
+    DiscardedGroup,
+    DynamicRolloutResult,
+    GroupMetadata,
+    PayloadRef,
+)
 from rlinf.scheduler import Worker
 from rlinf.workers.rollout_buffer.rollout_buffer_worker import (
     RolloutBuffer,
@@ -1562,3 +1567,404 @@ def test_real_length_groups_keep_versions_through_buffer_release():
         assert actual.task_name == "searchr1"
         assert actual.group_metadata().earliest_version == actual.version_start[0]
         assert list(map(len, actual.to_actor_batch()["advantages"])) == [3, 6]
+
+
+@pytest.mark.parametrize("wrong_version", [False, True])
+def test_rpent_cohort_admits_in_arrival_order_and_rejects_mixed_version(wrong_version):
+    from unittest.mock import AsyncMock, Mock
+
+    from omegaconf import OmegaConf
+
+    from rlinf.agents.rpent.rollout_buffer import RPentCohortBuffer
+    from rlinf.data.schema.reasoning_results import GroupMetadata
+
+    def _group(gid, version=2):
+        return GroupMetadata(
+            group_id=gid,
+            task_name="rpent",
+            earliest_version=version,
+            completion_version=version,
+            num_gen_tokens=8,
+            num_generate_calls=2,
+            rewards=[0, 1],
+        )
+
+    worker = object.__new__(RPentCohortBuffer)
+    worker.cfg = OmegaConf.create(
+        {
+            "data": {"sampling_batch_size": 3, "rollout_batch_size": 2},
+            "algorithm": {"group_size": 2},
+        }
+    )
+    worker._next_request = AsyncMock(
+        side_effect=[
+            SimpleNamespace(group_ids=[gid], answers=[[str(gid)]]) for gid in range(3)
+        ]
+    )
+    worker._prompts = Mock()
+    worker._prompts.put.return_value.async_wait = AsyncMock()
+    worker._incoming = Mock()
+    worker._incoming.get.return_value.async_wait = AsyncMock(
+        side_effect=[_group(2), _group(0, 1 if wrong_version else 2)]
+    )
+    if wrong_version:
+        with pytest.raises(RuntimeError, match="spans policy versions"):
+            asyncio.run(worker.release_batch(2))
+    else:
+        selected = asyncio.run(worker.release_batch(2))
+        assert selected["selected"] == [2, 0]
+        assert selected["remaining"] == [1]
+        assert selected["rewards"] == [[0, 1], [0, 1]]
+
+
+def test_rpent_cohort_sampler_width_uses_sampling_batch_size(monkeypatch):
+    from omegaconf import OmegaConf
+
+    from rlinf.agents.rpent.rollout_buffer import RPentCohortBuffer
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "__init__", lambda self: None)
+    cfg = OmegaConf.create(
+        {
+            "runner": {"synchronous": True},
+            "data": {
+                "rollout_batch_size": 4,
+                "sampling_batch_size": 5,
+                "shuffle": False,
+                "num_workers": 0,
+            },
+            "algorithm": {},
+            "rollout_buffer": {
+                "max_inflight_groups": 4,
+                "max_buffered_groups": 8,
+                "max_dropped_groups_per_step": 16,
+            },
+        }
+    )
+    worker = RPentCohortBuffer(cfg, range(10))
+    assert list(worker.buffer.dataloader.batch_sampler) == [
+        list(range(5)),
+        list(range(5, 10)),
+    ]
+    assert worker.buffer.rollout_batch_size == 4
+
+
+def test_rpent_buffer_checkpoint_restores_completed_and_inflight_bounds(
+    tmp_path, monkeypatch
+):
+    from unittest.mock import AsyncMock, Mock
+
+    from rlinf.agents.rpent.rollout_buffer import RPentRolloutBufferWorker
+    from rlinf.data.schema.reasoning_requests import RolloutRequest
+    from rlinf.workers.rollout.session_server.payload import (
+        GroupPayload,
+        PayloadPart,
+    )
+
+    monkeypatch.setattr(Worker, "__init__", lambda self: None)
+
+    def _build_worker():
+        cfg = OmegaConf.create(
+            {
+                "runner": {"synchronous": False},
+                "algorithm": {
+                    "group_size": 1,
+                    "loss_scales": ["agent_level"],
+                    "sampling_params": {"max_new_tokens": 64},
+                },
+                "data": {
+                    "rollout_batch_size": 1,
+                    "sampling_batch_size": 1,
+                    "shuffle": True,
+                    "seed": 7,
+                    "num_workers": 0,
+                },
+                "agentloop": {"task_name": "rpent"},
+                "rollout": {"return_logprobs": True},
+                "rollout_buffer": {
+                    "max_inflight_groups": 2,
+                    "max_buffered_groups": 3,
+                    "max_dropped_groups_per_step": 10,
+                },
+            }
+        )
+        worker = RPentRolloutBufferWorker(cfg, _ToyDataset(8))
+        worker.log_warning = Mock()
+        return worker
+
+    payload = GroupPayload(
+        group_id=0,
+        parts=[
+            PayloadPart(
+                group_id=0,
+                traj_index=0,
+                turn_index=0,
+                input_ids=[10, 1, 2],
+                output_ids=[3],
+                logprobs=[-0.1],
+                version_start=1,
+                weight_version=1,
+                finish_reason={"type": "stop"},
+                image_input={
+                    "digests": ["d0"],
+                    "image_spans": [[1, 2]],
+                    "new_images": {"d0": (torch.ones(4, 3), torch.tensor([[1, 2, 2]]))},
+                },
+                token_weight_versions=[1],
+            ),
+            PayloadPart(
+                group_id=0,
+                traj_index=0,
+                turn_index=1,
+                input_ids=[],
+                output_ids=[],
+                logprobs=None,
+                version_start=0,
+                weight_version=0,
+                finish_reason={},
+                last=True,
+                rewards=[1.0],
+                verdicts={
+                    0: {
+                        "kept_lens": {0: 1},
+                        "continues_prev": {0: False},
+                        "is_end": {0: True},
+                        "not_training": {},
+                        "extra_fields_train": {},
+                    }
+                },
+            ),
+        ],
+    )
+
+    source = _build_worker()
+    fake_channel = Mock()
+    fake_channel.name = "Payload_0"
+    fake_channel.get.return_value.async_wait = AsyncMock(return_value=payload)
+    fake_channel.remove_key.return_value.async_wait = AsyncMock()
+    source._payload_channels = [fake_channel]
+
+    req0 = asyncio.run(source._next_request())
+    req1 = asyncio.run(source._next_request())
+    assert req0.group_ids == [0] and req1.group_ids == [1]
+
+    meta0 = GroupMetadata(
+        group_id=0,
+        task_name="rpent",
+        earliest_version=1,
+        completion_version=1,
+        num_gen_tokens=1,
+        num_generate_calls=1,
+        rewards=[1.0],
+        payload_ref=PayloadRef(locator="channel://Payload_0", key=0),
+    )
+    prepared, cleared_meta = asyncio.run(source._prepare_result(None, meta0))
+    assert cleared_meta.payload_ref is None
+    assert prepared.extra_fields_train["idx_to_sub_traj"] == [0]
+    source.buffer.record_result(prepared, cleared_meta)
+    asyncio.run(source.save_checkpoint(str(tmp_path)))
+
+    restored = _build_worker()
+    # Missing data.pt warns and returns cleanly (actor-only checkpoints).
+    empty_dir = tmp_path / "no_data"
+    empty_dir.mkdir()
+    asyncio.run(restored.load_checkpoint(str(empty_dir), 0))
+    restored.log_warning.assert_called_once()
+
+    asyncio.run(restored.load_checkpoint(str(tmp_path), 1))
+    assert list(restored.buffer.tasks["rpent"]["buffer"]) == [0]
+    assert [r.group_ids[0] for r in restored._replay_requests] == [1]
+    assert isinstance(restored._replay_requests[0], RolloutRequest)
+    assert restored.buffer.next_group_id == 2
+    assert restored.buffer.num_samples_fetched == 2
+
+    restored.buffer.max_buffered_groups = 1
+    with pytest.raises(ValueError, match="max_buffered_groups"):
+        asyncio.run(restored.load_checkpoint(str(tmp_path), 1))
+
+
+def test_rpent_cohort_admit_clears_late_payload_and_checks_discards(monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    from rlinf.agents.rpent.rollout_buffer import RPentCohortBuffer
+
+    monkeypatch.setattr(Worker, "__init__", lambda self: None)
+    cfg = OmegaConf.create(
+        {
+            "runner": {"synchronous": True},
+            "data": {
+                "rollout_batch_size": 1,
+                "sampling_batch_size": 2,
+                "shuffle": False,
+                "num_workers": 0,
+            },
+            "algorithm": {"group_size": 1, "loss_scales": []},
+            "agentloop": {"task_name": "rpent"},
+            "rollout_buffer": {
+                "max_inflight_groups": 4,
+                "max_buffered_groups": 4,
+                "max_dropped_groups_per_step": 10,
+            },
+        }
+    )
+    worker = RPentCohortBuffer(cfg, _ToyDataset(4))
+    worker._prompts = Mock()
+    worker._prompts.put.return_value.async_wait = AsyncMock()
+    worker._rollout_channel = Mock()
+    worker._rollout_channel.put.return_value.async_wait = AsyncMock()
+    worker._incoming = Mock()
+    worker._prepare_result = AsyncMock(
+        side_effect=lambda _, meta: (_result(meta.group_id, task_name="rpent"), meta)
+    )
+    worker._release_payload = AsyncMock()
+
+    meta0 = GroupMetadata(
+        group_id=0,
+        task_name="rpent",
+        earliest_version=1,
+        completion_version=1,
+        num_gen_tokens=4,
+        num_generate_calls=1,
+        rewards=[1.0],
+    )
+    late1 = GroupMetadata(
+        group_id=1,
+        task_name="rpent",
+        earliest_version=1,
+        completion_version=1,
+        num_gen_tokens=4,
+        num_generate_calls=1,
+        rewards=[0.0],
+    )
+    worker._incoming.get.return_value.async_wait = AsyncMock(side_effect=[meta0, late1])
+    cohort = asyncio.run(worker.release_batch(1))
+    assert cohort["selected"] == [0]
+    assert cohort["remaining"] == [1]
+
+    late_ids = asyncio.run(worker.admit_cohort(cohort))
+    assert late_ids == [1]
+    worker._release_payload.assert_awaited_once_with(late1)
+    worker._rollout_channel.put.assert_called_once()
+
+    worker._incoming.get.return_value.async_wait = AsyncMock(
+        return_value=DiscardedGroup(group_id=1, reason="unexpected_error")
+    )
+    worker._selected = []
+    with pytest.raises(RuntimeError, match="Unselected episode group failed"):
+        asyncio.run(worker.admit_cohort({"remaining": [1]}))
+
+
+def test_fold_continuous_turns_masks_tools_and_splits_on_rewrite_or_version():
+    from rlinf.workers.rollout.session_server.assembly import fold_continuous_turns
+
+    px0 = torch.full((4, 3), 1.0)
+    px1 = torch.full((4, 3), 2.0)
+    grid = torch.tensor([[1, 2, 2]])
+    mm_rows = [
+        {
+            "pixel_values": [px0],
+            "image_grid_thw": grid,
+            "mm_token_type_ids": torch.tensor([1, 0]),
+        },
+        {
+            "pixel_values": [px0],
+            "image_grid_thw": grid,
+            "mm_token_type_ids": torch.tensor([1, 0, 0, 0]),
+        },
+        {
+            # Altered visual prefix inside [0:4] forces a split on rewrite.
+            "pixel_values": [px1],
+            "image_grid_thw": grid,
+            "mm_token_type_ids": torch.tensor([1, 1, 0, 0, 0, 0]),
+        },
+        {
+            "pixel_values": [px1],
+            "image_grid_thw": grid,
+            "mm_token_type_ids": torch.tensor([1, 1, 0, 0, 0, 0, 0, 0]),
+        },
+    ]
+
+    result = DynamicRolloutResult(
+        num_sequence=4,
+        group_size=1,
+        idx_to_traj=[0, 0, 0, 0],
+        input_ids=[
+            [1, 2],
+            [1, 2, 8, 3],
+            [1, 2, 8, 3, 9, 4],
+            [1, 2, 8, 3, 9, 4, 7, 5],
+        ],
+        prompt_lengths=[1, 3, 5, 7],
+        response_lengths=[1, 1, 1, 1],
+        rollout_logprobs=[[-1.0], [-2.0], [-3.0], [-4.0]],
+        rewards=[1.0] * 4,
+        version_start=[2, 2, 2, 3],
+        version_end=[2, 2, 2, 3],
+        is_end=[True] * 4,
+        extra_fields_turn={"rollout_weight_versions": [[2], [2], [2], [3]]},
+        multi_modal_inputs=mm_rows,
+    )
+    assert fold_continuous_turns(result, 1) is result
+    folded = fold_continuous_turns(result, 3)
+    # Turn 1 folds into 0 (same version 2, aligned image prefix); turn 2
+    # splits on image rewrite; turn 3 splits on version 2 -> 3.
+    assert folded.num_sequence == 3
+    assert folded.input_ids == result.input_ids[1:]
+    assert folded.version_start == [2, 2, 3]
+    assert folded.version_end == [2, 2, 3]
+    batch = folded.to_actor_batch()
+    assert batch["response_mask"][0].tolist() == [False, True, False, True]
+    assert batch["rollout_logprobs"][0].tolist() == [0.0, -1.0, 0.0, -2.0]
+    assert folded.extra_fields_turn["rollout_weight_versions"] == [[2, 2], [2], [3]]
+    assert folded.group_metadata().num_generate_calls == 4
+    assert folded.group_metadata().num_gen_tokens == 4
+
+    # Same mm_token_type_ids prefix but changed pixel tensor also splits.
+    pixel_changed = DynamicRolloutResult(
+        num_sequence=2,
+        group_size=1,
+        idx_to_traj=[0, 0],
+        input_ids=[[1, 2], [1, 2, 8, 3]],
+        prompt_lengths=[1, 3],
+        response_lengths=[1, 1],
+        is_end=[False, True],
+        rewards=[1.0, 1.0],
+        multi_modal_inputs=[mm_rows[0], {**mm_rows[1], "pixel_values": [px1]}],
+    )
+    assert fold_continuous_turns(pixel_changed, 4).num_sequence == 2
+
+    unversioned = DynamicRolloutResult(
+        num_sequence=2,
+        group_size=1,
+        idx_to_traj=[0, 0],
+        input_ids=[[1, 2], [1, 2, 8, 3]],
+        prompt_lengths=[1, 3],
+        response_lengths=[1, 1],
+        is_end=[False, True],
+        rewards=None,
+        version_start=None,
+        version_end=None,
+        multi_modal_inputs=mm_rows[:2],
+    )
+    folded_unversioned = fold_continuous_turns(unversioned, 4)
+    assert folded_unversioned.num_sequence == 1
+    assert folded_unversioned.version_start is None
+    assert folded_unversioned.version_end is None
+    assert folded_unversioned.rewards is None
+    assert folded_unversioned.extra_fields_turn == {"generate_calls": [2]}
+
+    text_only = DynamicRolloutResult(
+        num_sequence=2,
+        group_size=1,
+        idx_to_traj=[0, 0],
+        input_ids=[[1, 2], [1, 2, 8, 3]],
+        prompt_lengths=[1, 3],
+        response_lengths=[1, 1],
+        is_end=[False, True],
+        rewards=[1.0, 1.0],
+        multi_modal_inputs=None,
+    )
+    folded_text = fold_continuous_turns(text_only, 4)
+    assert folded_text.num_sequence == 1
+    assert folded_text.multi_modal_inputs is None
+    assert folded_text.extra_fields_turn == {"generate_calls": [2]}
