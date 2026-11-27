@@ -288,18 +288,14 @@ step 和 close 后，再提高 ``env.eval.total_num_envs``。
 
 **使用 PPO 训练**
 
-PPO 训练配置（``examples/embodiment/config/robodojo_put_bottles_into_dustbin_ppo_openpi_pi05.yaml``）在训练环境启用随机布局与按环境自动重置，并用固定布局验证。在 RLinf 仓库根目录直接复用上一步转换后的 checkpoint 启动训练：
+PPO 训练配置（``examples/embodiment/config/robodojo_put_bottles_into_dustbin_ppo_openpi_pi05.yaml``\ ）在训练环境启用随机布局与按环境自动重置，并用固定布局验证。先在该文件中将 ``actor.model.model_path`` 设为转换后的 checkpoint 目录，再在 RLinf 仓库根目录启动训练：
 
 .. code-block:: bash
 
    export ROBODOJO_ASSETS_ROOT=/path/to/robodojo
-   export REPO_PATH="$(pwd)"
-   export EMBODIED_PATH="$REPO_PATH/examples/embodiment"
-   PYTHONPATH="$REPO_PATH" python examples/embodiment/train_embodied_agent.py \
-     --config-name robodojo_put_bottles_into_dustbin_ppo_openpi_pi05 \
-     actor.model.model_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5"
+   bash examples/embodiment/run_embodiment.sh robodojo_put_bottles_into_dustbin_ppo_openpi_pi05
 
-日志与 TensorBoard 事件写入 ``runner.logger.log_path``\ （默认 ``../results``\ ）。也可以在 ``examples/embodiment/config/robodojo_put_bottles_into_dustbin_ppo_openpi_pi05.yaml`` 中填写 ``actor.model.model_path``，再运行 ``bash examples/embodiment/run_embodiment.sh robodojo_put_bottles_into_dustbin_ppo_openpi_pi05``，日志会写入 ``logs/<timestamp>-robodojo_put_bottles_into_dustbin_ppo_openpi_pi05/``。
+日志与 TensorBoard 事件写入 ``logs/<timestamp>-robodojo_put_bottles_into_dustbin_ppo_openpi_pi05/`` 。
 
 .. warning::
 

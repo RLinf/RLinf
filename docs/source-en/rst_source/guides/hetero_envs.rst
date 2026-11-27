@@ -196,10 +196,9 @@ The ``libero_robodojo_robolab_ppo_openpi_pi05`` config trains one shared OpenPI 
 Prerequisites:
 
 - **Hardware**: 4 GPUs (GPUs 0–2 host the LIBERO, RoboDojo, and RoboLab env workers; GPU 3 hosts actor and rollout).
-- **Simulator environments**: three OpenPI virtual environments built with ``requirements/install.sh`` for LIBERO, :doc:`RoboDojo <../examples/embodied/robodojo>`, and :doc:`RoboLab <../examples/embodied/robolab>`.
 - **Assets and checkpoint**: RoboDojo scene assets (see :doc:`../examples/embodied/robodojo`), one shared OpenPI π₀.₅ checkpoint (for example ``RLinf/RLinf-Pi05-LIBERO-SFT``), and each simulator's ``norm_stats.json``.
 
-1. Install the three simulator environments into separate venvs:
+1. Install the three simulator environments into separate venvs (see :doc:`../examples/embodied/robodojo` and :doc:`../examples/embodied/robolab` for simulator-specific prerequisites):
 
    .. code-block:: bash
 
@@ -212,13 +211,13 @@ Prerequisites:
    - ``env.train.envs.<name>.python_interpreter_path``: Python binaries for ``libero``, ``robodojo``, and ``robolab`` (set ``env.eval.envs.<name>.python_interpreter_path`` to the same paths when validation is enabled).
    - ``env.train.envs.robodojo.assets_path``: parent directory of RoboDojo's ``Assets/`` (set ``env.eval.envs.robodojo.assets_path`` too when validation is enabled).
    - ``actor.model.model_path``: path to the shared OpenPI π₀.₅ checkpoint (``rollout.model.model_path`` inherits it).
-   - ``actor.model.envs.<name>.norm_stats_path``: normalization stats for ``libero``, ``robodojo``, and ``robolab``. The default preset wires LIBERO's stats from ``RLinf-Pi05-LIBERO-SFT`` and leaves RoboDojo and RoboLab ``null``; point them at each simulator's ``norm_stats.json`` before running a real training job so their states and actions use the right scale.
+   - ``actor.model.envs.<name>.norm_stats_path``: normalization stats for ``libero``, ``robodojo``, and ``robolab``. Point RoboDojo and RoboLab at their own ``norm_stats.json`` before a full training run so their states and actions use the right scale.
 
-3. For a full training run (the preset ships with short smoke-test settings), increase these fields:
+3. The preset is sized for a quick check. Before a full training run, adjust the schedule and rollout settings:
 
-   - ``runner.max_epochs`` (preset: ``2``), ``runner.val_check_interval``, and ``runner.save_interval`` (preset: ``-1``).
-   - Per-env ``max_episode_steps`` and ``max_steps_per_rollout_epoch`` (keep them multiples of ``actor.model.num_action_chunks``).
-   - ``actor.model.num_steps`` (preset: ``3``; use ``10`` for full denoising) and ``video_cfg.save_video`` (preset: ``true``; disable to speed up long runs).
+   - Raise ``runner.max_epochs``, ``runner.val_check_interval``, ``runner.save_interval``, and ``actor.model.num_steps``.
+   - Raise per-env ``max_episode_steps`` and ``max_steps_per_rollout_epoch``. Each ``max_steps_per_rollout_epoch`` must be a multiple of ``actor.model.num_action_chunks``, and the total chunk transitions across all environments — summing ``total_num_envs * rollout_epoch * (max_steps_per_rollout_epoch / num_action_chunks)`` — must be divisible by ``actor.global_batch_size``. For example, with ``total_num_envs: 2``, ``rollout_epoch: 1``, and ``num_action_chunks: 10``, rollout horizons of ``160`` / ``160`` / ``80`` produce ``32 + 32 + 16 = 80`` transitions, which divides evenly by ``actor.global_batch_size: 5``.
+   - Disable ``video_cfg.save_video`` on each environment to speed up long runs.
 
 4. Activate one of the OpenPI environments (for example ``source .venv-libero/bin/activate``) and launch training from the repository root:
 
@@ -233,6 +232,6 @@ Supported Scope
 
 - Rollout backend: ``rollout.rollout_backend: huggingface``.
 - Per-env ``unnorm_key``: OpenVLA-OFT only.
-- Per-env ``actor.model.envs`` / ``rollout.model.envs``: OpenPI only (not supported with multi-env NFT).
+- Per-env ``actor.model.envs`` / ``rollout.model.envs``: OpenPI only.
 - NFT: requires ``policy_obs`` and ``algorithm.env_weighting: sample``, without per-env ``loss_weight`` or multi-env ``actor.model.envs``.
 - Single-env only features: ``runner.use_training_pipeline``, online LeRobot collection for DAgger, DiffusionART, ``reward.use_reward_model``, ``smooth_intervene``, and ``runner.rtc``. RLT simulator replay requires all train environments to be ``maniskill_rlt``.

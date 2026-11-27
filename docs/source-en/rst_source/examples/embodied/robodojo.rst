@@ -315,18 +315,14 @@ uses ``[6, 6, 1, 1]``, which is a 14-dimensional action.
 
 **Train with PPO**
 
-The PPO training configuration (``examples/embodiment/config/robodojo_put_bottles_into_dustbin_ppo_openpi_pi05.yaml``) uses random training layouts with per-environment auto-reset and fixed saved layouts for validation. Run from the RLinf repository root with the converted checkpoint from the previous step:
+The PPO training configuration (``examples/embodiment/config/robodojo_put_bottles_into_dustbin_ppo_openpi_pi05.yaml``) uses random training layouts with per-environment auto-reset and fixed saved layouts for validation. Set ``actor.model.model_path`` in that file to your converted checkpoint directory, then launch from the RLinf repository root:
 
 .. code-block:: bash
 
    export ROBODOJO_ASSETS_ROOT=/path/to/robodojo
-   export REPO_PATH="$(pwd)"
-   export EMBODIED_PATH="$REPO_PATH/examples/embodiment"
-   PYTHONPATH="$REPO_PATH" python examples/embodiment/train_embodied_agent.py \
-     --config-name robodojo_put_bottles_into_dustbin_ppo_openpi_pi05 \
-     actor.model.model_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5"
+   bash examples/embodiment/run_embodiment.sh robodojo_put_bottles_into_dustbin_ppo_openpi_pi05
 
-Logs and TensorBoard events are written to ``runner.logger.log_path`` (``../results`` by default). Alternatively, set ``actor.model.model_path`` in ``examples/embodiment/config/robodojo_put_bottles_into_dustbin_ppo_openpi_pi05.yaml`` and launch with ``bash examples/embodiment/run_embodiment.sh robodojo_put_bottles_into_dustbin_ppo_openpi_pi05``, which writes logs to ``logs/<timestamp>-robodojo_put_bottles_into_dustbin_ppo_openpi_pi05/``.
+Logs and TensorBoard events are written to ``logs/<timestamp>-robodojo_put_bottles_into_dustbin_ppo_openpi_pi05/``.
 
 .. warning::
 

@@ -194,10 +194,9 @@ OpenPI PPO（LIBERO、RoboDojo 与 RoboLab）
 前置条件：
 
 - **硬件**：4 张 GPU（GPU 0–2 分别运行 LIBERO、RoboDojo 和 RoboLab 的 env worker，GPU 3 运行 actor 与 rollout）。
-- **仿真器环境**：通过 ``requirements/install.sh`` 分别安装 LIBERO、:doc:`RoboDojo <../examples/embodied/robodojo>` 和 :doc:`RoboLab <../examples/embodied/robolab>` 的 OpenPI 虚拟环境。
-- **资产与权重**：RoboDojo 场景资产（见 :doc:`../examples/embodied/robodojo` ）、一份共享的 OpenPI π₀.₅ checkpoint（例如 ``RLinf/RLinf-Pi05-LIBERO-SFT``），以及各仿真器对应的 ``norm_stats.json``。
+- **资产与权重**：RoboDojo 场景资产（见 :doc:`../examples/embodied/robodojo` ）、一份共享的 OpenPI π₀.₅ checkpoint（例如 ``RLinf/RLinf-Pi05-LIBERO-SFT`` ），以及各仿真器对应的 ``norm_stats.json`` 。
 
-1. 将三个仿真器安装到独立虚拟环境：
+1. 将三个仿真器安装到独立虚拟环境（各仿真器的额外前置条件见 :doc:`../examples/embodied/robodojo` 与 :doc:`../examples/embodied/robolab` ）：
 
    .. code-block:: bash
 
@@ -205,32 +204,32 @@ OpenPI PPO（LIBERO、RoboDojo 与 RoboLab）
       bash requirements/install.sh embodied --model openpi --env robodojo --venv .venv-robodojo
       bash requirements/install.sh embodied --model openpi --env robolab --venv .venv-robolab
 
-2. 编辑 ``examples/embodiment/config/libero_robodojo_robolab_ppo_openpi_pi05.yaml``，填写本地路径：
+2. 编辑 ``examples/embodiment/config/libero_robodojo_robolab_ppo_openpi_pi05.yaml`` ，填写本地路径：
 
-   - ``env.train.envs.<name>.python_interpreter_path``：分别指向 ``libero``、``robodojo`` 和 ``robolab`` 的 Python 解释器（开启验证时，``env.eval.envs.<name>.python_interpreter_path`` 需填写相同路径）。
-   - ``env.train.envs.robodojo.assets_path``：指向 RoboDojo ``Assets/`` 的父目录（开启验证时同步设置 ``env.eval.envs.robodojo.assets_path``）。
-   - ``actor.model.model_path``：指向共享的 OpenPI π₀.₅ checkpoint 目录（``rollout.model.model_path`` 自动复用该值）。
-   - ``actor.model.envs.<name>.norm_stats_path``：分别为 ``libero``、``robodojo`` 和 ``robolab`` 指定归一化统计文件。默认预设复用 ``RLinf-Pi05-LIBERO-SFT`` 自带的 LIBERO 统计文件，并将 RoboDojo 与 RoboLab 留为 ``null``；正式训练前请指向各自 checkpoint 对应的 ``norm_stats.json``，确保状态与动作尺度一致。
+   - ``env.train.envs.<name>.python_interpreter_path`` ：分别指向 ``libero`` 、 ``robodojo`` 和 ``robolab`` 的 Python 解释器（开启验证时， ``env.eval.envs.<name>.python_interpreter_path`` 需填写相同路径）。
+   - ``env.train.envs.robodojo.assets_path`` ：指向 RoboDojo ``Assets/`` 的父目录（开启验证时同步设置 ``env.eval.envs.robodojo.assets_path`` ）。
+   - ``actor.model.model_path`` ：指向共享的 OpenPI π₀.₅ checkpoint 目录（ ``rollout.model.model_path`` 自动复用该值）。
+   - ``actor.model.envs.<name>.norm_stats_path`` ：分别为 ``libero`` 、 ``robodojo`` 和 ``robolab`` 指定归一化统计文件。正式训练前，将 RoboDojo 和 RoboLab 指向各自对应的 ``norm_stats.json`` ，保证状态与动作尺度一致。
 
-3. 默认预设使用较短的烟雾测试参数；正式训练时调大以下配置项：
+3. 默认预设面向快速验证；正式训练前按以下方式调整训练与 rollout 配置：
 
-   - ``runner.max_epochs``\ （预设 ``2``\ ）、``runner.val_check_interval`` 和 ``runner.save_interval``\ （预设 ``-1``\ ）。
-   - 各环境的 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch``\ （保持为 ``actor.model.num_action_chunks`` 的整数倍）。
-   - ``actor.model.num_steps``\ （预设 ``3``，正式训练可设为 ``10``\ ）与 ``video_cfg.save_video``\ （预设 ``true``，长程训练可关闭以提速）。
+   - 调大 ``runner.max_epochs`` 、 ``runner.val_check_interval`` 、 ``runner.save_interval`` 和 ``actor.model.num_steps`` 。
+   - 调大各环境的 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch`` 。每个环境的 ``max_steps_per_rollout_epoch`` 须为 ``actor.model.num_action_chunks`` 的整数倍，且所有环境的 chunk transition 总数（各环境 ``total_num_envs * rollout_epoch * (max_steps_per_rollout_epoch / num_action_chunks)`` 之和）须能被 ``actor.global_batch_size`` 整除。例如在 ``total_num_envs: 2`` 、 ``rollout_epoch: 1`` 、 ``num_action_chunks: 10`` 下，将三个环境的 rollout 步数设为 ``160`` / ``160`` / ``80`` ，总样本数为 ``32 + 32 + 16 = 80`` ，可被 ``actor.global_batch_size: 5`` 整除。
+   - 关闭各环境的 ``video_cfg.save_video`` 以加快长程训练速度。
 
-4. 激活任意一个 OpenPI 虚拟环境（例如 ``source .venv-libero/bin/activate``），在仓库根目录启动训练：
+4. 激活任意一个 OpenPI 虚拟环境（例如 ``source .venv-libero/bin/activate`` ），在仓库根目录启动训练：
 
    .. code-block:: bash
 
       bash examples/embodiment/run_embodiment.sh libero_robodojo_robolab_ppo_openpi_pi05
 
-5. 在终端指标表或 TensorBoard（目录位于 ``logs/<timestamp>-libero_robodojo_robolab_ppo_openpi_pi05/``）中查看 ``env/libero/success_once``、``env/robodojo/success_once`` 和 ``env/robolab/success_once``。
+5. 在终端指标表或 TensorBoard（目录位于 ``logs/<timestamp>-libero_robodojo_robolab_ppo_openpi_pi05/`` ）中查看 ``env/libero/success_once`` 、 ``env/robodojo/success_once`` 和 ``env/robolab/success_once`` 。
 
 支持范围
 --------
 
 - Rollout 后端： ``rollout.rollout_backend: huggingface`` 。
 - 分环境 ``unnorm_key`` ：仅支持 OpenVLA-OFT。
-- 分环境 ``actor.model.envs`` / ``rollout.model.envs`` ：仅支持 OpenPI（不支持多环境 NFT）。
+- 分环境 ``actor.model.envs`` / ``rollout.model.envs`` ：仅支持 OpenPI。
 - NFT：需配置 ``policy_obs`` 与 ``algorithm.env_weighting: sample`` ，不支持分环境 ``loss_weight`` 或多环境 ``actor.model.envs`` 。
 - 目前仅支持单环境的特性： ``runner.use_training_pipeline`` 、DAgger 在线 LeRobot 采集、DiffusionART、 ``reward.use_reward_model`` 、 ``smooth_intervene`` 、 ``runner.rtc`` ；RLT 仿真 replay 要求全部训练环境为 ``maniskill_rlt`` 。

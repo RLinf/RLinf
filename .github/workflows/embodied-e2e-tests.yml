@@ -1260,6 +1260,7 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh robodojo_ppo_openpi_pi05
 
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
           rm -rf /tmp/tmp*

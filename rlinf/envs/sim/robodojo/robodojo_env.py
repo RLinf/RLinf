@@ -286,6 +286,7 @@ class RoboDojoEnv(gym.Env):
         self.update_reset_state_ids()
         self._elapsed_steps = torch.zeros(num_envs, dtype=torch.long)
         self.prev_step_reward = torch.zeros(num_envs)
+        self._done = torch.zeros(num_envs, dtype=torch.bool)
         if record_metrics:
             self._init_metrics()
         self._init_env()
@@ -362,6 +363,7 @@ class RoboDojoEnv(gym.Env):
         index = slice(None) if env_idx is None else env_idx
         self._elapsed_steps[index] = 0
         self.prev_step_reward[index] = 0
+        self._done[index] = False
         if self.record_metrics:
             self.success_once[index] = False
             self.returns[index] = 0
@@ -503,11 +505,23 @@ class RoboDojoEnv(gym.Env):
                 self.prev_step_reward = current
         elif active is not None:
             reward = torch.where(active, reward, torch.zeros_like(reward))
-        if active is not None:
-            self._elapsed_steps[active] += actions.shape[1]
+        if not self.ignore_terminations and "executed_steps" in infos:
+            step_delta = torch.as_tensor(
+                infos["executed_steps"], dtype=torch.long
+            ).reshape(self.num_envs)
         else:
-            self._elapsed_steps += actions.shape[1]
-        truncated |= self.elapsed_steps >= self.cfg.max_episode_steps
+            step_delta = torch.full(
+                (self.num_envs,), actions.shape[1], dtype=torch.long
+            )
+        if active is not None:
+            self._elapsed_steps[active] += step_delta[active]
+        else:
+            self._elapsed_steps += step_delta
+        if self.ignore_terminations:
+            terminated.zero_()
+        truncated = (
+            truncated | (self.elapsed_steps >= self.cfg.max_episode_steps)
+        ) & ~terminated
         if active is not None:
             terminated = terminated & active
             truncated = truncated & active
@@ -520,8 +534,6 @@ class RoboDojoEnv(gym.Env):
                 )
         if self.record_metrics:
             self._record_metrics(reward, infos, active_mask=active)
-        if self.ignore_terminations:
-            terminated.zero_()
         dones = terminated | truncated
         if auto_reset and self.auto_reset and dones.any():
             obs, infos = self._auto_reset(dones, obs, infos)
@@ -560,11 +572,11 @@ class RoboDojoEnv(gym.Env):
             reward = torch.zeros(self.num_envs, dtype=torch.float32)
             terminated = torch.zeros(self.num_envs, dtype=torch.bool)
             truncated = torch.zeros(self.num_envs, dtype=torch.bool)
-            already_done = torch.zeros(self.num_envs, dtype=torch.bool)
+            already_done = self._done.clone()
             executed_action_count = None
             infos = {}
             for index in range(chunk_actions.shape[1]):
-                if already_done.all():
+                if already_done.all() and obs_list:
                     break
                 active = ~already_done
                 obs, reward_t, terminated_t, truncated_t, infos = self.step(
@@ -589,13 +601,18 @@ class RoboDojoEnv(gym.Env):
                         if executed_action_count is None
                         else executed_action_count + executed_t
                     )
-                already_done = terminated | truncated
+                already_done = already_done | terminated | truncated
+            self._done = already_done
         else:
             obs_list = None
+            step_kwargs = {"auto_reset": False}
+            if self._done.any():
+                step_kwargs["active_mask"] = ~self._done
             obs, reward, terminated, truncated, infos = self.step(
-                chunk_actions, auto_reset=False
+                chunk_actions, **step_kwargs
             )
             executed_action_count = infos.pop("executed_steps", None)
+            self._done = self._done | terminated | truncated
         dones = terminated | truncated
         if self.auto_reset and dones.any():
             obs, infos = self._auto_reset(

@@ -79,17 +79,13 @@ Run It
 
 Follow the :doc:`evaluation guide <../../evaluations/guides/robolab>` to install the environment, download the ``RLinf-Pi05-RoboLab-droid-jointpos`` checkpoint, inspect tasks, and run evaluation.
 
-For PPO training on ``BananaInBowlTask``, run from the RLinf repository root with your local checkpoint path:
+For PPO training on ``BananaInBowlTask``, set ``actor.model.model_path`` in ``examples/embodiment/config/robolab_banana_in_bowl_ppo_openpi_pi05.yaml`` to your local checkpoint directory and launch from the RLinf repository root:
 
 .. code-block:: bash
 
-   export REPO_PATH="$(pwd)"
-   export EMBODIED_PATH="$REPO_PATH/examples/embodiment"
-   PYTHONPATH="$REPO_PATH" python examples/embodiment/train_embodied_agent.py \
-     --config-name robolab_banana_in_bowl_ppo_openpi_pi05 \
-     actor.model.model_path=/path/to/model/RLinf-Pi05-RoboLab-droid-jointpos
+   bash examples/embodiment/run_embodiment.sh robolab_banana_in_bowl_ppo_openpi_pi05
 
-Logs and TensorBoard events are written to ``runner.logger.log_path`` (``../results`` by default). Alternatively, set ``actor.model.model_path`` in ``examples/embodiment/config/robolab_banana_in_bowl_ppo_openpi_pi05.yaml`` and run ``bash examples/embodiment/run_embodiment.sh robolab_banana_in_bowl_ppo_openpi_pi05``, which writes logs to ``logs/<timestamp>-robolab_banana_in_bowl_ppo_openpi_pi05/``.
+Logs and TensorBoard events are written to ``logs/<timestamp>-robolab_banana_in_bowl_ppo_openpi_pi05/``.
 
 Training uses per-environment auto-reset.
 
@@ -100,7 +96,7 @@ Training uses per-environment auto-reset.
 Visualization and Results
 -------------------------
 
-Watch ``env/success_once`` and ``env/return`` during PPO training, and ``eval/success_once`` and ``eval/score`` during validation and evaluation, in the terminal or TensorBoard (``tensorboard --logdir <log_path>``). The following benchmark runs use the same 120 tasks and ten episodes per task; see the :doc:`evaluation guide <../../evaluations/guides/robolab>` for evaluation metrics and logs.
+Watch ``env/success_once`` and ``env/return`` during PPO training, and ``eval/success_once`` and ``eval/score`` during validation and evaluation, in the terminal or TensorBoard (``tensorboard --logdir <log_path>``). See :doc:`Training metrics <../../reference/metrics>` for training metric definitions. The following benchmark evaluation runs use the same 120 tasks and ten episodes per task; see the :doc:`evaluation guide <../../evaluations/guides/robolab>` for evaluation metrics and logs.
 
 
 .. list-table::

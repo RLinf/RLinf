@@ -157,7 +157,11 @@ class RoboLabProcess:
         self.score[indices] = 0
         return self.last_obs
 
-    def _pack_obs(self, raw) -> dict:
+    def _pack_obs(
+        self,
+        raw,
+        slot_overrides: dict[int, dict[str, np.ndarray]] | None = None,
+    ) -> dict:
         active_mask = np.zeros(self.num_envs, dtype=bool)
         active_mask[self.env.active_env_ids] = True
         active_mask &= ~self.finished
@@ -165,6 +169,18 @@ class RoboLabProcess:
         proprio = raw["proprio_obs"]
         main_images = images["over_shoulder_left_camera"].detach().cpu().numpy()
         wrist_images = images["wrist_cam"].detach().cpu().numpy()
+        arm_joint_pos = proprio["arm_joint_pos"].detach().cpu().numpy()
+        gripper_pos = proprio["gripper_pos"].detach().cpu().numpy()
+        if slot_overrides:
+            main_images = main_images.copy()
+            wrist_images = wrist_images.copy()
+            arm_joint_pos = arm_joint_pos.copy()
+            gripper_pos = gripper_pos.copy()
+            for env_id, slot in slot_overrides.items():
+                main_images[env_id] = slot["main_image"]
+                wrist_images[env_id] = slot["wrist_image"]
+                arm_joint_pos[env_id] = slot["arm_joint_pos"]
+                gripper_pos[env_id] = slot["gripper_pos"]
         return {
             "main_images": np.stack(
                 [
@@ -179,14 +195,30 @@ class RoboLabProcess:
                 ]
             ),
             "states": np.concatenate(
-                [
-                    proprio["arm_joint_pos"].detach().cpu().numpy(),
-                    proprio["gripper_pos"].detach().cpu().numpy(),
-                ],
+                [arm_joint_pos, gripper_pos],
                 axis=-1,
             ).astype(np.float32),
             "task_descriptions": [self.prompt] * self.num_envs,
             "active_mask": active_mask,
+        }
+
+    @staticmethod
+    def _snapshot_slot_obs(raw, env_id: int) -> dict[str, np.ndarray]:
+        images = raw["image_obs"]
+        proprio = raw["proprio_obs"]
+        return {
+            "main_image": images["over_shoulder_left_camera"][env_id]
+            .detach()
+            .cpu()
+            .numpy()
+            .copy(),
+            "wrist_image": images["wrist_cam"][env_id].detach().cpu().numpy().copy(),
+            "arm_joint_pos": proprio["arm_joint_pos"][env_id]
+            .detach()
+            .cpu()
+            .numpy()
+            .copy(),
+            "gripper_pos": proprio["gripper_pos"][env_id].detach().cpu().numpy().copy(),
         }
 
     def reset(self, seed: int | None = None, env_ids: list[int] | None = None) -> dict:
@@ -230,6 +262,7 @@ class RoboLabProcess:
         truncations = np.zeros((self.num_envs, horizon), dtype=bool)
         executed_steps = np.zeros(self.num_envs, dtype=np.int32)
         newly_finished = np.zeros(self.num_envs, dtype=bool)
+        terminal_slots: dict[int, dict[str, np.ndarray]] = {}
         frames: list[np.ndarray] = []
         for index in range(horizon):
             if self.finished.all():
@@ -253,7 +286,14 @@ class RoboLabProcess:
                 ):
                     continue
                 self.finished[env_id] = True
+                # Freeze RLinf-timed-out slots so later sub-steps do not step or
+                # record them while other slots remain active.
+                self.env._frozen_envs[env_id] = True
                 newly_finished[env_id] = True
+                if self.auto_reset:
+                    terminal_slots[env_id] = self._snapshot_slot_obs(
+                        self.last_obs, env_id
+                    )
                 self.success[env_id] = float(native_success is True)
                 if self.enable_subtask:
                     subtask_info = self._get_current_subtask_info(
@@ -271,7 +311,12 @@ class RoboLabProcess:
                 terminations[env_id, index] = bool(native_success is True)
                 truncations[env_id, index] = not terminations[env_id, index]
 
-        final_observation = self._pack_obs(self.last_obs)
+        did_auto_reset = self.auto_reset and bool(newly_finished.any())
+        final_observation = (
+            self._pack_obs(self.last_obs, slot_overrides=terminal_slots)
+            if did_auto_reset
+            else None
+        )
         episode = {
             "success_once": self.success.copy(),
             "return": self.success.copy(),
@@ -280,7 +325,7 @@ class RoboLabProcess:
         }
         if self.enable_subtask:
             episode["score"] = self.score.copy()
-        if self.auto_reset and newly_finished.any():
+        if did_auto_reset:
             terminations[newly_finished, :] = False
             truncations[newly_finished, :] = False
             terminations[newly_finished, -1] = self.success[newly_finished].astype(bool)
@@ -291,7 +336,7 @@ class RoboLabProcess:
         return {
             "observation": self._pack_obs(self.last_obs),
             "final_observation": final_observation,
-            "final_mask": newly_finished,
+            "final_mask": newly_finished if did_auto_reset else None,
             "executed_steps": executed_steps,
             "rewards": rewards,
             "terminations": terminations,

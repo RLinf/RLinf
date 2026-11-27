@@ -887,6 +887,16 @@ def test_robolab_chunk_exposes_terminal_data_and_execution_mask(monkeypatch):
             "reward": np.array([0.5, 0], dtype=np.float32),
         },
     }
+    # Simulate Ray Plasma read-only NumPy deserialization.
+    for value in (
+        result["final_mask"],
+        result["executed_steps"],
+        result["rewards"],
+        result["terminations"],
+        result["truncations"],
+        *result["episode"].values(),
+    ):
+        value.setflags(write=False)
 
     class RemoteChunkStep:
         def remote(self, actions, collect_frames=False):
@@ -898,9 +908,15 @@ def test_robolab_chunk_exposes_terminal_data_and_execution_mask(monkeypatch):
         "rlinf.envs.sim.robolab.robolab_env.ray.get", lambda value: value
     )
 
-    observations, rewards, terminations, truncations, infos = env.chunk_step(
-        np.zeros((2, 3, 8), dtype=np.float32)
-    )
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        observations, rewards, terminations, truncations, infos = env.chunk_step(
+            np.zeros((2, 3, 8), dtype=np.float32)
+        )
+
+    assert not [w for w in caught if "not writable" in str(w.message)]
 
     assert len(observations) == len(infos) == 1
     assert rewards.shape == terminations.shape == truncations.shape == (2, 3)
@@ -1008,11 +1024,23 @@ def test_robolab_process_done_flags_and_partial_reset_contract():
         proc.episode_open = True
         return proc, events
 
-    # Eval (auto_reset=False): done appears once at finishing step, not duplicated at -1.
+    # Eval (auto_reset=False): done appears once at finishing step, not duplicated at -1,
+    # and no final_observation/final_mask is emitted (avoiding double-pack and duplicate video frames).
     eval_proc, _ = _make_process(auto_reset=False, max_steps=10, finish_on_step=2)
+    pack_calls = {"n": 0}
+    orig_pack = eval_proc._pack_obs
+
+    def _counting_pack(*args, **kwargs):
+        pack_calls["n"] += 1
+        return orig_pack(*args, **kwargs)
+
+    eval_proc._pack_obs = _counting_pack
     eval_res = eval_proc.chunk_step(np.zeros((1, 4, 8), dtype=np.float32))
     assert eval_res["terminations"].tolist() == [[False, True, False, False]]
     assert not eval_res["truncations"].any()
+    assert eval_res["final_observation"] is None
+    assert eval_res["final_mask"] is None
+    assert pack_calls["n"] == 1
 
     # Training (auto_reset=True) timeout: done folds cleanly to -1, recorder exports before reset,
     # public env.reset(env_ids=...) supplies fresh post-reset obs, and episode index advances after.
@@ -1030,6 +1058,88 @@ def test_robolab_process_done_flags_and_partial_reset_contract():
         ("set_episode_index", 1, [0]),
     ]
 
+    # Multi-env mid-chunk timeout: slot 0 times out at step 2 while slot 1 stays active to step 4.
+    # Slot 0 is frozen immediately and final_observation keeps its step-2 snapshot, not step-4 obs.
+    def _multi_raw_obs(values: list[float]) -> dict:
+        return {
+            "image_obs": {
+                "over_shoulder_left_camera": torch.stack(
+                    [torch.full((4, 4, 3), int(v), dtype=torch.uint8) for v in values]
+                ),
+                "wrist_cam": torch.zeros((len(values), 4, 4, 3), dtype=torch.uint8),
+            },
+            "proprio_obs": {
+                "arm_joint_pos": torch.stack(
+                    [torch.full((7,), v, dtype=torch.float32) for v in values]
+                ),
+                "gripper_pos": torch.zeros((len(values), 1), dtype=torch.float32),
+            },
+        }
+
+    frozen_during_steps: list[list[bool]] = []
+    multi_step = {"n": 0}
+
+    class MultiFakeEnv:
+        device = torch.device("cpu")
+
+        def __init__(self):
+            self._frozen_envs = torch.zeros(2, dtype=torch.bool)
+            self._pre_step_frozen = torch.zeros(2, dtype=torch.bool)
+            self._env_results = {}
+            self._env_term_step = {}
+            self._has_stepped = True
+            self.recorder_manager = None
+
+        @property
+        def active_env_ids(self):
+            return (~self._frozen_envs).nonzero(as_tuple=False).squeeze(-1).tolist()
+
+        def step(self, action):
+            del action
+            multi_step["n"] += 1
+            frozen_during_steps.append(self._frozen_envs.tolist())
+            # Overwrite both slots every step to confirm slot 0's snapshot came from step 2.
+            val = float(multi_step["n"])
+            return _multi_raw_obs([val * 10.0, val]), None, None, None, {}
+
+        def get_env_results(self):
+            return [
+                {"env_id": i, "success": None, "step": multi_step["n"]}
+                for i in range(2)
+            ]
+
+        def reset(self, seed=None, env_ids=None):
+            del seed, env_ids
+            return _multi_raw_obs([99.0, float(multi_step["n"])]), {}
+
+    multi_proc = object.__new__(process_cls)
+    multi_proc.env = MultiFakeEnv()
+    multi_proc._image_tools = SimpleNamespace(resize_with_pad=lambda img, h, w: img)
+    multi_proc._end_episode = lambda env: None
+    multi_proc._get_current_subtask_info = lambda env, env_id=0: {"score": 0.5}
+    multi_proc.enable_subtask = False
+    multi_proc.prompt = "pick"
+    multi_proc.timeline = SimpleNamespace(is_playing=lambda: True)
+    multi_proc.kit_app = SimpleNamespace(update=lambda: None)
+    multi_proc.num_envs = 2
+    multi_proc.max_steps = 4
+    multi_proc.auto_reset = True
+    multi_proc.steps = np.array([2, 0], dtype=np.int32)
+    multi_proc.finished = np.zeros(2, dtype=bool)
+    multi_proc.success = np.zeros(2, dtype=np.float32)
+    multi_proc.score = np.zeros(2, dtype=np.float32)
+    multi_proc.episode_indices = np.arange(2, dtype=np.int64)
+    multi_proc.last_obs = _multi_raw_obs([0.0, 0.0])
+    multi_proc.episode_open = True
+
+    multi_res = multi_proc.chunk_step(np.zeros((2, 3, 8), dtype=np.float32))
+    # Slot 0 hit max_steps=4 at sub-step 2, so sub-step 3 saw slot 0 frozen.
+    assert frozen_during_steps == [[False, False], [False, False], [True, False]]
+    assert multi_res["final_mask"].tolist() == [True, False]
+    assert multi_res["final_observation"]["states"][0, 0].item() == 20.0
+    assert multi_res["observation"]["states"][0, 0].item() == 99.0
+    assert multi_res["observation"]["states"][1, 0].item() == 3.0
+
 
 def test_robodojo_chunk_exposes_execution_mask_and_auto_reset():
     from types import MethodType
@@ -1039,6 +1149,7 @@ def test_robodojo_chunk_exposes_execution_mask_and_auto_reset():
     env = object.__new__(RoboDojoEnv)
     env.num_envs = 2
     env.auto_reset = True
+    env._done = torch.zeros(2, dtype=torch.bool)
     env.cfg = OmegaConf.create({"video_cfg": {"save_video": False}, "is_eval": False})
     obs = {"states": torch.zeros(2, 14)}
     info = {"executed_steps": np.array([2, 3])}
@@ -1106,6 +1217,7 @@ def test_robodojo_save_video_chunk_step_does_not_inflate_reward_or_overshoot(
     )
     env._elapsed_steps = torch.zeros(2, dtype=torch.long)
     env.prev_step_reward = torch.zeros(2)
+    env._done = torch.zeros(2, dtype=torch.bool)
     env._init_metrics()
 
     calls = {"n": 0}
@@ -1164,6 +1276,96 @@ def test_robodojo_save_video_chunk_step_does_not_inflate_reward_or_overshoot(
         [True, True, True, False, False],
     ]
 
+    # A second chunk without reset (auto_reset=False) must keep already-done slots latched
+    # and not re-add reward or increment elapsed_steps.
+    obs_list2, rewards2, terminations2, truncations2, infos2 = env.chunk_step(
+        np.zeros((2, 5, 14), dtype=np.float32)
+    )
+    assert len(obs_list2) == 1
+    assert rewards2[:, -1].tolist() == [0.0, 0.0]
+    assert terminations2[:, -1].tolist() == [False, False]
+    assert truncations2[:, -1].tolist() == [False, False]
+    assert infos2[0]["episode"]["return"].tolist() == [1.0, 0.0]
+    assert infos2[0]["episode"]["episode_len"].tolist() == [2, 3]
+
+
+def test_robodojo_no_video_separates_natural_termination_from_timeout(monkeypatch):
+    from rlinf.envs.sim.robodojo.robodojo_env import RoboDojoEnv
+
+    raw_obs = [
+        {
+            "full_image": np.zeros((4, 4, 3), dtype=np.uint8),
+            "state": np.zeros(14, dtype=np.float32),
+            "instruction": "task",
+        }
+    ]
+
+    def _make_env(*, ignore_terminations: bool, max_episode_steps: int):
+        env = object.__new__(RoboDojoEnv)
+        env.num_envs = 1
+        env.auto_reset = False
+        env.ignore_terminations = ignore_terminations
+        env.use_custom_reward = True
+        env.use_rel_reward = False
+        env.record_metrics = True
+        env._action_perm = None
+        env._state_perm = None
+        env.center_crop = False
+        env.cfg = OmegaConf.create(
+            {
+                "reward_coef": 1.0,
+                "max_episode_steps": max_episode_steps,
+                "video_cfg": {"save_video": False},
+                "is_eval": False,
+            }
+        )
+        env._elapsed_steps = torch.zeros(1, dtype=torch.long)
+        env.prev_step_reward = torch.zeros(1)
+        env._done = torch.zeros(1, dtype=torch.bool)
+        env._init_metrics()
+        return env
+
+    class NaturalTermProcess:
+        class Step:
+            def remote(self, actions):
+                del actions
+                return (
+                    raw_obs,
+                    [0.0],
+                    [True],
+                    [False],
+                    [{"success": True, "executed_steps": 2}],
+                )
+
+        step = Step()
+
+    monkeypatch.setattr(
+        "rlinf.envs.sim.robodojo.robodojo_env.ray.get", lambda value: value
+    )
+
+    # save_video=False, ignore_terminations=False: natural termination at step 2 on a
+    # 5-step chunk with max_episode_steps=5 must not mark truncated=True and counts 2 steps.
+    env_train = _make_env(ignore_terminations=False, max_episode_steps=5)
+    env_train._process = NaturalTermProcess()
+    _, _, terminations, truncations, infos = env_train.chunk_step(
+        np.zeros((1, 5, 14), dtype=np.float32)
+    )
+    assert terminations[:, -1].tolist() == [True]
+    assert truncations[:, -1].tolist() == [False]
+    assert infos[0]["episode"]["episode_len"].tolist() == [2]
+
+    # save_video=False, ignore_terminations=True (eval): after success, elapsed_steps still
+    # advances by full chunk horizon and emits truncated=True at max_episode_steps.
+    env_eval = _make_env(ignore_terminations=True, max_episode_steps=5)
+    env_eval._process = NaturalTermProcess()
+    _, _, eval_term, eval_trunc, eval_infos = env_eval.chunk_step(
+        np.zeros((1, 5, 14), dtype=np.float32)
+    )
+    assert eval_term[:, -1].tolist() == [False]
+    assert eval_trunc[:, -1].tolist() == [True]
+    assert eval_infos[0]["episode"]["episode_len"].tolist() == [5]
+    assert eval_infos[0]["episode"]["success_once"].tolist() == [True]
+
 
 def test_robodojo_init_env_defaults_eula(monkeypatch):
     from types import SimpleNamespace
@@ -1214,7 +1416,22 @@ def test_hetero_model_envs_config_validation(monkeypatch):
     with initialize_config_dir(config_dir=str(config_dir), version_base=None):
         cfg = compose(config_name="libero_robodojo_robolab_ppo_openpi_pi05")
 
-    validate_embodied_cfg(cfg)
+    validate_model_envs(cfg, cfg.actor.model)
+    validate_env_policy_fields(cfg, cfg.actor.model)
+    resolve_env_mode_cfg(cfg.env.train, "env.train", env_world_size=3)
+    train_layout = EnvLayout(cfg.env.train, 3, "env.train")
+    validate_env_training_cfg(
+        cfg,
+        train_layout,
+        stage_num=cfg.rollout.pipeline_stage_num,
+        actor_world_size=1,
+    )
+    validate_eval_env_cfg(
+        cfg,
+        env_world_size=3,
+        stage_num=cfg.rollout.pipeline_stage_num,
+        num_action_chunks=cfg.actor.model.num_action_chunks,
+    )
     assert cfg.actor.model.model_path == cfg.rollout.model.model_path
     assert list(cfg.env.train.envs) == ["libero", "robodojo", "robolab"]
     assert list(cfg.actor.model.envs) == ["libero", "robodojo", "robolab"]

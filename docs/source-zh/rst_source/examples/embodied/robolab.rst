@@ -79,28 +79,24 @@ RoboLab 是基于 Isaac Sim 的机器人操作 benchmark，包含 120 个任务�
 
 按照 :doc:`评估指南 <../../evaluations/guides/robolab>` 安装环境、下载 ``RLinf-Pi05-RoboLab-droid-jointpos`` checkpoint、查看任务列表并运行评估。
 
-在 ``BananaInBowlTask`` 上启动 PPO 训练时，在 RLinf 仓库根目录传入本地 checkpoint 路径：
+在 ``BananaInBowlTask`` 上启动 PPO 训练时，先在 ``examples/embodiment/config/robolab_banana_in_bowl_ppo_openpi_pi05.yaml`` 中将 ``actor.model.model_path`` 设为本地 checkpoint 目录，再在 RLinf 仓库根目录运行：
 
 .. code-block:: bash
 
-   export REPO_PATH="$(pwd)"
-   export EMBODIED_PATH="$REPO_PATH/examples/embodiment"
-   PYTHONPATH="$REPO_PATH" python examples/embodiment/train_embodied_agent.py \
-     --config-name robolab_banana_in_bowl_ppo_openpi_pi05 \
-     actor.model.model_path=/path/to/model/RLinf-Pi05-RoboLab-droid-jointpos
+   bash examples/embodiment/run_embodiment.sh robolab_banana_in_bowl_ppo_openpi_pi05
 
-日志与 TensorBoard 事件写入 ``runner.logger.log_path``\ （默认 ``../results``\ ）。也可以在 ``examples/embodiment/config/robolab_banana_in_bowl_ppo_openpi_pi05.yaml`` 中填写 ``actor.model.model_path``，再运行 ``bash examples/embodiment/run_embodiment.sh robolab_banana_in_bowl_ppo_openpi_pi05``，日志会写入 ``logs/<timestamp>-robolab_banana_in_bowl_ppo_openpi_pi05/``。
+日志与 TensorBoard 事件写入 ``logs/<timestamp>-robolab_banana_in_bowl_ppo_openpi_pi05/`` 。
 
 训练模式支持按环境自动重置。
 
 .. warning::
 
-   保持 ``env.train.enable_offload: false``。RoboLab 不支持在 rollout 与训练之间挂起并恢复运行中的 Isaac Sim 环境。
+   保持 ``env.train.enable_offload: false`` 。RoboLab 不支持在 rollout 与训练之间挂起并恢复运行中的 Isaac Sim 环境。
 
 可视化与结果
 ------------
 
-PPO 训练期间在终端或 TensorBoard（``tensorboard --logdir <log_path>``）中查看 ``env/success_once`` 和 ``env/return``，验证与评估期间查看 ``eval/success_once`` 和 ``eval/score``。下面列出同一组 120 个任务、每任务 10 回合的基准评估结果；详细指标和日志说明见 :doc:`评估指南 <../../evaluations/guides/robolab>`。
+PPO 训练期间在终端或 TensorBoard（``tensorboard --logdir <log_path>``\ ）中查看 ``env/success_once`` 和 ``env/return`` ，验证与评估期间查看 ``eval/success_once`` 和 ``eval/score`` 。训练指标定义见 :doc:`训练指标 <../../reference/metrics>` 。下面列出同一组 120 个任务、每任务 10 回合的基准评估结果；评估指标与日志说明见 :doc:`评估指南 <../../evaluations/guides/robolab>` 。
 
 
 .. list-table::

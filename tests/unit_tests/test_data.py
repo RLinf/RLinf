@@ -4848,7 +4848,7 @@ def test_env_interact_step_separates_valid_action_mask_from_executed_mask():
             rewards=torch.zeros(2, 4),
             collect_prev_infos=True,
             collect_transitions=False,
-            enable_rlt=False,
+            enable_prefix=False,
             include_final_value=False,
         )
         return env_output, payload, step

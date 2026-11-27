@@ -205,13 +205,14 @@ class RoboLabEnv:
         )
         observation = self._observation(result["observation"])
         episode = {
-            key: torch.from_numpy(value) for key, value in result["episode"].items()
+            key: torch.from_numpy(np.array(value, copy=True))
+            for key, value in result["episode"].items()
         }
         info = {"episode": episode}
         executed_steps = result.get("executed_steps")
         if executed_steps is not None and not self.cfg.get("is_eval", False):
             info["valid_action_mask"] = valid_action_mask_from_counts(
-                executed_steps, actions.shape[1]
+                np.array(executed_steps, copy=True), actions.shape[1]
             )
         final_mask = result.get("final_mask")
         if final_mask is not None and np.asarray(final_mask).any():
@@ -234,9 +235,9 @@ class RoboLabEnv:
             observations[-1] = observation
         return (
             observations,
-            torch.from_numpy(result["rewards"]),
-            torch.from_numpy(result["terminations"]),
-            torch.from_numpy(result["truncations"]),
+            torch.from_numpy(np.array(result["rewards"], copy=True)),
+            torch.from_numpy(np.array(result["terminations"], copy=True)),
+            torch.from_numpy(np.array(result["truncations"], copy=True)),
             [info],
         )
 
