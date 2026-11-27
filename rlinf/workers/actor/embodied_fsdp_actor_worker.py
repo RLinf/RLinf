@@ -145,7 +145,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self._update_kl_probe = UpdateKLProbe(
                 self._score_update_kl_probe,
                 target_kl=kl_stop.target_kl,
-                group=self._dp_group,
+                group=torch.distributed.group.WORLD,
                 cache_prefix=kl_stop.get("cache_prefix", False),
             )
 

@@ -230,6 +230,7 @@ jobs:
               - 'evaluations/supermimic/*.yaml'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
+              - 'rlinf/workers/actor/update_kl_probe.py'
               # The agent loop, rollout buffer, agentic tokenizer, Megatron MA actor
               # and async agent runner have unit tests that import them.
               - 'rlinf/agents/**'

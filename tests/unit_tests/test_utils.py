@@ -2189,7 +2189,16 @@ def _run_kl_probe(rank, init_file):
             torch.tensor([[rank == 1], [False]]),
             torch.ones(2, 1, dtype=torch.bool),
         ]
-        probe = UpdateKLProbe(score, target_kl=0.5, group=dist.group.WORLD)
+        probe = UpdateKLProbe(
+            score, target_kl=0.5, group=dist.group.WORLD, cache_prefix=True
+        )
+        probe.configure_capture(
+            lambda cache_prefix: "prefix" if cache_prefix else "vision"
+        )
+        assert probe.capture_kwargs == {
+            "denoise_probe": "capture",
+            "replay_cache": "prefix",
+        }
 
         def capture(loss_masks):
             probe.begin_round(3)
@@ -2205,13 +2214,30 @@ def _run_kl_probe(rank, init_file):
                 pass
             assert probe.last_kl == kl
             assert probe.stopped == (shift == 1.0)
+        assert probe.round_metrics(2, 4) == {
+            "actor/optimizer_steps_used": 2,
+            "actor/update_kl_stopped": 1,
+            "actor/update_kl_probe_count": 1,
+            "actor/kl_stop/used_frac": 0.5,
+            "actor/kl_stop/first_kl": 0.125,
+            "actor/update_kl": 0.5,
+        }
         probe.end_round()
 
+        shift = 0.0
         capture(masks)
         with probe.check():
             pass
         assert not probe.stopped
         assert probe.last_kl == 0.0
+        assert probe.round_metrics(4, 4) == {
+            "actor/optimizer_steps_used": 4,
+            "actor/update_kl_stopped": 0,
+            "actor/update_kl_probe_count": 1,
+            "actor/kl_stop/used_frac": 1.0,
+            "actor/kl_stop/first_kl": 0.0,
+            "actor/update_kl": 0.0,
+        }
         probe.end_round()
 
         capture([torch.zeros_like(mask) for mask in masks])
@@ -2220,6 +2246,12 @@ def _run_kl_probe(rank, init_file):
             pass
         assert not probe.stopped
         assert probe.last_kl is None
+        assert probe.round_metrics(4, 4) == {
+            "actor/optimizer_steps_used": 4,
+            "actor/update_kl_stopped": 0,
+            "actor/update_kl_probe_count": 0,
+            "actor/kl_stop/used_frac": 1.0,
+        }
         probe.end_round()
     finally:
         dist.destroy_process_group()
