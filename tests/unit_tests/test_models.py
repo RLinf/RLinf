@@ -4011,6 +4011,45 @@ def test_phyai_gateway_serving_mode_requires_eval_and_url(phyai_example_cfg):
         validate_embodied_cfg(phyai_example_cfg)
 
 
+def test_phyai_gateway_auto_launch_config_validation(phyai_example_cfg):
+    phyai_example_cfg.runner.only_eval = True
+    OmegaConf.update(
+        phyai_example_cfg, "rollout.phyai.serving_mode", "gateway", force_add=True
+    )
+    OmegaConf.update(
+        phyai_example_cfg, "rollout.phyai.gateway_url", None, force_add=True
+    )
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.server",
+        {"plugin": "pi05"},
+        force_add=True,
+    )
+    OmegaConf.update(
+        phyai_example_cfg, "rollout.phyai.checkpoint_dir", "/ckpt", force_add=True
+    )
+    with pytest.raises(AssertionError, match="tokenizer_dir"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+    OmegaConf.update(
+        phyai_example_cfg, "rollout.phyai.tokenizer_dir", "/tok", force_add=True
+    )
+    OmegaConf.update(
+        phyai_example_cfg, "rollout.phyai.max_batch_size", 8, force_add=True
+    )
+    validate_embodied_cfg(phyai_example_cfg)
+
+    for invalid_batch in (0, -1, True):
+        OmegaConf.update(
+            phyai_example_cfg,
+            "rollout.phyai.max_batch_size",
+            invalid_batch,
+            force_add=True,
+        )
+        with pytest.raises(AssertionError, match="max_batch_size"):
+            validate_embodied_cfg(phyai_example_cfg)
+
+
 def _cosmos3_sglang_cfg(batching_max_size=None):
     server = (
         {} if batching_max_size is None else {"batching_max_size": batching_max_size}
@@ -6283,13 +6322,312 @@ def test_phyai_http_example_uses_pi05_model_contract(monkeypatch):
         config_dir=str(repo / "evaluations/libero"), version_base=None
     ):
         cfg = compose(config_name="libero_spatial_pi05_eval_phyai")
+        cfg_override = compose(
+            config_name="libero_spatial_pi05_eval_phyai",
+            overrides=["rollout.phyai.gateway_url=http://127.0.0.1:8080"],
+        )
     validate_only_eval_rollout_model(cfg.rollout.model)
     assert cfg.rollout.model.action_dim == 7
     assert cfg.rollout.model.num_action_chunks == 16
     assert cfg.rollout.phyai.serving_mode == "gateway"
     assert cfg.rollout.phyai.model_name == "pi05"
+    assert cfg.rollout.phyai.gateway_url is None
+    assert cfg.rollout.phyai.max_batch_size == 8
+    assert cfg.runner.logger.log_path == "../results"
+    assert cfg.rollout.phyai.server.plugin == "pi05"
+    assert cfg.rollout.phyai.server.adapter.args.action_dim == 7
+    assert cfg_override.rollout.phyai.gateway_url == "http://127.0.0.1:8080"
+    with initialize_config_dir(
+        config_dir=str(repo / "tests/e2e_tests/evaluations"), version_base=None
+    ):
+        e2e_override = compose(
+            config_name="libero_spatial_pi05_eval_phyai",
+            overrides=["rollout.phyai.gateway_url=http://127.0.0.1:9090"],
+        )
+    assert e2e_override.rollout.phyai.gateway_url == "http://127.0.0.1:9090"
+    assert e2e_override.rollout.phyai.max_batch_size == 8
     assert cfg.rollout.model.openpi.task == "eval"
     assert "action_head_cfg" not in cfg.rollout.model
+
+
+def test_phyai_http_predict_microbatches_above_max_batch_size(monkeypatch):
+    from rlinf.workers.rollout.phyai import PhyAIGatewayRolloutWorker
+
+    def init_scheduler(worker):
+        worker._rank = 0
+        worker._world_size = 1
+        worker._group_name = "RolloutGroup"
+        worker._logger = logging.getLogger("phyai-http-test")
+        worker._stacklevel = 1
+
+    monkeypatch.setattr(Worker, "__init__", init_scheduler)
+    cfg = _phyai_cfg(only_eval=True)
+    OmegaConf.update(cfg, "rollout.phyai.max_batch_size", 2, force_add=True)
+    worker = PhyAIGatewayRolloutWorker(cfg)
+    worker.set_phyai_server_urls(["http://localhost:30000"])
+    asyncio.run(worker.init_worker())
+
+    seen_batches = []
+
+    def fake_post(path, body, **kwargs):
+        states = body["observation"]["states"]
+        bsz = states.shape[0]
+        seen_batches.append(
+            (
+                bsz,
+                list(body["observation"]["task_descriptions"]),
+                body["observation"]["extras"]["ids"].tolist(),
+            )
+        )
+        actions = states[:, :1].unsqueeze(1).expand(bsz, 5, 7).numpy()
+        return {"actions": actions}
+
+    worker.http_client = SimpleNamespace(post=fake_post)
+    obs = {
+        "main_images": torch.zeros(5, 8, 8, 3, dtype=torch.uint8),
+        "wrist_images": torch.zeros(5, 8, 8, 3, dtype=torch.uint8),
+        "states": torch.arange(5, dtype=torch.float32).unsqueeze(1).repeat(1, 8),
+        "task_descriptions": [f"task-{i}" for i in range(5)],
+        "extras": {"ids": torch.arange(5)},
+        "_rlinf_stage_id": 1,
+        "_rlinf_reset": False,
+    }
+    actions, info = worker.predict(obs, mode="eval")
+    assert seen_batches == [
+        (2, ["task-0", "task-1"], [0, 1]),
+        (2, ["task-2", "task-3"], [2, 3]),
+        (1, ["task-4"], [4]),
+    ]
+    assert actions.shape == (5, 5, 7)
+    assert actions[:, 0, 0].tolist() == [0.0, 1.0, 2.0, 3.0, 4.0]
+    assert info == {}
+
+
+def test_phyai_service_worker_prepare_config_and_logs(monkeypatch, tmp_path):
+    import yaml
+
+    from rlinf.workers.rollout.phyai.launcher import PhyAIServiceWorker
+
+    def init_scheduler(worker):
+        worker._rank = 0
+        worker._world_size = 1
+        worker._group_name = "PhyAIServiceGroup"
+        worker._logger = logging.getLogger("phyai-launcher-test")
+        worker._stacklevel = 1
+
+    monkeypatch.setattr(Worker, "__init__", init_scheduler)
+    ckpt_dir = tmp_path / "ckpt"
+    tok_dir = tmp_path / "tok"
+    ckpt_dir.mkdir()
+    tok_dir.mkdir()
+    cfg = OmegaConf.create(
+        {
+            "server": {
+                "plugin": "pi05",
+                "plugin_args": {"checkpoint_dir": "/old", "max_batch_size": 4},
+                "server": {"host": "0.0.0.0", "port": 1111, "model_name": "old"},
+                "adapter": {"args": {"tokenizer_dir": "/old_tok"}},
+            },
+            "checkpoint_dir": str(ckpt_dir),
+            "tokenizer_dir": str(tok_dir),
+            "model_name": "custom_pi05",
+            "max_batch_size": 12,
+            "log_dir": "relative_logs",
+        }
+    )
+    monkeypatch.setenv("REPO_PATH", str(tmp_path))
+    worker = PhyAIServiceWorker(cfg)
+    generated = worker._prepare_server_config(55123)
+    try:
+        rendered = yaml.safe_load(generated.read_text())
+        assert rendered["server"]["host"] == "127.0.0.1"
+        assert rendered["server"]["port"] == 55123
+        assert rendered["server"]["model_name"] == "custom_pi05"
+        assert rendered["plugin_args"]["checkpoint_dir"] == str(ckpt_dir.resolve())
+        assert rendered["plugin_args"]["max_batch_size"] == 12
+        assert rendered["adapter"]["args"]["tokenizer_dir"] == str(tok_dir.resolve())
+    finally:
+        generated.unlink(missing_ok=True)
+
+    worker._open_logs()
+    try:
+        assert (tmp_path / "relative_logs" / "phyai-server-0.log").is_file()
+        assert (tmp_path / "relative_logs" / "phyai-gateway-0.log").is_file()
+    finally:
+        worker.stop()
+
+
+def test_phyai_service_worker_start_rolls_back_temp_config_on_error(
+    monkeypatch, tmp_path
+):
+    from rlinf.workers.rollout.phyai.launcher import PhyAIServiceWorker
+
+    def init_scheduler(worker):
+        worker._rank = 0
+        worker._world_size = 1
+        worker._group_name = "PhyAIServiceGroup"
+        worker._logger = logging.getLogger("phyai-launcher-test")
+        worker._stacklevel = 1
+
+    monkeypatch.setattr(Worker, "__init__", init_scheduler)
+    ckpt_dir = tmp_path / "ckpt"
+    tok_dir = tmp_path / "tok"
+    ckpt_dir.mkdir()
+    tok_dir.mkdir()
+    cfg = OmegaConf.create(
+        {
+            "server": {"plugin_args": {}, "server": {}, "adapter": {"args": {}}},
+            "checkpoint_dir": str(ckpt_dir),
+            "tokenizer_dir": str(tok_dir),
+        }
+    )
+    worker = PhyAIServiceWorker(cfg)
+    ports = iter([41001, 41002, 41003])
+    monkeypatch.setattr(worker, "acquire_free_port", lambda: next(ports))
+
+    created = []
+    orig_prepare = worker._prepare_server_config
+
+    def tracking_prepare(port):
+        path = orig_prepare(port)
+        created.append(path)
+        return path
+
+    monkeypatch.setattr(worker, "_prepare_server_config", tracking_prepare)
+    monkeypatch.setattr(
+        worker,
+        "_open_logs",
+        lambda: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    with pytest.raises(OSError, match="disk full"):
+        worker.start()
+
+    assert len(created) == 1
+    assert not created[0].exists()
+    assert worker._server_config is None
+
+
+def test_phyai_launcher_health_wait_fails_fast_when_server_exits(monkeypatch):
+    import time
+
+    from rlinf.workers.rollout.phyai.launcher import (
+        _backend_is_healthy,
+        _wait_for_gateway,
+    )
+
+    assert _backend_is_healthy(
+        [{"model_name": "pi05", "endpoint": "127.0.0.1:50063", "healthy": True}],
+        "pi05",
+        "127.0.0.1:50063",
+    )
+    assert not _backend_is_healthy(
+        [{"model_name": "pi05", "endpoint": "127.0.0.1:50063", "healthy": False}],
+        "pi05",
+        "127.0.0.1:50063",
+    )
+
+    alive_gateway = SimpleNamespace(poll=lambda: None)
+    dead_server = SimpleNamespace(poll=lambda: 137)
+    with pytest.raises(
+        RuntimeError, match="model server exited with code 137.*phyai-server-0.log"
+    ):
+        _wait_for_gateway(
+            alive_gateway,
+            dead_server,
+            "http://127.0.0.1:30000",
+            "pi05",
+            "127.0.0.1:50063",
+            time.monotonic() + 30.0,
+            server_log_path=Path("/tmp/phyai-server-0.log"),
+        )
+
+    dead_gateway = SimpleNamespace(poll=lambda: 2)
+    alive_server = SimpleNamespace(poll=lambda: None)
+    with pytest.raises(
+        RuntimeError, match="PhyAI Gateway exited with code 2.*phyai-gateway-0.log"
+    ):
+        _wait_for_gateway(
+            dead_gateway,
+            alive_server,
+            "http://127.0.0.1:30000",
+            "pi05",
+            "127.0.0.1:50063",
+            time.monotonic() + 30.0,
+            gateway_log_path=Path("/tmp/phyai-gateway-0.log"),
+        )
+
+
+def test_phyai_launcher_parent_watchdog_kills_orphaned_child(tmp_path):
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    from rlinf.workers.rollout.phyai.launcher import _WATCHDOG_BOOTSTRAP
+
+    pid_file = tmp_path / "grandchild.pid"
+    # Spawn a middle parent that launches a detached watched grandchild, then
+    # SIGKILL the middle parent and verify the grandchild terminates promptly.
+    mod_file = tmp_path / "_phyai_watchdog_sleep_mod.py"
+    mod_file.write_text(
+        "import os, pathlib, sys, time\n"
+        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+        "time.sleep(60)\n"
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"{tmp_path}:{env.get('PYTHONPATH', '')}"
+    parent_script = (
+        "import os, subprocess, sys, time\n"
+        "bootstrap, pid_file = sys.argv[1], sys.argv[2]\n"
+        "subprocess.Popen(\n"
+        "    [sys.executable, '-c', bootstrap, str(os.getpid()), "
+        "'_phyai_watchdog_sleep_mod', pid_file],\n"
+        "    start_new_session=True,\n"
+        ")\n"
+        "time.sleep(60)\n"
+    )
+    parent = subprocess.Popen(
+        [sys.executable, "-c", parent_script, _WATCHDOG_BOOTSTRAP, str(pid_file)],
+        env=env,
+    )
+    grandchild_pid = None
+    try:
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline and not pid_file.exists():
+            time.sleep(0.05)
+        assert pid_file.exists(), "Watched grandchild did not start in time."
+        grandchild_pid = int(pid_file.read_text().strip())
+
+        parent.kill()
+        parent.wait(timeout=5)
+
+        kill_deadline = time.monotonic() + 5.0
+        still_alive = True
+        while time.monotonic() < kill_deadline:
+            try:
+                os.kill(grandchild_pid, 0)
+            except ProcessLookupError:
+                still_alive = False
+                break
+            stat_path = Path(f"/proc/{grandchild_pid}/stat")
+            if stat_path.exists() and stat_path.read_text().split()[2] == "Z":
+                still_alive = False
+                break
+            time.sleep(0.1)
+        assert not still_alive, (
+            f"Watched grandchild pid={grandchild_pid} survived parent SIGKILL."
+        )
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=5)
+        if grandchild_pid is not None:
+            try:
+                os.kill(grandchild_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_steam_gate_preserves_source_state_across_rebatching(tmp_path):

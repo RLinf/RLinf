@@ -1,9 +1,10 @@
 PhyAI 具身推理后端
 ==================
 
-本页介绍如何用 `PhyAI <https://github.com/mingti-org/phyai>`_ 在进程内训练 PI0.5 policy，或通过 PhyAI Gateway 执行评估。PhyAI 是面向 VLA 等物理 AI 模型的推理框架。进程内路径由每个 RLinf rollout worker 管理一个 engine，LIBERO 环境、FSDP actor、观测变换和权重同步仍由 RLinf 负责。
+`PhyAI <https://github.com/mingti-org/phyai>`_ 是面向 VLA 等具身模型的推理框架。在 RLinf 中，PhyAI 支持两种用法：
 
-下面先说明进程内 PPO 的安装与训练流程。需要通过 Gateway 评估时，请阅读 :ref:`phyai-http-evaluation-zh`。这条路径启动 RLinf 环境 worker 和 HTTP rollout worker，Gateway 和模型 Server 作为独立进程运行。
+- **PPO 训练加速**：在每个 rollout worker 内直接运行 PhyAI 推理引擎负责动作采样，LIBERO 环境、FSDP actor、观测变换和权重同步仍由 RLinf 管理。
+- **独立 HTTP 服务评测**：将 PI0.5 模型部署为独立的推理服务，RLinf 只运行 LIBERO 环境并通过 HTTP 请求获取动作（见 :ref:`phyai-http-evaluation-zh`）。
 
 准备工作
 --------
@@ -98,79 +99,74 @@ PPO 以产生数据的 policy 为基准衡量每次更新。如果这个基准�
 
 .. _phyai-http-evaluation-zh:
 
-通过 PhyAI Gateway 评估
------------------------
+通过 PhyAI HTTP 服务运行评测
+----------------------------
 
-这条路径仅用于评估，通过 Gateway 发送批量观测。不填写\ ``rollout.phyai.gateway_url``\ 时，RLinf 会在 placement 选中的 worker 上启动模型 Server 和 Gateway，并管理服务的生命周期。填写 Gateway 地址则使用外部管理的服务。
-
-模型 Server 负责加载 checkpoint、预处理和动作后处理。RLinf 运行 LIBERO，并通过 HTTP 发送观测。
+评测模式下，PI0.5 模型运行在独立的推理服务进程中，与 RLinf 的 LIBERO 环境解耦。RLinf 负责运行环境并将批量观测通过 HTTP 发给 PhyAI Gateway，由后端模型服务完成权重加载、观测预处理和动作后处理。
 
 .. code-block:: text
 
    RLinf evaluation -> HTTP MessagePack -> PhyAI Gateway -> model server
 
-使用评估环境
-~~~~~~~~~~~~
+默认情况下，RLinf 会在本机自动拉起模型服务和 Gateway，评测结束后自动关闭；如果要对接已经部署好的外部服务，直接指定 ``rollout.phyai.gateway_url`` 即可。
 
-使用\ :ref:`phyai-installation-zh`\ 一节创建的环境，其中已包含 PhyAI 模型 Server 和 Gateway。模型 Server 也可以运行在另一套环境或另一台机器上，两侧需使用兼容的 PhyAI、Gateway、checkpoint 和 tokenizer 版本。
+环境与硬件要求
+~~~~~~~~~~~~~~
+
+需要至少一张 NVIDIA GPU，直接使用 :ref:`phyai-installation-zh` 中安装好的虚拟环境即可（已包含模型服务和 Gateway）。
+
+默认配置会使用当前机器上的全部 GPU，并在第一张 GPU 上启动一组模型服务和 Gateway。如果想为推理服务单独指定一张或多张 GPU，可在 ``cluster.component_placement`` 中配置 ``phyai_server``：每张指定 GPU 启动一组服务，由各 rollout worker 轮询调用。语法见 :doc:`Placement <../../concepts/placement>`。
 
 下载 Checkpoint 和 Tokenizer
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Gateway 路径使用 `LeRobot PI0.5 LIBERO checkpoint <https://huggingface.co/lerobot/pi05_libero_finetuned_v044>`_\ 和 PaliGemma tokenizer。保留 checkpoint 中的预处理、归一化和动作后处理文件。进程内训练使用的 RLinf/OpenPI checkpoint 布局不同，不能直接替代。
+HTTP 服务评测使用 `LeRobot PI0.5 LIBERO checkpoint <https://huggingface.co/lerobot/pi05_libero_finetuned_v044>`_ 和 PaliGemma tokenizer，格式与前面 PPO 训练使用的 RLinf/OpenPI checkpoint 不同，不能混用。
 
 .. warning::
 
-   `PaliGemma 仓库 <https://huggingface.co/google/paligemma-3b-pt-224>`_\ 受限。先在 Hugging Face 接受模型许可，再用\ ``hf auth login``\ 登录，或提供\ ``HF_TOKEN``\ 后下载。使用镜像也需要满足这些要求。
+   `PaliGemma 仓库 <https://huggingface.co/google/paligemma-3b-pt-224>`_ 需要申请访问权限。下载前先在 Hugging Face 页面接受许可协议，再运行 ``hf auth login`` 或设置 ``HF_TOKEN``。使用镜像源同样需要完成授权。
 
-按下面的固定 revision 下载两份资源，将\ ``/path/to``\ 替换为实际存放目录；也可以使用已有的相同版本本地资源：
+按以下已验证的 revision 下载 checkpoint 和 tokenizer：
 
 .. code-block:: bash
 
-   hf auth login
-   # 可选镜像：export HF_ENDPOINT=https://hf-mirror.com
    hf download lerobot/pi05_libero_finetuned_v044 \
      --revision 7152f13e34c6c115d808aea0e5d08aca74eac14b \
-     --local-dir /path/to/pi05_libero_finetuned_v044
+     --local-dir ./pi05_libero_finetuned_v044
    hf download google/paligemma-3b-pt-224 \
      --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
-     --local-dir /path/to/paligemma-3b-pt-224
+     --local-dir ./paligemma-3b-pt-224
 
-配置 Gateway 服务
-~~~~~~~~~~~~~~~~~
+自动启动并运行评测
+~~~~~~~~~~~~~~~~~~
 
-自动启动时，在\ ``evaluations/libero/libero_spatial_pi05_eval_phyai.yaml``\ 中填写以下路径。资源目录需能被 placement 选中的 worker 访问：
-
-.. code-block:: yaml
-
-   rollout:
-     phyai:
-       server_config: tests/e2e_tests/evaluations/phyai_gateway_server.yaml
-       checkpoint_dir: /path/to/pi05_libero_finetuned_v044
-       tokenizer_dir: /path/to/paligemma-3b-pt-224
-
-RLinf 会写入临时 PhyAI Server 配置，启动两个服务，并等待 backend 健康。不填写\ ``gateway_url``\ 时，由 RLinf 管理服务，避免再手动启动重复进程。
-
-使用外部 Gateway 时，将\ ``rollout.phyai.gateway_url``\ 设为其 HTTP 地址。资源路径由外部模型 Server 配置；此模式下 RLinf 不使用\ ``server_config``\、\ ``checkpoint_dir``\ 和\ ``tokenizer_dir``\。服务安装和启动步骤见\ `PhyAI Server 和 Gateway 文档 <https://phyai.mintlify.app/zh/deployment/server-gateway>`_\。
-
-以下三处使用相同的模型名，例如\ ``pi05``\：
-
-* 模型 Server 的\ ``server.model_name``\；
-* Gateway\ ``--backend``\ 选项中的模型名；
-* RLinf 的\ ``rollout.phyai.model_name``\。
-
-运行评估
-~~~~~~~~
-
-设置好资源路径或外部 Gateway 地址后，在 RLinf 仓库根目录运行标准评估入口：
+激活 PhyAI 虚拟环境后，在 RLinf 仓库根目录传入 checkpoint 和 tokenizer 路径即可启动 LIBERO-Spatial 评测：
 
 .. code-block:: bash
 
    source .venv/bin/activate
-   bash evaluations/run_eval.sh libero libero_spatial_pi05_eval_phyai
+   bash evaluations/run_eval.sh libero libero_spatial_pi05_eval_phyai \
+     rollout.phyai.checkpoint_dir=./pi05_libero_finetuned_v044 \
+     rollout.phyai.tokenizer_dir=./paligemma-3b-pt-224
 
-该配置选择\ ``serving_mode: gateway``\，请求 16 步动作块。\ ``runner.only_eval``\ 必须保持为 true。
+启动后，脚本会在本机拉起模型服务和 Gateway，用 128 个并行 LIBERO-Spatial 环境评测 1 个 epoch（16 步动作块），结束后自动关闭服务。单次推理请求默认按 ``rollout.phyai.max_batch_size: 8`` 切分，1、2、4、8 张 GPU 均可直接运行。
 
-不要预先设置\ ``CUDA_VISIBLE_DEVICES``\，让 RLinf placement 选择目标 GPU。多 GPU 配置见\ :doc:`placement 指南 <../../evaluations/reference/configuration>`\。
+如果不想每次在命令行传入路径，可以直接修改 ``evaluations/libero/libero_spatial_pi05_eval_phyai.yaml`` 中的 ``checkpoint_dir`` 和 ``tokenizer_dir``。
 
-在最终指标中检查\ ``success_once``\、\ ``success_at_end``\ 和\ ``num_trajectories``\。自动启动的服务由评估驱动停止；外部服务需在评估结束后手动停止。
+连接外部服务
+~~~~~~~~~~~~
+
+如果模型服务和 Gateway 已经在其他环境或机器上启动，直接通过 ``rollout.phyai.gateway_url`` 指定地址即可：
+
+.. code-block:: bash
+
+   source .venv/bin/activate
+   bash evaluations/run_eval.sh libero libero_spatial_pi05_eval_phyai \
+     rollout.phyai.gateway_url=http://127.0.0.1:30000
+
+此时模型路径和 tokenizer 由外部模型服务自行配置。注意保持模型服务的 ``server.model_name``、Gateway 的 ``--backend`` 参数以及 RLinf 的 ``rollout.phyai.model_name`` 一致（默认均为 ``pi05``）。独立部署方式见 `PhyAI 服务与 Gateway 文档 <https://phyai.mintlify.app/zh/deployment/server-gateway>`_。
+
+查看评测结果
+~~~~~~~~~~~~
+
+评测结束后，终端会输出最终指标表（包含 ``eval/success_once``、``eval/success_at_end`` 和 ``eval/num_trajectories``），日志与 TensorBoard 文件保存在 ``logs/<timestamp>-libero_spatial_pi05_eval_phyai/``。自动启动的模型服务和 Gateway 日志位于该目录的 ``phyai/`` 子目录下。LIBERO 评测协议见 :doc:`LIBERO 评测 <../../evaluations/guides/libero>`。

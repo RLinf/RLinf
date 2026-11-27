@@ -1615,18 +1615,33 @@ def validate_embodied_cfg(cfg):
             assert only_eval, (
                 "rollout.phyai.serving_mode='gateway' requires runner.only_eval=True."
             )
+            max_batch_size = phyai_cfg.get("max_batch_size", None)
+            if max_batch_size is not None:
+                assert (
+                    isinstance(max_batch_size, int)
+                    and not isinstance(max_batch_size, bool)
+                    and max_batch_size > 0
+                ), (
+                    "Expected positive int or None for rollout.phyai.max_batch_size, "
+                    f"got {max_batch_size!r}."
+                )
             gateway_url = phyai_cfg.get("gateway_url")
-            auto_launch_fields = ("server_config", "checkpoint_dir", "tokenizer_dir")
-            has_auto_launch_config = all(
-                isinstance(phyai_cfg.get(field), str) and phyai_cfg.get(field).strip()
-                for field in auto_launch_fields
-            )
+            missing_auto_launch = []
+            server_cfg = phyai_cfg.get("server")
+            if not isinstance(server_cfg, (dict, DictConfig)) or not server_cfg:
+                missing_auto_launch.append("server")
+            for field in ("checkpoint_dir", "tokenizer_dir"):
+                if not (
+                    isinstance(phyai_cfg.get(field), str)
+                    and phyai_cfg.get(field).strip()
+                ):
+                    missing_auto_launch.append(field)
             assert (
                 isinstance(gateway_url, str) and gateway_url.strip()
-            ) or has_auto_launch_config, (
+            ) or not missing_auto_launch, (
                 "Expected a nonempty rollout.phyai.gateway_url or the automatic "
-                "Gateway launch fields (server_config, checkpoint_dir, "
-                f"tokenizer_dir), got {phyai_cfg!r}."
+                "Gateway launch fields (server, checkpoint_dir, "
+                f"tokenizer_dir); missing {missing_auto_launch}."
             )
     # Only the HF rollout worker serves each env configuration on its own loop.
     listed = [

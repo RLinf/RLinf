@@ -58,15 +58,37 @@ rollout:
   phyai:
     serving_mode: "gateway"
     model_name: "pi05"
-    # Override these paths for automatic Gateway launch; gateway_url keeps
-    # compatibility with an externally managed Gateway.
-    server_config: ${oc.env:PHYAI_SERVER_CONFIG,tests/e2e_tests/evaluations/phyai_gateway_server.yaml}
-    checkpoint_dir: ${oc.env:PHYAI_HTTP_CHECKPOINT,/path/to/pi05_libero_finetuned_v044}
-    tokenizer_dir: ${oc.env:PHYAI_HTTP_TOKENIZER,/path/to/paligemma-3b-pt-224}
-    log_dir: ${oc.env:PHYAI_LOG_DIR,logs/ci/phyai-gateway}
-    http_timeout_s: 600
+    gateway_url: null
+    max_batch_size: 8
+    checkpoint_dir: /path/to/pi05_libero_finetuned_v044  # https://huggingface.co/lerobot/pi05_libero_finetuned_v044
+    tokenizer_dir: /path/to/paligemma-3b-pt-224  # https://huggingface.co/google/paligemma-3b-pt-224
+    log_dir: "logs/ci/phyai-gateway"
+    http_timeout_s: 120
     http_max_retries: 0
     http_retry_backoff_s: 1.0
+    server:
+      plugin: pi05
+      plugin_args:
+        inputs_image_shape:
+          - [360, 360, 3]
+          - [360, 360, 3]
+      config:
+        device:
+          target: cuda
+          params_dtype: bfloat16
+        runtime:
+          use_cuda_graph: true
+          flashinfer_workspace_bytes: 2147483648
+      deployment:
+        mode: auto
+      server:
+        workers: 1
+      adapter:
+        factory: phyai.server.backends.pi05:PI05Backend
+        args:
+          image_names: [main_images, wrist_images]
+          state_dim: 8
+          action_dim: 7
 
   model:
     model_type: "openpi"

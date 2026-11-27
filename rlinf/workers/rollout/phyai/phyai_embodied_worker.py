@@ -24,8 +24,10 @@ This worker supports evaluation only and does not launch the Gateway or
 model servers, or load a local policy model.
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 import numpy as np
 import torch
@@ -33,6 +35,28 @@ from omegaconf import DictConfig
 
 from rlinf.utils.obs_compression import infer_obs_batch_size
 from rlinf.workers.rollout.embodied_http_worker import EmbodiedRolloutRouterWorker
+
+_ROUTING_KEYS = frozenset({"_rlinf_stage_id", "_rlinf_reset"})
+
+
+def _slice_obs(
+    env_obs: dict[str, Any], start: int, end: int, batch_size: int
+) -> dict[str, Any]:
+    sliced: dict[str, Any] = {}
+    for key, value in env_obs.items():
+        if isinstance(value, dict):
+            sliced[key] = _slice_obs(value, start, end, batch_size)
+        elif (
+            isinstance(value, (torch.Tensor, np.ndarray))
+            and value.ndim > 0
+            and value.shape[0] == batch_size
+        ):
+            sliced[key] = value[start:end]
+        elif isinstance(value, list) and len(value) == batch_size:
+            sliced[key] = value[start:end]
+        else:
+            sliced[key] = value
+    return sliced
 
 
 class PhyAIGatewayRolloutWorker(EmbodiedRolloutRouterWorker):
@@ -47,8 +71,11 @@ class PhyAIGatewayRolloutWorker(EmbodiedRolloutRouterWorker):
 
     def __init__(self, config: DictConfig):
         super().__init__(config)
-        self._model_name = str(
-            config.rollout.get("phyai", {}).get("model_name", "pi05")
+        phyai_cfg = config.rollout.get("phyai", {})
+        self._model_name = str(phyai_cfg.get("model_name", "pi05"))
+        max_batch_size = phyai_cfg.get("max_batch_size", None)
+        self._max_batch_size: Optional[int] = (
+            int(max_batch_size) if max_batch_size is not None else None
         )
 
     def set_phyai_server_urls(self, urls: Sequence[str]) -> None:
@@ -81,10 +108,9 @@ class PhyAIGatewayRolloutWorker(EmbodiedRolloutRouterWorker):
         """
         if mode != "eval":
             raise NotImplementedError(f"Expected mode='eval', got {mode!r}.")
-        routing_keys = {"_rlinf_stage_id", "_rlinf_reset"}
         # Model preprocessing belongs to the external server.
         observation = {
-            key: value for key, value in env_obs.items() if key not in routing_keys
+            key: value for key, value in env_obs.items() if key not in _ROUTING_KEYS
         }
 
         states = observation["states"]
@@ -163,9 +189,30 @@ class PhyAIGatewayRolloutWorker(EmbodiedRolloutRouterWorker):
             raise RuntimeError("Expected finite PhyAI actions, got NaN or infinity.")
         return actions, {}
 
-    def predict(
+    def _predict_batch(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "eval"
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         payload, state = self.build_phyai_request(env_obs, mode=mode)
         response = self._post_msgpack("/v1/actions/generations", payload)
         return self.parse_phyai_response(response, state)
+
+    def predict(
+        self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "eval"
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Predict action chunks, splitting batches above ``max_batch_size``."""
+        if self._max_batch_size is None:
+            return self._predict_batch(env_obs, mode=mode)
+        observation = {
+            key: value for key, value in env_obs.items() if key not in _ROUTING_KEYS
+        }
+        batch_size = infer_obs_batch_size(observation)
+        if batch_size <= self._max_batch_size:
+            return self._predict_batch(env_obs, mode=mode)
+        chunks = [
+            self._predict_batch(
+                _slice_obs(env_obs, start, start + self._max_batch_size, batch_size),
+                mode=mode,
+            )[0]
+            for start in range(0, batch_size, self._max_batch_size)
+        ]
+        return torch.cat(chunks, dim=0), {}

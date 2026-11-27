@@ -6,5 +6,5 @@ uvicorn
 grpcio>=1.73.1
 protobuf>=6.33.5,<7
 msgpack>=1.0,<2
-sentencepiece
+sentencepiece<0.2.3
 tiktoken>=0.7,<1

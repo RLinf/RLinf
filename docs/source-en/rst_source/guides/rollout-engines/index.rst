@@ -34,7 +34,7 @@ Pick these guides when selecting or tuning a rollout engine: switching SGLang an
       :link: phyai
       :link-type: doc
 
-      Accelerate OpenPI π₀.₅ PPO rollouts on LIBERO with CUDA graphs and FlashInfer.
+      Accelerate π₀.₅ policy inference on LIBERO with PhyAI for PPO training or standalone HTTP evaluation.
 
    .. grid-item-card:: ApxInf Rollout Backend
       :link: ../apxinf
