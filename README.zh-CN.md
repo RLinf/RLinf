@@ -57,6 +57,10 @@ bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 - [2026/11] 🎉 [RLinf 官网](https://rlinf.org/zh/)上线了！欢迎阅读[博客](https://rlinf.org/zh/blog/)并查看[社区活动](https://rlinf.org/zh/events/)。
 - [2026/11] 🔥 RLinf 接入 MuJoCo Warp，支持五个经典运动控制任务的 GPU 批量仿真及 MLP + PPO 示例。文档：[MuJoCo Warp](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html)。
 - [2026/11] 🔥 RLinf 支持 LeKiwi 三轮全向移动底盘，提供分部件调试工具，并注册了真机驱动环境。文档：[LeKiwi](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html)。
+
+<details>
+<summary><b>更多更新</b></summary>
+
 - [2026/11] 🔥 RLinf 支持双臂 ARX X5 搭配 Pico 遥操作的数据采集。文档：[ARX X5](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/arx5.html)。
 - [2026/11] 🔥 RLinf 为异步 agentic RL 提供 session server：轨迹留在 rollout 节点上，不再集中到 node 0；请求经 SGLang router 路由；agent 可以直接使用 OpenAI chat completions 接口。文档：[Session Server](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/session_server.html)。
 - [2026/11] 🔥 RLinf 支持异步 agentic RL：rollout 持续生成，actor 同时用更早权重版本的数据训练，staleness 有上限。在 Search-R1（GLM-4.7-Flash）上，每步耗时从 278.6 s 降到 139.0 s，reward 与同步训练相当。文档：[异步 agentic RL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/async_agentic.html)、[Search-R1 异步训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/searchr1/async.html)。
@@ -66,10 +70,6 @@ bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
 - [2026/11] 🔥 RLinf 支持在 [GenieSim](https://github.com/AgibotTech/genie_sim) 上用 PPO 和 GRPO 对 π₀.₅ 进行强化学习。文档：[基于 GenieSim 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html)。
 - [2026/11] 🔥 RLinf 支持 RoboDojo——基于 Isaac Sim 的双臂操作类基准，覆盖 ARX-X5 等机器人，已作为 Gym 环境接入，可将官方 π₀.₅ 权重转换为 OpenPI 格式并在 55 个预设场景布局上逐场景评测。文档：[RoboDojo](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robodojo.html)。
 - [2026/11] 🔥 RLinf 支持 SO-101 关节空间示范数据采集、OpenPI π₀.₅ 监督微调和本地评测。文档：[SO-101](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/so101.html)。
-
-<details>
-<summary><b>更多更新</b></summary>
-
 - [2026/11] 🔥 RLinf 支持 Psi0 VLA 模型与 SIMPLE 人形机器人仿真环境。文档：[Psi0](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/psi0.html)、[SIMPLE](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html)。
 - [2026/11] 🔥 RLinf 支持将 [PhyAI](https://github.com/mingti-org/phyai) 作为进程内 rollout 后端，在 LIBERO 上用 PPO 训练 π₀.₅，并支持热权重同步，在四张 H800 上把 π₀.₅ 的预测耗时从 142.6 秒降到 68.7 秒。文档：[PhyAI rollout 后端](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/rollout-engines/phyai.html)。
 - [2026/10] 🎉 RLinf v0.4 发布，让强化学习真正走出仿真、敏捷操控物理世界。主要升级：乐高式真机工程体系（`rlinf.robotics`）、真机 SOTA 后训练算法（RLT、STEAM、OPD、RTC）、全模态模型（PyTorch 原生 OpenPI π₀ / π₀.₅、Cosmos3、FastWAM、π₀-FAST、Evo-1、MolmoAct2、SD3 / Wan2.2）以及八大异构算力支持。发布说明：[RLinf v0.4](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/release_v0.4.html)。
