@@ -14,7 +14,7 @@ Where Are You in Your Run?
      - What You Will Set Up
      - Start Here
    * - Run, monitor, and manage a training job
-     - Logging, resume, checkpoint conversion, LoRA, and multi-env training
+     - Logging, resume, checkpoint conversion, LoRA, multi-env training, Qwen3.5 multi-turn visual Agent RL
      - :doc:`Configure & Run <configure/index>`
    * - Scale beyond one GPU or one machine
      - Multi-node Ray, heterogeneous clusters, cloud-edge, placement, 5D parallelism, dynamic scheduling

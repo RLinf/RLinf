@@ -483,8 +483,109 @@ HTTP 工具与带会话状态的工具可分别参考 ``rlinf/agents/searchr1/se
 
 解析器位于外部仓库时，启动前导出 ``RLINF_EXT_MODULE=my_pkg.rlinf_ext`` 即可在所有 Ray Worker 中自动注册（见 :ref:`out-of-tree-extensions`）。
 
+.. _multi-turn-visual-agents:
+
+多轮视觉 Agent（Qwen3.5）
+-------------------------
+
+编写包含图像输入的多轮 Qwen3.5 Agent 时，改继承 ``MultiAgentLoopWorker``\ （替代第 3 步的 ``AgentLoopWorker``），并用 ``self.create_multimodal_turn_state(prompt_ids)`` 管理每轮提示词、图像与区间元数据；配套训练配置见 :doc:`../guides/qwen35_multi_turn_images`。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - 接口
+     - 作用
+   * - ``self.create_multimodal_turn_state(prompt_ids)``
+     - 初始化单条轨迹状态，复用当前 Worker 的 Hugging Face processor、``actor.model.precision`` 精度与图片缓存。
+   * - ``append_text(text)`` / ``append_tokens(ids)``
+     - 向 ``state.prompt_ids`` 追加文本或 token ID（如对话模板边界与用户文本）。
+   * - ``append_image(raw_bytes)``
+     - 预处理单张图像并在 ``state.prompt_ids`` 中按真实 patch 数展开视觉占位符，同时记录 ``image_spans`` 与原始图像字节。
+   * - ``generate_kwargs()``
+     - 返回传给 ``self.generate`` 的图像参数；尚未出现图像时返回空字典。
+   * - ``record_turn(result)``
+     - 用本轮 prompt 与生成 token 更新 ``state.prompt_ids``，返回带 ``multi_modal_inputs`` 的 ``AgentLoopOutput``\ （默认 ``is_end=False``）。
+
+.. tip::
+
+   如果第 1 轮在调用 ``self.generate()`` 前就包含图像，传入图像之前的文本 token 给 ``create_multimodal_turn_state()``，再依次调用 ``append_image()`` 与 ``append_text()`` 即可；此时 ``len(state.prompt_ids)`` 会立即反映真实上下文长度。
+
+.. code-block:: python
+
+   from rlinf.workers.agent.agent_loop import (
+       MultiAgentLoopOutput,
+       MultiAgentLoopWorker,
+   )
+
+
+   class VisionAgentLoop(MultiAgentLoopWorker):
+       async def run_one_query(
+           self, prompt_ids: list[int], answer: str
+       ) -> MultiAgentLoopOutput:
+           max_turns = int(self.cfg.agentloop.get("max_turns", 3))
+           state = self.create_multimodal_turn_state(prompt_ids)
+           rows = []
+           for _ in range(max_turns):
+               result = await self.generate(
+                   state.prompt_ids, **state.generate_kwargs()
+               )
+               row = state.record_turn(result)
+               rows.append(row)
+
+               next_text, next_image_bytes = await step_env(row)  # 自定义工具或环境交互
+               if next_text is None and next_image_bytes is None:
+                   break
+               # 按 Qwen 对话模板闭合上一条 assistant 消息（含触及长度上限未输出结束标记的情况）。
+               im_end_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
+               if not row.response_ids or row.response_ids[-1] != im_end_id:
+                   state.append_text("<|im_end|>")
+               state.append_text("\n<|im_start|>user\n")
+               if next_image_bytes is not None:
+                   state.append_image(next_image_bytes)
+               if next_text:
+                   state.append_text(next_text)
+               state.append_text("<|im_end|>\n<|im_start|>assistant\n")
+
+           episode_reward = score_episode(rows, answer)  # 自定义轨迹打分函数
+           for row in rows:
+               row.reward_score = episode_reward
+           if rows:
+               rows[-1].is_end = True
+           return MultiAgentLoopOutput(single_turn_outputs=rows)
+
+.. dropdown:: 进阶：直接传底层 generate() 参数
+
+   若不使用 ``MultiModalTurnState``，在对话出现图像后的每一轮须满足三条约束：
+
+   1. 向 ``self.generate`` 传入下表中的图像参数。
+   2. 在 ``AgentLoopOutput.multi_modal_inputs`` 中写入预处理好的 ``pixel_values``、``image_grid_thw``，以及与 ``prompt_ids + response_ids`` 等长的 ``mm_token_type_ids``。
+   3. 用 ``turn_prompt_ids + result["output_ids"]`` 推进下一轮 prompt，并为新图像插入与 SGLang 图像处理器等宽的 ``<|image_pad|>`` 占位符。
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 72
+
+      * - 参数
+        - 约束
+      * - ``image_data``
+        - 截至本轮的原始 PNG/JPEG 字节列表，与 ``image_spans`` 一一对应。
+      * - ``image_spans``
+        - 每张图像已展开占位符的左闭右开区间 ``[start, end)``，须夹在 ``<|vision_start|>`` 与 ``<|vision_end|>`` 之间。
+
+   每轮记录的 ``AgentLoopOutput.multi_modal_inputs`` 结构如下（出现图像前的纯文本轮次为 ``None``）：
+
+   .. code-block:: python
+
+      {
+          "pixel_values": [tensor, ...],       # 缓存复用的单图张量列表或拼接后的张量
+          "image_grid_thw": tensor,            # 形状为 (N, 3)
+          "mm_token_type_ids": uint8_tensor,   # 真实图像区间为 1，其余为 0
+      }
+
 下一步
 ------
 
+- **训练 Qwen3.5 视觉 Agent？** 参见 :doc:`Qwen3.5 多轮视觉 Agent 训练 <../guides/qwen35_multi_turn_images>` 完成训练配置与环境验证。
 - **已有 OpenAI API 或外部黑盒 Agent？** 参见 :doc:`黑盒 Agent <openai_agent>`，无需重写解析器与 ``ToolWorker``。
 - **扩展到多机异步训练：** 开启 ``runner.async_mode: True``\ （见 :doc:`异步 Agent RL <../guides/async_agentic>`），并按需通过 :doc:`Session Server <../guides/session_server>` 将轨迹存储下沉到 rollout 节点。

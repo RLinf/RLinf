@@ -34,9 +34,12 @@ jobs:
           # tokenizer and skip without one; these are the model directories this
           # runner has.
           export RLINF_TEST_QWEN25_MODEL_DIR=/workspace/dataset/Qwen2.5-1.5B-Instruct
+          export RLINF_TEST_SGLANG_MODEL=/workspace/dataset/Qwen2.5-1.5B-Instruct
           export RLINF_TEST_GLM47_MODEL_DIR=/workspace/dataset/GLM-4.7-Flash-8L
           status=0
           pytest tests/unit_tests/test_session_server.py tests/unit_tests/test_agentic_tokenizer.py tests/unit_tests/test_peer_whitelist.py || status=$?
+          # Run test_sglang.py in its own process because it isolates SGLang imports via sys.modules.
+          pytest tests/unit_tests/test_sglang.py || status=$?
           ray stop
           exit $status
 
@@ -651,6 +654,41 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh agentic
+
+      - name: Test Megatron and SGLang weight sync on CPU
+        timeout-minutes: 20
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: |
+          source .venv/bin/activate
+          export PYTHONPATH="$(pwd):$(pwd)/tests/unit_tests:${PYTHONPATH:-}"
+          python -c "import megatron.bridge, sglang; import torch.distributed as dist; assert dist.is_gloo_available()"
+          RLINF_CPU_TEST_XML_DIR="$(mktemp -d)"
+          export RLINF_CPU_TEST_XML_DIR
+          trap 'rm -rf "$RLINF_CPU_TEST_XML_DIR"' EXIT
+          for suite in test_ma_megatron_actor test_ckpt_convertor; do
+            python -m pytest "tests/unit_tests/${suite}.py" -q -ra --junitxml="$RLINF_CPU_TEST_XML_DIR/${suite}.xml"
+          done
+          python -m pytest \
+            tests/unit_tests/test_utils.py::TestMegatronModelConfig \
+            tests/unit_tests/test_utils.py::test_valid_token_scaling_preserves_unsplit_gradient \
+            tests/unit_tests/test_utils.py::test_critic_packing_preserves_values_loss_and_optimizer_update \
+            tests/unit_tests/test_utils.py::test_critic_targets_are_fixed_real_length_rows \
+            -q -ra --junitxml="$RLINF_CPU_TEST_XML_DIR/test_model_config.xml"
+          python -m pytest tests/unit_tests/test_weight_syncer.py::TestMegatronSGLangWeightSync -q -ra --junitxml="$RLINF_CPU_TEST_XML_DIR/test_sglang_sync.xml"
+          python - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          report_dir = Path(os.environ["RLINF_CPU_TEST_XML_DIR"])
+          for name in ("test_ma_megatron_actor", "test_ckpt_convertor", "test_model_config", "test_sglang_sync"):
+              root = ET.parse(report_dir / f"{name}.xml").getroot()
+              skipped = sum(int(suite.get("skipped", 0)) for suite in root.iter("testsuite"))
+              assert skipped == 0, f"{name}: expected no skipped tests, got {skipped}"
+          PYTHON
 
       - name: Train Qwen2.5-1.5B with SGLang Megatron-Bridge Collocated mode
         timeout-minutes: 20

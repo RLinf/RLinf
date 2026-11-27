@@ -17,11 +17,16 @@ import contextvars
 import copy
 import json
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from functools import cached_property
+from typing import TYPE_CHECKING, Any, Optional
 from uuid import uuid4
 
 from omegaconf import DictConfig
+
+if TYPE_CHECKING:
+    import torch
 
 from rlinf.agents.tool_call.schema import (
     ToolChannelRequest,
@@ -83,6 +88,136 @@ class AgentLoopOutput:
     """
     version_start: Optional[int] = None
     version_end: Optional[int] = None
+    """Captured multimodal inputs aligned with this turn's prompt."""
+    multi_modal_inputs: Optional[dict[str, Any]] = None
+
+
+class MultiModalTurnState:
+    """Track multi-turn prompt tokens, explicit image spans, and aligned tensors.
+
+    Pre-expands Qwen-VL image placeholders using the local HuggingFace processor
+    and caches per-image ``pixel_values`` so ``len(state.prompt_ids)`` reflects
+    the true token budget before calling ``generate()``, while rollout and
+    Megatron training share identical aligned image metadata.
+    """
+
+    def __init__(
+        self,
+        processor: Any,
+        prompt_ids: Sequence[int],
+        *,
+        pixel_dtype: Optional["torch.dtype"] = None,
+        image_cache: Optional[dict] = None,
+        vision_markers: tuple[str, str, str] = (
+            "<|vision_start|>",
+            "<|image_pad|>",
+            "<|vision_end|>",
+        ),
+    ):
+        self.processor = processor
+        self.tokenizer = getattr(processor, "tokenizer", processor)
+        self.pixel_dtype = pixel_dtype
+        self.image_cache = image_cache
+        self.prompt_ids: list[int] = list(prompt_ids)
+        self.image_data: list[bytes] = []
+        self.image_spans: list[list[int]] = []
+        self._image_pixels: list["torch.Tensor"] = []
+        self._image_grids: list["torch.Tensor"] = []
+        marker_ids = self.tokenizer.convert_tokens_to_ids(list(vision_markers))
+        unk_id = self.tokenizer.unk_token_id
+        if (
+            not isinstance(marker_ids, (list, tuple))
+            or len(marker_ids) != 3
+            or any(
+                not isinstance(token_id, int)
+                or isinstance(token_id, bool)
+                or (unk_id is not None and token_id == unk_id)
+                for token_id in marker_ids
+            )
+            or len(set(marker_ids)) != 3
+        ):
+            raise ValueError(
+                f"Tokenizer is missing distinct vision markers {vision_markers}: "
+                f"got {marker_ids!r}."
+            )
+        self._vision_start, self._image_pad, self._vision_end = marker_ids
+
+    def append_text(self, text: str) -> None:
+        """Tokenize and append text without adding special tokens."""
+        if text:
+            self.prompt_ids.extend(
+                self.tokenizer.encode(text, add_special_tokens=False)
+            )
+
+    def append_tokens(self, token_ids: Sequence[int]) -> None:
+        """Append pre-tokenized token IDs directly to the prompt."""
+        self.prompt_ids.extend(token_ids)
+
+    def append_image(self, image_bytes: bytes) -> int:
+        """Preprocess an image, expand vision placeholders, and return token count."""
+        from rlinf.utils.multimodal import process_single_image
+
+        pixels, grid_thw, num_tokens = process_single_image(
+            image_bytes,
+            self.processor,
+            dtype=self.pixel_dtype,
+            cache=self.image_cache,
+        )
+        self.image_data.append(image_bytes)
+        self._image_pixels.append(pixels)
+        self._image_grids.append(grid_thw)
+        self.prompt_ids.append(self._vision_start)
+        start = len(self.prompt_ids)
+        self.prompt_ids.extend([self._image_pad] * num_tokens)
+        end = len(self.prompt_ids)
+        self.prompt_ids.append(self._vision_end)
+        self.image_spans.append([start, end])
+        return num_tokens
+
+    def generate_kwargs(self) -> dict[str, Any]:
+        """Return keyword arguments for ``AgentLoopWorker.generate``."""
+        if not self.image_data:
+            return {}
+        return {
+            "image_data": list(self.image_data),
+            "image_spans": [list(span) for span in self.image_spans],
+        }
+
+    def record_turn(
+        self,
+        result: dict[str, Any],
+        *,
+        reward_score: Optional[float] = 0.0,
+        is_end: bool = False,
+    ) -> AgentLoopOutput:
+        """Update multi-turn state from a generate() result and build the turn row."""
+        import torch
+
+        from rlinf.utils.multimodal import build_mm_token_type_ids
+
+        turn_prompt_ids = list(self.prompt_ids)
+        response_ids = list(result["output_ids"])
+        full_len = len(turn_prompt_ids) + len(response_ids)
+        mm_inputs = None
+        if self.image_data:
+            mm_inputs = {
+                "pixel_values": list(self._image_pixels),
+                "image_grid_thw": torch.cat(self._image_grids, dim=0),
+                "mm_token_type_ids": build_mm_token_type_ids(
+                    full_len, self.image_spans
+                ),
+            }
+        self.prompt_ids = turn_prompt_ids + response_ids
+        return AgentLoopOutput(
+            prompt_ids=turn_prompt_ids,
+            response_ids=response_ids,
+            response_logprobs=result.get("logprobs"),
+            version_start=result.get("version_start"),
+            version_end=result.get("version_end"),
+            multi_modal_inputs=mm_inputs,
+            reward_score=reward_score,
+            is_end=is_end,
+        )
 
 
 @dataclass
@@ -213,19 +348,66 @@ class AgentLoopWorker(Worker):
             # check; training reads them from the payload.
             self.return_logprobs = self.return_logprobs and self._verify_assembly
 
+    @cached_property
+    def processor(self):
+        """Lazily load the HuggingFace multimodal processor matching rollout.model."""
+        from transformers import AutoProcessor
+
+        return AutoProcessor.from_pretrained(
+            self.cfg.rollout.model.model_path,
+            trust_remote_code=self.cfg.rollout.model.trust_remote_code,
+        )
+
+    def create_multimodal_turn_state(
+        self, prompt_ids: Sequence[int]
+    ) -> MultiModalTurnState:
+        """Create a ``MultiModalTurnState`` sharing this worker's processor and cache."""
+        from omegaconf import OmegaConf
+
+        from rlinf.utils.precision import torch_dtype_from_precision
+
+        if not hasattr(self, "_multimodal_image_cache"):
+            self._multimodal_image_cache: dict = {}
+        precision = OmegaConf.select(self.cfg, "actor.model.precision", default=None)
+        if precision is None:
+            precision = OmegaConf.select(
+                self.cfg, "rollout.model.precision", default=None
+            )
+        pixel_dtype = (
+            torch_dtype_from_precision(precision) if precision is not None else None
+        )
+        return MultiModalTurnState(
+            self.processor,
+            prompt_ids,
+            pixel_dtype=pixel_dtype,
+            image_cache=self._multimodal_image_cache,
+        )
+
     async def generate(
         self,
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
         rollout_name: Optional[str] = None,
+        image_data: Optional[list[bytes]] = None,
+        image_spans: Optional[Sequence[Sequence[int]]] = None,
     ):
+        """Sample one turn; optional image inputs and span metadata ride with the request."""
+        multimodal: dict[str, Any] = {}
+        if image_spans is not None:
+            multimodal["image_spans"] = image_spans
+        if image_data:
+            multimodal["image_data"] = image_data
         if rollout_name is not None:
             # Solid targets are frozen models outside the training loop;
             # they never enter a session and produce no payload.
             return await self._generate_on_solid_channel(
-                prompt_ids, sampling_params, rollout_name
+                prompt_ids, sampling_params, rollout_name, **multimodal
             )
         if self.session_server_client is not None:
+            if multimodal:
+                raise ValueError(
+                    "Aligned image inputs are not supported with the session server transport."
+                )
             binding = self._session_binding.get()
             assert binding is not None, (
                 "the session server transport is active but no session is "
@@ -233,10 +415,15 @@ class AgentLoopWorker(Worker):
                 "trajectory"
             )
             return await self._generate_on_session(binding, prompt_ids, sampling_params)
-        return await self._generate_on_channel(prompt_ids, sampling_params)
+        return await self._generate_on_channel(
+            prompt_ids, sampling_params, **multimodal
+        )
 
     async def _generate_on_channel(
-        self, prompt_ids: list[int], sampling_params: Optional[dict]
+        self,
+        prompt_ids: list[int],
+        sampling_params: Optional[dict],
+        **multimodal: Any,
     ):
         channel_key = uuid4().hex
         await self.generate_input_channel.put(
@@ -244,6 +431,7 @@ class AgentLoopWorker(Worker):
                 "channel_key": channel_key,
                 "prompt_ids": prompt_ids,
                 "sampling_params": sampling_params,
+                **multimodal,
             },
             async_op=True,
         ).async_wait()
@@ -261,6 +449,7 @@ class AgentLoopWorker(Worker):
         prompt_ids: list[int],
         sampling_params: Optional[dict],
         rollout_name: str,
+        **multimodal: Any,
     ):
         channel_key = uuid4().hex
         input_channel = self.solid_generate_input_channels[rollout_name]
@@ -269,6 +458,7 @@ class AgentLoopWorker(Worker):
                 "channel_key": channel_key,
                 "prompt_ids": prompt_ids,
                 "sampling_params": sampling_params,
+                **multimodal,
             },
             async_op=True,
         ).async_wait()
@@ -600,6 +790,7 @@ class AgentLoopWorker(Worker):
             ]
         is_end = [True for _ in task_results]
         answers = [answer] * len(task_results)
+        images = [r.multi_modal_inputs for r in task_results]
         return RolloutResult(
             num_sequence=len(task_results),
             group_size=len(task_results),
@@ -611,6 +802,7 @@ class AgentLoopWorker(Worker):
             response_texts=response_texts,
             is_end=is_end,
             answers=answers,
+            multi_modal_inputs=images if any(images) else None,
             response_mask=response_mask,
             rollout_logprobs=response_logprobs,
         )
@@ -1190,6 +1382,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         rollout_logprobs = None
         if self.return_logprobs:
             rollout_logprobs = []
+        images = []
         is_end = []
         rewards = []
         version_start = []
@@ -1212,6 +1405,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                         single_turn_output.response_ids
                     ), "response_logprobs should have the same length as response_ids"
                     rollout_logprobs.append(single_turn_output.response_logprobs)
+                images.append(single_turn_output.multi_modal_inputs)
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
                 version_start.append(single_turn_output.version_start)
@@ -1238,6 +1432,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             response_lengths=response_lengths,
             input_ids=input_ids,
             rollout_logprobs=rollout_logprobs,
+            multi_modal_inputs=images if any(images) else None,
             is_end=is_end,
             rewards=rewards,
             version_start=version_start,

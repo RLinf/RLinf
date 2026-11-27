@@ -483,8 +483,109 @@ Launch both worker groups in your entry script and pass them to ``AgentRunner`` 
 
 If the parser lives outside RLinf, export ``RLINF_EXT_MODULE=my_pkg.rlinf_ext`` before launching so every Ray worker registers it automatically (see :ref:`out-of-tree-extensions`).
 
+.. _multi-turn-visual-agents:
+
+Multi-Turn Visual Agents (Qwen3.5)
+----------------------------------
+
+For multi-turn Qwen3.5 agents that pass images, subclass ``MultiAgentLoopWorker`` (instead of ``AgentLoopWorker`` in Step 3) and use ``self.create_multimodal_turn_state(prompt_ids)`` to track prompt tokens, image inputs, and per-turn span metadata. See :doc:`../guides/qwen35_multi_turn_images` for the matching training config.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - API
+     - Role
+   * - ``self.create_multimodal_turn_state(prompt_ids)``
+     - Initialize per-trajectory state sharing the worker's Hugging Face processor, ``actor.model.precision`` dtype, and image cache.
+   * - ``append_text(text)`` / ``append_tokens(ids)``
+     - Append text or token IDs to ``state.prompt_ids`` (such as chat-template turn markers or user text).
+   * - ``append_image(raw_bytes)``
+     - Preprocess an image, expand exact visual placeholders into ``state.prompt_ids`` upfront, and record ``image_spans`` and raw image bytes.
+   * - ``generate_kwargs()``
+     - Return image kwargs for ``self.generate`` (empty dict before any image arrives).
+   * - ``record_turn(result)``
+     - Advance ``state.prompt_ids`` with this turn's prompt and sampled response, returning an ``AgentLoopOutput`` with aligned ``multi_modal_inputs`` (default ``is_end=False``).
+
+.. tip::
+
+   When turn 1 already includes an image, pass the tokens before the image to ``create_multimodal_turn_state()`` and call ``append_image()`` / ``append_text()`` before the first ``self.generate()``; ``len(state.prompt_ids)`` then reflects the true context budget upfront.
+
+.. code-block:: python
+
+   from rlinf.workers.agent.agent_loop import (
+       MultiAgentLoopOutput,
+       MultiAgentLoopWorker,
+   )
+
+
+   class VisionAgentLoop(MultiAgentLoopWorker):
+       async def run_one_query(
+           self, prompt_ids: list[int], answer: str
+       ) -> MultiAgentLoopOutput:
+           max_turns = int(self.cfg.agentloop.get("max_turns", 3))
+           state = self.create_multimodal_turn_state(prompt_ids)
+           rows = []
+           for _ in range(max_turns):
+               result = await self.generate(
+                   state.prompt_ids, **state.generate_kwargs()
+               )
+               row = state.record_turn(result)
+               rows.append(row)
+
+               next_text, next_image_bytes = await step_env(row)  # your tool or environment step
+               if next_text is None and next_image_bytes is None:
+                   break
+               # Close the previous assistant message per Qwen chat template, including length-capped turns.
+               im_end_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
+               if not row.response_ids or row.response_ids[-1] != im_end_id:
+                   state.append_text("<|im_end|>")
+               state.append_text("\n<|im_start|>user\n")
+               if next_image_bytes is not None:
+                   state.append_image(next_image_bytes)
+               if next_text:
+                   state.append_text(next_text)
+               state.append_text("<|im_end|>\n<|im_start|>assistant\n")
+
+           episode_reward = score_episode(rows, answer)  # your episode scorer
+           for row in rows:
+               row.reward_score = episode_reward
+           if rows:
+               rows[-1].is_end = True
+           return MultiAgentLoopOutput(single_turn_outputs=rows)
+
+.. dropdown:: Advanced: Low-Level generate() Arguments
+
+   If your loop tracks prompt state directly without ``MultiModalTurnState``, follow three rules on every turn after an image appears:
+
+   1. Pass the arguments below to ``self.generate`` on every turn after an image appears.
+   2. Populate ``AgentLoopOutput.multi_modal_inputs`` with preprocessed ``pixel_values``, ``image_grid_thw``, and ``mm_token_type_ids`` matching ``prompt_ids + response_ids``.
+   3. Advance the next turn's prompt from ``turn_prompt_ids + result["output_ids"]``, inserting pre-expanded ``<|image_pad|>`` counts matching SGLang's image processor for each new image.
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 72
+
+      * - Argument
+        - Contract
+      * - ``image_data``
+        - Cumulative list of raw PNG or JPEG bytes, 1-to-1 with ``image_spans``.
+      * - ``image_spans``
+        - Half-open ``[start, end)`` ranges covering each image's expanded pad tokens between ``<|vision_start|>`` and ``<|vision_end|>``.
+
+   Recorded ``AgentLoopOutput.multi_modal_inputs`` payload stored per turn (``None`` on text-only turns before any image):
+
+   .. code-block:: python
+
+      {
+          "pixel_values": [tensor, ...],       # per-image tensors (shared via cache) or concatenated tensor
+          "image_grid_thw": tensor,            # shape (N, 3)
+          "mm_token_type_ids": uint8_tensor,   # 1 inside real image spans, 0 elsewhere
+      }
+
 Next Steps
 ----------
 
+- **Training a Qwen3.5 visual agent?** Configure SGLang rollout and Megatron-Bridge training in :doc:`Multi-Turn Visual Agent Training (Qwen3.5) <../guides/qwen35_multi_turn_images>`.
 - **Already have an OpenAI API or external agent?** Follow :doc:`Black-Box Agent <openai_agent>` to connect without rewriting parsers or ``ToolWorker``.
 - **Scale asynchronously across nodes:** Enable ``runner.async_mode: True`` (:doc:`Async Agentic RL <../guides/async_agentic>`) and offload rollout payloads with :doc:`Session Server <../guides/session_server>`.

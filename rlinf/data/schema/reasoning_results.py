@@ -37,6 +37,51 @@ if TYPE_CHECKING:
 from rlinf.data.schema.reasoning_requests import SeqGroupInfo, get_batch_size
 
 
+def _has_image_payload(payloads: Optional[list[Optional[dict]]]) -> bool:
+    """Return True when at least one row carries a non-empty multimodal payload."""
+    return payloads is not None and any(payloads)
+
+
+def _validate_image_rows(
+    payloads: Optional[list[Optional[dict]]], num_sequence: int
+) -> None:
+    if payloads is not None and len(payloads) != num_sequence:
+        raise ValueError(
+            "multi_modal_inputs must contain one entry per sequence (use None for text rows): "
+            f"expected {num_sequence}, got {len(payloads)}."
+        )
+
+
+def _align_image_batches(batches: list[dict]) -> list[dict]:
+    """Supply empty slots only for batches that have no image column at all."""
+    if not any("multi_modal_inputs" in batch for batch in batches):
+        return batches
+    has_images = False
+    for batch in batches:
+        if "multi_modal_inputs" in batch:
+            nrows = len(batch["input_ids"])
+            payloads = batch["multi_modal_inputs"]
+            if len(payloads) != nrows:
+                raise ValueError(
+                    "multi_modal_inputs must contain one entry per sequence: "
+                    f"expected {nrows}, got {len(payloads)}."
+                )
+            if _has_image_payload(payloads):
+                has_images = True
+    if not has_images:
+        return [
+            {key: value for key, value in batch.items() if key != "multi_modal_inputs"}
+            for batch in batches
+        ]
+    aligned = []
+    for batch in batches:
+        nrows = len(batch["input_ids"])
+        if "multi_modal_inputs" not in batch:
+            batch = {**batch, "multi_modal_inputs": [None] * nrows}
+        aligned.append(batch)
+    return aligned
+
+
 @dataclass(kw_only=True)
 class RolloutResult:
     """Container for reasoning rollout sequences and training metadata."""
@@ -54,7 +99,7 @@ class RolloutResult:
     response_texts: Optional[list[str]] = None
     answers: Optional[list[str | dict]] = None
     image_data: Optional[Union[list[list[bytes]], list[list[str]]]] = None
-    multi_modal_inputs: Optional[list[dict]] = None
+    multi_modal_inputs: Optional[list[Optional[dict]]] = None
     response_mask: Optional[list[list[int]]] = None
     # Inference
     # Logprobs returned by rollout engines
@@ -73,6 +118,9 @@ class RolloutResult:
     # Agent task name of the group this result belongs to, set by the agent
     # loop from the issuing request's task_names.
     task_name: Optional[str] = None
+
+    def _validate_image_rows(self) -> None:
+        _validate_image_rows(self.multi_modal_inputs, self.num_sequence)
 
     @property
     def batch_size(self):
@@ -270,6 +318,8 @@ class RolloutResult:
         rollout_results: list["RolloutResult"],
     ) -> "RolloutResult":
         assert len(rollout_results) > 0, "No rollout results to merge."
+        for result in rollout_results:
+            result._validate_image_rows()
         if len(rollout_results) == 1:
             return rollout_results[0]
         merged_result = RolloutResult(
@@ -282,6 +332,11 @@ class RolloutResult:
             is_end=[],
         )
 
+        # One decision for the whole list: a result without images still pads
+        # its rows once any result carries payloads.
+        carry_payloads = any(
+            _has_image_payload(res.multi_modal_inputs) for res in rollout_results
+        )
         for res in rollout_results:
             merged_result.prompt_lengths.extend(res.prompt_lengths)
             merged_result.prompt_ids.extend(res.prompt_ids)
@@ -332,10 +387,15 @@ class RolloutResult:
                 merged_result.ref_logprobs = merge_tensor(
                     merged_result.ref_logprobs, res.ref_logprobs
                 )
-            if res.multi_modal_inputs is not None:
-                merged_result.multi_modal_inputs = merge_list(
-                    merged_result.multi_modal_inputs, res.multi_modal_inputs
-                )
+            # Rows without images keep their slot, so the merged list stays
+            # aligned with the merged row order.
+            if carry_payloads:
+                payloads = res.multi_modal_inputs
+                if payloads is None:
+                    payloads = [None] * res.num_sequence
+                if merged_result.multi_modal_inputs is None:
+                    merged_result.multi_modal_inputs = []
+                merged_result.multi_modal_inputs.extend(payloads)
             if res.values is not None:
                 merged_result.values = merge_tensor(merged_result.values, res.values)
             if res.returns is not None:
@@ -410,6 +470,7 @@ class RolloutResult:
 
         multi_modal_inputs_split = None
         if rollout_result.multi_modal_inputs is not None:
+            rollout_result._validate_image_rows()
             multi_modal_inputs_split = split_list(
                 rollout_result.multi_modal_inputs, num_groups
             )
@@ -650,11 +711,11 @@ class RolloutResult:
             "response_lengths": response_lengths.to(Worker.torch_device_type),
         }
 
-        if (
-            self.multi_modal_inputs is not None
-            and self.multi_modal_inputs[0] is not None
-        ):
-            batch["multi_modal_inputs"] = self.multi_modal_inputs
+        self._validate_image_rows()
+        # Rows are aligned with the payload list, so any row with images makes
+        # the entry meaningful; a leading text-only row must not hide it.
+        if _has_image_payload(self.multi_modal_inputs):
+            batch["multi_modal_inputs"] = list(self.multi_modal_inputs)
 
         if self.advantages is not None:
             if isinstance(self.advantages, torch.Tensor):
@@ -702,10 +763,12 @@ class RolloutResult:
         merged_batch = {}
         if len(batches) == 0:
             return merged_batch
+        batches = _align_image_batches(batches)
         if len(batches) == 1:
             return batches[0]
         assert all(batch.keys() == batches[0].keys() for batch in batches[1:]), (
-            "All batches must have the same keys"
+            f"All batches must have the same keys, got "
+            f"{[sorted(batch.keys()) for batch in batches]}"
         )
         for key in batches[0].keys():
             if torch.is_tensor(batches[0][key]):
@@ -733,6 +796,7 @@ class RolloutResult:
             list of split RolloutResult objects
         """
 
+        rollout_result._validate_image_rows()
         group_size = rollout_result.group_size
         num_sequence = rollout_result.num_sequence
         assert num_sequence % (rollout_result.group_size * split_num) == 0, (
@@ -911,6 +975,7 @@ class DynamicRolloutResult:
     # size of belows are num_sequence
     input_ids: list[list[int]]
     rollout_logprobs: Optional[list[list[float]]] = None
+    multi_modal_inputs: Optional[list[Optional[dict]]] = None
     recomputed_logprobs: Optional[TokenRows] = None
     ref_logprobs: Optional[TokenRows] = None
     prompt_lengths: list[int]
@@ -945,6 +1010,9 @@ class DynamicRolloutResult:
     extra_fields_turn: Optional[dict] = None  # [num_sequence]
     extra_fields_traj: Optional[dict] = None  # [group_size]
     extra_fields_group: Optional[dict] = None  # [1]
+
+    def _validate_image_rows(self) -> None:
+        _validate_image_rows(self.multi_modal_inputs, self.num_sequence)
 
     def group_metadata(self) -> GroupMetadata:
         """Summarize this group for routing and filtering decisions.
@@ -994,6 +1062,9 @@ class DynamicRolloutResult:
                 for k, v in self.extra_fields_train.items()
             },
         }
+        self._validate_image_rows()
+        if _has_image_payload(self.multi_modal_inputs):
+            batch["multi_modal_inputs"] = list(self.multi_modal_inputs)
         if self.rewards is not None:
             batch["rewards"] = (
                 self.rewards.detach().cpu()
@@ -1066,6 +1137,7 @@ class DynamicRolloutResult:
                 return merged_batch, []
             return merged_batch
 
+        batches = _align_image_batches(batches)
         if len(batches) == 1:
             if return_num_sequence_per_group:
                 num_sequence_per_group = [batches[0]["response_lengths"].shape[0]]
@@ -1125,6 +1197,10 @@ class DynamicRolloutResult:
         Returns:
             Packed batch with updated tensors and `idx_to_traj` mapping.
         """
+
+        # Identical token prefixes can refer to different images or M-RoPE.
+        if "multi_modal_inputs" in batch:
+            return batch
 
         # calculate pack map
         traj_to_idx = {}
@@ -1350,6 +1426,8 @@ class DynamicRolloutResult:
         """
 
         assert len(rollout_results) > 0, "No rollout results to merge."
+        for res in rollout_results:
+            res._validate_image_rows()
         if len(rollout_results) == 1:
             return rollout_results[0]
 
@@ -1373,6 +1451,9 @@ class DynamicRolloutResult:
             ),
         )
 
+        carry_payloads = any(
+            _has_image_payload(res.multi_modal_inputs) for res in rollout_results
+        )
         for res in rollout_results:
             # Merge required list fields (size: num_sequence)
             merged_result.idx_to_traj.extend(res.idx_to_traj)
@@ -1384,6 +1465,14 @@ class DynamicRolloutResult:
                 merged_result.rollout_logprobs = (
                     merged_result.rollout_logprobs or []
                 ) + list(res.rollout_logprobs)
+
+            if carry_payloads:
+                payloads = res.multi_modal_inputs
+                if payloads is None:
+                    payloads = [None] * res.num_sequence
+                merged_result.multi_modal_inputs = (
+                    merged_result.multi_modal_inputs or []
+                ) + list(payloads)
 
             # Merge tensor fields (size: num_sequence)
             for key in ("recomputed_logprobs", "ref_logprobs"):
@@ -1443,6 +1532,7 @@ class DynamicRolloutResult:
             A list of split DynamicRolloutResult objects
         """
 
+        rollout_result._validate_image_rows()
         num_sequence = rollout_result.num_sequence
         if sum(num_sequence_per_group) != num_sequence:
             raise ValueError("sum(num_sequence_per_group) != num_sequence")
@@ -1490,6 +1580,12 @@ class DynamicRolloutResult:
             if rollout_result.ref_logprobs is not None:
                 split_ref_logprobs = rollout_result.ref_logprobs[start_idx:end_idx]
 
+            split_multi_modal_inputs = None
+            if rollout_result.multi_modal_inputs is not None:
+                slice_payloads = rollout_result.multi_modal_inputs[start_idx:end_idx]
+                if _has_image_payload(slice_payloads):
+                    split_multi_modal_inputs = slice_payloads
+
             # construct the split DynamicRolloutResult
             split_result = DynamicRolloutResult(
                 num_sequence=split_size,
@@ -1497,6 +1593,7 @@ class DynamicRolloutResult:
                 idx_to_traj=split_idx_to_traj,
                 input_ids=split_input_ids,
                 rollout_logprobs=split_rollout_logprobs,
+                multi_modal_inputs=split_multi_modal_inputs,
                 recomputed_logprobs=split_recomputed_logprobs,
                 ref_logprobs=split_ref_logprobs,
                 prompt_lengths=split_prompt_lengths,

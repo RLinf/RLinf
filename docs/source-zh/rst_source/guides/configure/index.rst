@@ -36,6 +36,12 @@
 
       在单次运行中同时使用多个不同的仿真或真机 Env 配置。
 
+   .. grid-item-card:: Qwen3.5 多轮视觉 Agent 训练
+      :link: ../qwen35_multi_turn_images
+      :link-type: doc
+
+      在 Qwen3.5 多轮视觉 Agent 训练中开启多轮图像对齐，保持推理与训练输入一致。
+
 .. toctree::
    :hidden:
 
@@ -44,3 +50,4 @@
    Checkpoint 转换 <../convertor>
    LoRA 微调 <../lora>
    多 Env 混合训练 <../hetero_envs>
+   Qwen3.5 多轮视觉 Agent 训练 <../qwen35_multi_turn_images>

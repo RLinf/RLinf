@@ -27,13 +27,16 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
+import torch
 from omegaconf import OmegaConf
 
 from rlinf.data.schema import DiscardedGroup
 from rlinf.workers.agent.agent_loop import (
+    AgentLoopOutput,
     AgentLoopWorker,
     GroupDiscarded,
     MultiAgentLoopWorker,
+    MultiModalTurnState,
 )
 
 
@@ -71,6 +74,184 @@ def _make_worker() -> AgentLoopWorker:
     worker._inflight_groups = set()
     worker.log_error = mock.MagicMock()
     return worker
+
+
+def test_agent_loop_sends_multimodal_request_metadata():
+    worker = _make_worker()
+    worker.generate_input_channel = _QueueChannel()
+    worker.generate_output_channel = _QueueChannel()
+    ids, images, spans = [1, 2], [b"image"], [[1, 2]]
+
+    worker.generate_output_channel.put({"output_ids": [3]})
+    asyncio.run(worker.generate(ids, {}, image_data=images, image_spans=spans))
+    request = worker.generate_input_channel.get_nowait()
+    assert request["image_data"] == images
+    assert request["image_spans"] == spans
+
+    worker.session_server_client = object()
+    with pytest.raises(ValueError, match="session server transport"):
+        asyncio.run(worker.generate(ids, {}, image_spans=spans))
+
+
+def test_multimodal_turn_state_pre_expands_caches_and_emits_token_types():
+    import io
+
+    from PIL import Image
+
+    class _FakeImageProcessor:
+        patch_size = 14
+        merge_size = 2
+        size = {"shortest_edge": 56 * 56, "longest_edge": 28 * 28 * 1280}
+        calls = 0
+
+        def __call__(self, images, return_tensors="pt", size=None):
+            _FakeImageProcessor.calls += 1
+            # 16 -> grid (1, 2, 4) -> 2 patches; larger width -> grid (1, 4, 4) -> 4 patches
+            width = images[0].width
+            grid = torch.tensor([[1, 2, 4]] if width <= 16 else [[1, 4, 4]])
+            patches = int(grid.prod().item())
+            return {
+                "pixel_values": torch.full((patches, 3), float(width)),
+                "image_grid_thw": grid,
+            }
+
+    tokenizer = SimpleNamespace(
+        unk_token_id=None,
+        convert_tokens_to_ids=lambda tokens: [101, 102, 103],
+        encode=lambda text, add_special_tokens=False: [ord(ch) for ch in text],
+    )
+    processor = SimpleNamespace(
+        tokenizer=tokenizer, image_processor=_FakeImageProcessor()
+    )
+    cache = {}
+    state = MultiModalTurnState(
+        processor, [1, 2], pixel_dtype=torch.bfloat16, image_cache=cache
+    )
+
+    # Turn 1: pure text before any image arrives.
+    state.append_text("A")
+    assert state.prompt_ids == [1, 2, 65]
+    assert state.generate_kwargs() == {}
+    row1 = state.record_turn(
+        {"output_ids": [20], "logprobs": [-0.1], "version_start": 3, "version_end": 4}
+    )
+    assert row1.prompt_ids == [1, 2, 65]
+    assert row1.response_ids == [20]
+    assert row1.multi_modal_inputs is None
+    assert state.prompt_ids == [1, 2, 65, 20]
+
+    # Turn 2: append image (width=16 -> 2 pad tokens pre-expanded immediately).
+    def make_png(w):
+        buf = io.BytesIO()
+        Image.new("RGB", (w, 16), "red").save(buf, format="PNG")
+        return buf.getvalue()
+
+    img1 = make_png(16)
+    assert state.append_image(img1) == 2
+    state.append_text("B")
+    # Prompt already carries [101, 102, 102, 103] before calling generate().
+    assert state.prompt_ids == [1, 2, 65, 20, 101, 102, 102, 103, 66]
+    assert state.generate_kwargs() == {"image_data": [img1], "image_spans": [[5, 7]]}
+
+    row2 = state.record_turn(
+        {"output_ids": [21], "logprobs": [-0.2], "version_start": 4, "version_end": 5},
+        is_end=True,
+    )
+    assert row2.prompt_ids == [1, 2, 65, 20, 101, 102, 102, 103, 66]
+    assert row2.multi_modal_inputs["mm_token_type_ids"].tolist() == [
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+    ]
+    assert row2.multi_modal_inputs["pixel_values"][0].dtype == torch.bfloat16
+
+    # Multi-turn pickle deduplicates shared per-image Tensor references (O(T) bytes).
+    import pickle
+
+    payload = [row1.multi_modal_inputs, row2.multi_modal_inputs]
+    assert len(pickle.dumps(payload)) < 4096
+    row2_extra = state.record_turn({"output_ids": [22]})
+    assert (
+        row2_extra.multi_modal_inputs["pixel_values"][0]
+        is row2.multi_modal_inputs["pixel_values"][0]
+    )
+    large_px = torch.zeros(256, 256, dtype=torch.bfloat16)
+    dedup_size = len(
+        pickle.dumps([{"pixel_values": [large_px]}, {"pixel_values": [large_px]}])
+    )
+    assert dedup_size < large_px.nbytes + 2048
+
+    # Reusing same image in a second trajectory hits cache with zero extra calls.
+    state2 = MultiModalTurnState(
+        processor, [1], pixel_dtype=torch.bfloat16, image_cache=cache
+    )
+    assert state2.append_image(img1) == 2
+    assert _FakeImageProcessor.calls == 1
+    assert (
+        state2._image_pixels[0].data_ptr()
+        == row2.multi_modal_inputs["pixel_values"][0].data_ptr()
+    )
+
+    # Custom vision markers work cleanly without hardcoding Qwen-VL tokens.
+    custom_seen = []
+    custom_tok = SimpleNamespace(
+        unk_token_id=None,
+        convert_tokens_to_ids=lambda tokens: custom_seen.extend(tokens) or [7, 8, 9],
+    )
+    custom_proc = SimpleNamespace(
+        tokenizer=custom_tok, image_processor=_FakeImageProcessor()
+    )
+    custom_state = MultiModalTurnState(
+        custom_proc, [1], vision_markers=("<img_s>", "<img_p>", "<img_e>")
+    )
+    assert custom_state.append_image(make_png(32)) == 4
+    assert custom_seen == ["<img_s>", "<img_p>", "<img_e>"]
+    assert custom_state.prompt_ids == [1, 7, 8, 8, 8, 8, 9]
+
+
+def test_create_multimodal_turn_state_prefers_actor_precision():
+    tokenizer = SimpleNamespace(
+        unk_token_id=None, convert_tokens_to_ids=lambda _t: [101, 102, 103]
+    )
+    worker = _make_worker()
+    worker.__dict__["processor"] = SimpleNamespace(tokenizer=tokenizer)
+
+    # Prefers actor.model.precision over rollout.model.precision.
+    worker.cfg = OmegaConf.create(
+        {
+            "actor": {"model": {"precision": "bf16"}},
+            "rollout": {"model": {"precision": "fp16"}},
+        }
+    )
+    state_actor = worker.create_multimodal_turn_state([1, 2])
+    assert state_actor.pixel_dtype == torch.bfloat16
+    assert state_actor.image_cache is worker._multimodal_image_cache
+
+    # Falls back to rollout.model.precision when actor.model.precision is omitted.
+    worker.cfg = OmegaConf.create({"rollout": {"model": {"precision": "fp16"}}})
+    state_fallback = worker.create_multimodal_turn_state([1, 2])
+    assert state_fallback.pixel_dtype == torch.float16
+
+
+def test_multimodal_turn_state_rejects_missing_or_duplicate_vision_markers():
+    for marker_ids, unk_id in (
+        ([101, None, 103], None),
+        ([101, 101, 103], None),
+        ([101, 0, 103], 0),
+    ):
+        tokenizer = SimpleNamespace(
+            unk_token_id=unk_id,
+            convert_tokens_to_ids=lambda _tokens, ids=marker_ids: ids,
+        )
+        with pytest.raises(ValueError, match="vision markers"):
+            MultiModalTurnState(tokenizer, [1, 2])
 
 
 def _request(n_groups=1, group_size=2, group_ids=None, task_names=None):
@@ -111,7 +292,7 @@ def _make_group_worker(worker_cls=AgentLoopWorker):
 
 async def _single_query_output(input_ids):
     """One finished single-turn trajectory for the base group method."""
-    return SimpleNamespace(
+    return AgentLoopOutput(
         prompt_ids=[1, 2],
         prompt_text="p",
         response_ids=[3],
@@ -604,8 +785,8 @@ def _single_turn_output(
     version_start: int | None,
     version_end: int | None,
     not_training: bool = False,
-) -> SimpleNamespace:
-    return SimpleNamespace(
+) -> AgentLoopOutput:
+    return AgentLoopOutput(
         prompt_ids=[1, 2],
         response_ids=[3],
         response_logprobs=[0.5],
@@ -638,6 +819,16 @@ class TestGetRolloutResultVersions:
         return worker.get_rollout_result(
             task_results, None, None, None, extra_fields_train={}
         )
+
+    def test_image_payloads_follow_retained_turns(self):
+        text, skipped, image = (_single_turn_output(1, 1) for _ in range(3))
+        skipped.extra_fields["not_training"] = True
+        image.multi_modal_inputs = {
+            "mm_token_type_ids": [0, 1],
+            "pixel_values": [1],
+        }
+        result = self._get_rollout_result([[text, skipped], [image]])
+        assert result.multi_modal_inputs == [None, image.multi_modal_inputs]
 
     def test_versions_written_and_aligned(self):
         result = self._get_rollout_result(
@@ -909,3 +1100,53 @@ class TestTaskNamePassthrough:
             assert seen == [(None, None), (None, None)]
 
         asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("training_backend", "mbridge", "resume_dir", "should_convert"),
+    [
+        ("megatron", True, None, False),
+        ("megatron", False, None, True),
+        ("megatron", False, "/ckpt", False),
+        ("fsdp", False, None, False),
+    ],
+)
+def test_agent_ppo_runner_skips_legacy_critic_convert_for_mbridge(
+    monkeypatch, training_backend, mbridge, resume_dir, should_convert
+):
+    import sys
+
+    from omegaconf import OmegaConf
+
+    from rlinf.runners.agent_ppo_runner import AgentPPORunner
+    from rlinf.runners.agent_runner import AgentRunner
+
+    converted = []
+    monkeypatch.setattr(AgentRunner, "init_rollout_workers", lambda self: None)
+    monkeypatch.setitem(
+        sys.modules,
+        "rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg",
+        SimpleNamespace(
+            convert_hf_to_mg=lambda path, cfg: converted.append((path, cfg))
+        ),
+    )
+    runner = AgentPPORunner.__new__(AgentPPORunner)
+    runner.cfg = OmegaConf.create(
+        {
+            "runner": {"resume_dir": resume_dir},
+            "critic": {
+                "training_backend": training_backend,
+                "megatron": {
+                    "use_hf_ckpt": True,
+                    "mbridge": mbridge,
+                    "ckpt_convertor": {"hf_model_path": "/hf/critic"},
+                },
+            },
+        }
+    )
+    runner.init_rollout_workers()
+    if should_convert:
+        assert len(converted) == 1
+        assert converted[0][0] == "/hf/critic"
+    else:
+        assert converted == []

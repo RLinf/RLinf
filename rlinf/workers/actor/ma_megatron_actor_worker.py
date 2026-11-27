@@ -183,14 +183,10 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 for row in batch["input_ids"]
             ]
             lengths = [len(row) for row in rows]
-            input_ids, packed_params = preprocess_ragged_seqs(rows)
-            position_ids, _ = preprocess_ragged_seqs(
-                [torch.arange(n, device=input_ids.device) for n in lengths]
-            )
             labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
             label, _ = preprocess_ragged_seqs(labels)
             label_mask, _ = preprocess_ragged_seqs(
-                [torch.arange(n, device=input_ids.device) < n - 1 for n in lengths]
+                [torch.arange(n, device=rows[0].device) < n - 1 for n in lengths]
             )
 
             def logits_processor(logits, label, label_mask):
@@ -214,19 +210,31 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
 
             logits_processor_args = {"label": label, "label_mask": label_mask}
 
-            output = self.custom_forward(
-                model,
-                input_ids,
-                None,
-                position_ids,
-                sequence_parallel=self.transformer_config.sequence_parallel,
-                logits_processor=logits_processor,
-                logits_processor_args=logits_processor_args,
-                temperature=self.cfg.algorithm.sampling_params.temperature,
-                packed_seq_params=packed_params,
-            )
+            train_mtp = self.return_loss and self.trains_mtp
+            mtp_mask = None
+            if train_mtp:
+                response_rows = [
+                    mask.to(device=rows[0].device, dtype=torch.float32)
+                    for mask in batch["response_mask"]
+                ]
+                mtp_mask, _ = preprocess_ragged_seqs(
+                    [torch.cat((mask[1:], mask.new_zeros(1))) for mask in response_rows]
+                )
+            module = unwrap_model(model)
+            with self.ragged_model_inputs(batch, module, rows) as model_inputs:
+                packed_params = model_inputs["packed_seq_params"]
+                output = self.custom_forward(
+                    model,
+                    **model_inputs,
+                    sequence_parallel=self.transformer_config.sequence_parallel,
+                    logits_processor=logits_processor,
+                    logits_processor_args=logits_processor_args,
+                    mtp_labels=label if train_mtp else None,
+                    mtp_loss_mask=mtp_mask,
+                    temperature=self.cfg.algorithm.sampling_params.temperature,
+                )
 
-            if unwrap_model(model).post_process:
+            if module.post_process:
                 output_rows = {
                     key: postprocess_ragged_seqs(value, packed_params, lengths)
                     for key, value in output.items()
@@ -243,7 +251,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     )
                 width = self.cfg.actor.model.encoder_seq_length
                 output = DynamicRolloutResult.materialize_actor_batch(
-                    output_rows, width, 0, input_ids.device
+                    output_rows, width, 0, rows[0].device
                 )
                 batch = DynamicRolloutResult.materialize_actor_batch(
                     {
@@ -260,7 +268,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     },
                     width,
                     self.tokenizer.eos_token_id,
-                    input_ids.device,
+                    rows[0].device,
                 )
 
             if not self.return_loss:

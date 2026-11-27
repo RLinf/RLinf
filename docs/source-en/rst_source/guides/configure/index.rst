@@ -36,6 +36,12 @@ Start here once your first run works: monitor training curves, resume interrupte
 
       Train or evaluate one policy across multiple environment configurations in a single run.
 
+   .. grid-item-card:: Multi-Turn Visual Agent Training (Qwen3.5)
+      :link: ../qwen35_multi_turn_images
+      :link-type: doc
+
+      Enable multi-turn image alignment for Qwen3.5 visual Agent RL across SGLang rollout and Megatron-Bridge training.
+
 .. toctree::
    :hidden:
 
@@ -44,3 +50,4 @@ Start here once your first run works: monitor training curves, resume interrupte
    Checkpoint Conversion <../convertor>
    LoRA Fine-Tuning <../lora>
    Multi-Env Training <../hetero_envs>
+   Multi-Turn Visual Agent Training (Qwen3.5) <../qwen35_multi_turn_images>

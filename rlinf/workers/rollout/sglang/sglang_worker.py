@@ -23,7 +23,10 @@ from omegaconf import DictConfig, OmegaConf
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
-from rlinf.config import torch_dtype_from_precision
+from rlinf.config import (
+    align_multimodal_inputs_enabled,
+    torch_dtype_from_precision,
+)
 from rlinf.data.schema.reasoning_requests import RolloutRequest, SeqGroupInfo
 from rlinf.data.schema.reasoning_results import RolloutResult
 from rlinf.scheduler import Channel, Worker
@@ -33,6 +36,7 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.backend import RlinfContext
+from rlinf.workers.rollout.sglang import sglang_version
 from rlinf.workers.rollout.sglang.backends import make_backend
 from rlinf.workers.rollout.sglang.rendezvous import (
     broadcast_instance_readiness,
@@ -205,7 +209,16 @@ class SGLangWorker(Worker):
                 # validate_weight_first_sync compare hf weights with megatron weights,
                 # and if resume_dir is enabled, hf weights can't equal to megatron's.
                 validate_weight_first_sync = False
-            if self._cfg_rollout.validate_weight or validate_weight_first_sync:
+            independent_draft = (
+                self._cfg_rollout.sglang.get("speculative_algorithm") is not None
+                and not self._cfg_rollout.sync_mtp
+            )
+            # SGLang shares load_format between target and draft runners.
+            if (
+                self._cfg_rollout.validate_weight
+                or validate_weight_first_sync
+                or independent_draft
+            ):
                 load_format = "auto"
         else:
             load_format = "auto"
@@ -220,6 +233,14 @@ class SGLangWorker(Worker):
                 "enable_deterministic_inference", False
             ),
         }
+        for name, value in self._cfg_rollout.sglang.items():
+            if value is None:
+                continue
+            if name in (
+                "mm_enable_dp_encoder",
+                "disable_radix_cache",
+            ) or name.startswith(("speculative_", "mamba_")):
+                version_dependent_args[name] = value
         for name in list(version_dependent_args):
             if name in _SERVER_ARGS_FIELDS:
                 continue
@@ -229,6 +250,13 @@ class SGLangWorker(Worker):
                     f"sglang ServerArgs has no field {name!r}; "
                     f"the configured value {value!r} is ignored"
                 )
+
+        if align_multimodal_inputs_enabled(self._cfg_rollout.sglang):
+            from rlinf.hybrid_engines.sglang.multimodal import (
+                ensure_multimodal_processor_env,
+            )
+
+            ensure_multimodal_processor_env(sglang_version)
 
         server_args = ServerArgs(
             model_path=self._cfg_rollout.model.model_path,
@@ -787,6 +815,8 @@ class SGLangWorker(Worker):
         channel_key: str,
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
+        image_data: Optional[list] = None,
+        image_spans: Optional[list] = None,
     ):
         # Backstop for rollout_serverless's entry-rank gate; return instead
         # of raising because nobody awaits this task.
@@ -803,10 +833,33 @@ class SGLangWorker(Worker):
         # waiting forever.
         try:
             version_start = self._weight_version
+            align_enabled = align_multimodal_inputs_enabled(self._cfg_rollout.sglang)
+            if image_spans is not None:
+                from rlinf.hybrid_engines.sglang.multimodal import IMAGE_SPANS_PARAM
+
+                if not align_enabled:
+                    raise ValueError(
+                        "Span-aligned image requests require "
+                        "rollout.sglang.align_multimodal_inputs=True."
+                    )
+                if not image_data or len(image_data) != len(image_spans):
+                    raise ValueError(
+                        "Span-aligned requests require non-empty image_spans and matching image_data."
+                    )
+                final_sampling_params = copy.deepcopy(final_sampling_params)
+                custom = dict(final_sampling_params.get("custom_params") or {})
+                custom[IMAGE_SPANS_PARAM] = image_spans
+                final_sampling_params["custom_params"] = custom
+            elif image_data and align_enabled:
+                raise ValueError(
+                    "Image requests require image_spans when "
+                    "rollout.sglang.align_multimodal_inputs=True."
+                )
+
             result = await self._backend.async_generate(
                 input_ids=prompt_ids,
                 sampling_params=final_sampling_params,
-                image_data=None,
+                image_data=image_data or None,
                 return_logprob=self._return_logprobs,
             )
             # sglang will trim matched stop in result text, so we should only return output_ids
@@ -860,6 +913,8 @@ class SGLangWorker(Worker):
                     channel_key=rollout_request["channel_key"],
                     prompt_ids=rollout_request["prompt_ids"],
                     sampling_params=rollout_request.get("sampling_params", None),
+                    image_data=rollout_request.get("image_data"),
+                    image_spans=rollout_request.get("image_spans"),
                 )
             )
             self._inflight_generates.add(task)
