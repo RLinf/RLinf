@@ -1281,14 +1281,15 @@ def test_siglip_attention_preserves_outputs_and_gradients():
     reason="Requires NVIDIA CUDA",
 )
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-def test_batch_invariant_linear(dtype):
+@pytest.mark.parametrize("bias", [True, False])
+def test_batch_invariant_linear(dtype, bias):
     pytest.importorskip("triton")
-    from rlinf.models.ops.batch_invariant import get_batch_invariant_op
+    from rlinf.models.ops.batch_invariant.linear import TritonLinear
 
-    linear = get_batch_invariant_op("linear", "triton")(
-        67, 37, device="cuda", dtype=dtype
-    )
-    reference = torch.nn.Linear(67, 37, device="cuda", dtype=dtype)
+    linear = TritonLinear(67, 37, bias=bias, device="cuda", dtype=dtype)
+    if not bias:
+        assert linear.bias is None
+    reference = torch.nn.Linear(67, 37, bias=bias, device="cuda", dtype=dtype)
     reference.load_state_dict(linear.state_dict())
     samples = torch.randn(3, 5, 67, device="cuda", dtype=dtype, requires_grad=True)
     # Take the same sample from a different tile and row offset in a larger batch.
@@ -1305,7 +1306,8 @@ def test_batch_invariant_linear(dtype):
     expected.backward(grad)
     torch.testing.assert_close(samples.grad, ref_samples.grad)
     torch.testing.assert_close(linear.weight.grad, reference.weight.grad)
-    torch.testing.assert_close(linear.bias.grad, reference.bias.grad)
+    if bias:
+        torch.testing.assert_close(linear.bias.grad, reference.bias.grad)
 
 
 @pytest.mark.skipif(
@@ -1314,19 +1316,21 @@ def test_batch_invariant_linear(dtype):
 )
 def test_batch_invariant_patch_embedding():
     pytest.importorskip("triton")
-    from rlinf.models.ops.batch_invariant import get_batch_invariant_op
+    from rlinf.models.ops.batch_invariant.patch_embedding import triton_patch_embedding
 
-    project = get_batch_invariant_op("patch_embedding", "triton")
     image = torch.randn(2, 3, 14, 21, device="cuda", requires_grad=True)
     weight = torch.randn(32, 3, 7, 7, device="cuda", requires_grad=True)
     bias = torch.randn(32, device="cuda", requires_grad=True)
 
-    actual = project(image, weight, bias)
+    actual = triton_patch_embedding(image, weight, bias)
     expected = torch.nn.functional.conv2d(image, weight, bias, stride=7)
     torch.testing.assert_close(actual, expected, atol=2e-5, rtol=5e-5)
     larger = torch.cat((image.detach().repeat(3, 1, 1, 1), image))
     torch.testing.assert_close(
-        actual.detach(), project(larger, weight, bias)[-2:], rtol=0, atol=0
+        actual.detach(),
+        triton_patch_embedding(larger, weight, bias)[-2:],
+        rtol=0,
+        atol=0,
     )
     grad = torch.randn_like(actual)
     args = (image, weight, bias)
@@ -1335,6 +1339,56 @@ def test_batch_invariant_patch_embedding():
         torch.autograd.grad(expected, args, grad),
     ):
         torch.testing.assert_close(actual_grad, expected_grad, atol=2e-5, rtol=5e-5)
+
+
+@pytest.mark.parametrize("invalid_value", ["true", 1, None])
+def test_openpi_rejects_non_bool_batch_invariant_ops(invalid_value):
+    from rlinf.models.embodiment.openpi import get_model
+
+    cfg = OmegaConf.create({"openpi": {"batch_invariant_ops": invalid_value}})
+    with pytest.raises(ValueError, match="openpi.batch_invariant_ops"):
+        get_model(cfg)
+
+
+@pytest.mark.parametrize("pi05", [False, True])
+def test_openpi_batch_invariant_wiring_and_state_dict(pi05):
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+    from rlinf.models.ops.batch_invariant.linear import TritonLinear
+    from rlinf.models.ops.batch_invariant.patch_embedding import triton_patch_embedding
+
+    baseline = Pi0(
+        Pi0Config(
+            paligemma_variant="dummy",
+            action_expert_variant="dummy",
+            pi05=pi05,
+            batch_invariant_ops=False,
+        )
+    )
+    invariant = Pi0(
+        Pi0Config(
+            paligemma_variant="dummy",
+            action_expert_variant="dummy",
+            pi05=pi05,
+            batch_invariant_ops=True,
+        )
+    )
+
+    assert list(invariant.state_dict().keys()) == list(baseline.state_dict().keys())
+    assert invariant.img.stem.patch_embedding is triton_patch_embedding
+    assert baseline.img.stem.patch_embedding is None
+    assert type(invariant.action_out_proj) is TritonLinear
+    if not pi05:
+        assert type(invariant.action_time_mlp_in) is TritonLinear
+    for layer in invariant.llm.layers:
+        for proj in (
+            layer.attn.q_proj,
+            layer.attn.k_proj,
+            layer.attn.v_proj,
+            layer.attn.o_proj,
+        ):
+            assert type(proj[0]) is torch.nn.Linear
+            assert type(proj[1]) is TritonLinear
 
 
 def _reference_space_time_attention(attention, tokens, frame_mask):

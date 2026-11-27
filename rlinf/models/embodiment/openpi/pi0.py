@@ -34,7 +34,6 @@ from rlinf.models.embodiment.openpi.modules import gemma, model, pointnet, sigli
 from rlinf.models.embodiment.openpi.modules.utils import _str_to_dtype
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
-from rlinf.models.ops.batch_invariant import get_batch_invariant_op
 
 
 def make_attn_mask(input_mask: torch.Tensor, mask_ar: torch.Tensor) -> torch.Tensor:
@@ -116,8 +115,13 @@ class Pi0(model.BaseModel):
         action_linear = nn.Linear
         patch_embedding = None
         if config.batch_invariant_ops:
-            action_linear = get_batch_invariant_op("linear", "triton")
-            patch_embedding = get_batch_invariant_op("patch_embedding", "triton")
+            from rlinf.models.ops.batch_invariant.linear import TritonLinear
+            from rlinf.models.ops.batch_invariant.patch_embedding import (
+                triton_patch_embedding,
+            )
+
+            action_linear = TritonLinear
+            patch_embedding = triton_patch_embedding
 
         # Gemma LLM with dual experts
         # Expert 0 (PaliGemma) uses regular RMSNorm; Expert 1 (Action Expert) may use adaRMS

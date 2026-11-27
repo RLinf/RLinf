@@ -19,17 +19,19 @@ Implements the So400m/14 ViT variant with pool_type="none" used by Pi0.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from rlinf.models.ops.batch_invariant import PatchEmbedding
-
 from .short_memory import factorized_space_time_attention, fixed_relative_time_encoding
 from .utils import _str_to_dtype
+
+PatchEmbedding = Callable[
+    [torch.Tensor, torch.Tensor, torch.Tensor | None], torch.Tensor
+]
 
 
 def posemb_sincos_2d(
