@@ -99,7 +99,24 @@ Both the simulator and imagined rollouts evaluate the same per-step tracking rew
 
    r_t = \Delta t \left( \sum_{i=1}^{6} w_i \exp\!\left(-\frac{e_i}{\sigma_i^2}\right) - 0.1 \|a_t - a_{t-1}\|_2^2 - 2.0 \sum_{j=1}^{29} \delta_{\text{lim}, j} \right),
 
-where :math:`\Delta t = 0.02`, :math:`\delta_{\text{lim}, j}` is the joint-angle violation beyond soft limits, and the six kernels have ``(weight, std)`` parameters: root position ``(0.5, 0.3)``, root orientation ``(0.5, 0.4)``, body position ``(1.0, 0.3)``, body orientation ``(1.0, 0.4)``, body linear velocity ``(1.0, 1.0)``, and body angular velocity ``(1.0, 3.14)``. Because :math:`\sum w_i = 5`, the per-step reward ceiling is :math:`r_{\max} = 0.1`.
+where :math:`\Delta t = 0.02`, :math:`\delta_{\text{lim}, j}` is the joint-angle violation beyond soft limits, and :math:`\sum w_i = 5` gives a per-step reward ceiling of :math:`r_{\max} = 0.1`:
+
+.. list-table:: Tracking Kernel Parameters
+   :header-rows: 1
+   :widths: 44 28 28
+
+   * - Kernel
+     - Weight :math:`w_i`
+     - Std :math:`\sigma_i`
+   * - Root position / orientation
+     - 0.5 / 0.5
+     - 0.3 / 0.4
+   * - Body position / orientation
+     - 1.0 / 1.0
+     - 0.3 / 0.4
+   * - Body linear / angular velocity
+     - 1.0 / 1.0
+     - 1.0 / 3.14
 
 Hard failure in simulation triggers when :math:`|z_{\text{pelvis}} - z_{\text{ref}}| > 0.25\text{ m}` or :math:`|g_z - g_{z,\text{ref}}| > 0.8`. During imagination, failure is replaced by a differentiable soft termination probability with softness :math:`\tau = 0.05`:
 
@@ -141,7 +158,8 @@ Optimizers and Execution
 
 * **Dual optimizers:** Hidden linear matrices in every stack use Muon (``adjust_lr_fn: match_rms_adamw``, weight decay ``0.1``, momentum ``0.95``, Nesterov ``True``). Remaining parameters (first/last layers, norms, biases) use fused Adam with :math:`\beta = (0.9, 0.95)` for the actor and :math:`\beta = (0.9, 0.999)` for the world model and critic. All optimizers use a constant learning rate of :math:`2\times 10^{-4}`.
 * **Gradient clipping and health check:** Training clips the global gradient norm to ``1.0`` on GPU without host synchronization and clamps actor gradients element-wise to ``0.1``. Non-finite gradients stop the run when metrics copy to the host.
-* **CUDA graph and bf16:** ``actor.cuda_graph`` (default ``True``) runs 3 eager warm-up updates, captures update 4 (all three phases together) as one CUDA graph, and replays it thereafter. By default, FSDP2 ``mixed_precision.param_dtype: bf16`` (with ``reduce_dtype: fp32`` and ``cast_forward_inputs: False``) casts network weights to bf16 once per phase at unshard while master weights, optimizer state, gradient reductions, kinematics, rewards, and losses stay float32; rollout inference uses ``rollout.amp_autocast`` in bf16.
+* **CUDA graph:** ``actor.cuda_graph`` (default ``True``) runs 3 eager warm-up updates, captures update 4 (all three phases together) as one CUDA graph, and replays it thereafter.
+* **Mixed precision (bf16):** FSDP2 ``mixed_precision.param_dtype: bf16`` (with fp32 reductions and uncast forward inputs) casts network weights to bf16 once per phase at unshard while master weights, optimizer state, gradient reductions, kinematics, rewards, and losses stay float32; rollout inference uses ``rollout.amp_autocast`` in bf16.
 
 Parallel Training (FSDP2)
 -------------------------

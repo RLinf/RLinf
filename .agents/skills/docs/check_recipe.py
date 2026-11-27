@@ -67,7 +67,18 @@ DIRTY_TAB_TITLE = re.compile(
     re.IGNORECASE,
 )
 LAUNCH_SCRIPT = re.compile(
-    r"\brun_(?:embodiment|eval|vla_sft|reasoning|agent|diffusion|sft|realworld_async)\.sh\b"
+    r"\brun_(?:embodiment|eval|vla_sft|reasoning|agent|diffusion|sft|realworld_async)\.sh\b|"
+    r"\bexamples/embodiment/train_embodied_agent\.py\b"
+)
+BARE_TRAIN_EMBODIED = re.compile(
+    r"\bpython3?\s+(?:\S*/)?examples/embodiment/train_embodied_agent\.py\b"
+)
+PLACEHOLDER_PATH = re.compile(r"(?:^|[\s=\"'])/path/to/[^\s\"']*")
+ROOT_DATA_PATH = re.compile(r"(?:^|[\s=\"'])/data/(?:[^\s\"']*|$)")
+SEQUENTIAL_ROBOT_PAGE = re.compile(
+    r"/(?:franka|dual_franka|arx5|dosw1|gim_arm|lekiwi|piper|r2|so101|"
+    r"xsquare_turtle2|hg-dagger|dagger|data_collection|teleoperation|"
+    r"supermimic_motion)[^/]*\.rst$"
 )
 BASH_ARRAY = re.compile(r"^\s*[A-Z_][A-Z0-9_]*=\(")
 HYDRA_OVERRIDE = re.compile(r"\b[a-z_][a-z0-9_]*\.[a-z0-9_.]+=\S+")
@@ -83,7 +94,9 @@ EVAL_RUN_CMD = re.compile(
     r"evaluations/run_eval\.sh\s+(?:[a-z0-9_-]+\s+)?([A-Za-z0-9_/-]+)"
 )
 ANY_RUN_CMD = re.compile(
-    r"examples/[A-Za-z0-9_/-]+/run_[A-Za-z0-9_]+\.sh\s+([A-Za-z0-9_./-]+)"
+    r"(?:examples/[A-Za-z0-9_/-]+/run_[A-Za-z0-9_]+\.sh\s+|"
+    r"examples/embodiment/train_embodied_agent\.py[^\n]*--config-name(?:=|\s+))"
+    r"([A-Za-z0-9_./-]+)"
 )
 EVAL_FALLBACK_CLAIM = re.compile(
     r"training configs?\s+(?:can be reused for evaluation|in\s+``examples/embodiment/config/``\s+via\s+config\s+fallback)|"
@@ -362,8 +375,11 @@ def check_page(path: Path, rel: str) -> list[route.Finding]:
     if not is_recipe and not is_cmd_page:
         return findings
 
-    cutoff = _hardware_cutoff(lines)
+    cutoff = len(lines)
     blocks = _iter_code_blocks(lines, cutoff)
+    has_install_in_tabset = False
+    has_launch_in_tabset = False
+    first_outside_launch_line: int | None = None
 
     def add(severity: str, line: int | None, rule: str, message: str) -> None:
         findings.append(route.Finding(severity, rel, line, rule, message))
@@ -519,10 +535,48 @@ def check_page(path: Path, rel: str) -> list[route.Finding]:
                     if pat.search(stripped):
                         add("major", lineno, "docs/command-legacy", msg)
 
+                if not stripped.startswith("#"):
+                    if BARE_TRAIN_EMBODIED.search(stripped):
+                        add(
+                            "major",
+                            lineno,
+                            "docs/command-launcher",
+                            "use ``bash examples/embodiment/run_embodiment.sh <config>`` "
+                            "instead of invoking ``train_embodied_agent.py`` directly",
+                        )
+                    if PLACEHOLDER_PATH.search(stripped) and not re.search(
+                        r"--local-dir\s+/path/to/", stripped
+                    ):
+                        add(
+                            "major",
+                            lineno,
+                            "docs/command-placeholder",
+                            "avoid ``/path/to/...`` placeholders in bash commands; "
+                            "use a concrete repo-relative path like ``./...``",
+                        )
+                    if ROOT_DATA_PATH.search(stripped):
+                        add(
+                            "minor",
+                            lineno,
+                            "docs/command-path",
+                            "avoid hardcoded root-level ``/data/...`` paths in bash commands; "
+                            "use a repo-relative path like ``./data/...`` so commands run without root",
+                        )
+                    if LAUNCH_SCRIPT.search(stripped):
+                        if block["in_tabset"]:
+                            has_launch_in_tabset = True
+                        elif (
+                            not block["in_dropdown"]
+                            and first_outside_launch_line is None
+                        ):
+                            first_outside_launch_line = lineno
+
                 if "requirements/install.sh" in stripped and not stripped.startswith(
                     "#"
                 ):
                     has_install = True
+                    if block["in_tabset"]:
+                        has_install_in_tabset = True
                     if PLACEHOLDER.search(stripped):
                         add(
                             "major",
@@ -630,5 +684,20 @@ def check_page(path: Path, rel: str) -> list[route.Finding]:
                     f"YAML block has {len(non_empty)} lines outside ``.. dropdown::``; "
                     "show only required keys up front and fold optional tuning into ``.. dropdown::``",
                 )
+
+    if (
+        is_recipe
+        and has_install_in_tabset
+        and not has_launch_in_tabset
+        and first_outside_launch_line is not None
+        and not SEQUENTIAL_ROBOT_PAGE.search(rel)
+    ):
+        add(
+            "major",
+            first_outside_launch_line,
+            "docs/command-tabset",
+            "Setup and Run ``.. tab-set::`` wraps install only while launch commands sit outside; "
+            "keep Install, Download/Prepare, and Launch together inside one unified ``.. tab-set::``",
+        )
 
     return findings
