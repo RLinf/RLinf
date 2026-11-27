@@ -87,6 +87,9 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role="actor"
     ):
         super().__init__(cfg, placement)
+        self.lm_head_chunk_size = (
+            cfg.actor.model.get("lm_head_chunk_size", 0) if role == "actor" else 0
+        )
         self._init_auto_scheduler(role)
         # Set by run_training for the duration of a training call and read
         # by _assemble_delivery.
@@ -172,6 +175,95 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             self.torch_platform.current_device(),
         )
 
+    def model_provider_func(self, pre_process, post_process, config=None, **kwargs):
+        model = super().model_provider_func(pre_process, post_process, config, **kwargs)
+        if self.lm_head_chunk_size and post_process:
+            from rlinf.hybrid_engines.megatron.output_projection import (
+                install_chunked_projection,
+            )
+
+            install_chunked_projection(model)
+        return model
+
+    def _provide_bridge_model(self, ddp_config):
+        if self.lm_head_chunk_size:
+            from rlinf.hybrid_engines.megatron.output_projection import (
+                install_chunked_projection,
+            )
+
+            def prepare(models):
+                for model in models:
+                    install_chunked_projection(model, bridge=True)
+                return models
+
+            self.provider.register_pre_wrap_hook(prepare)
+        return super()._provide_bridge_model(ddp_config)
+
+    def _score_packed_tokens(
+        self, model, input_ids, position_ids, packed_params, label, label_mask
+    ):
+        temperature = self.cfg.algorithm.sampling_params.temperature
+        if self.lm_head_chunk_size:
+            module = unwrap_model(model)
+            if module.post_process:
+                from rlinf.hybrid_engines.megatron.output_projection import (
+                    chunked_scoring,
+                )
+
+                ddp_config = getattr(model, "ddp_config", None)
+                need_dummy_grad = (
+                    bool(ddp_config.overlap_grad_reduce)
+                    if ddp_config is not None
+                    else True
+                )
+                with chunked_scoring(
+                    module,
+                    labels=label,
+                    label_mask=label_mask,
+                    temperature=temperature,
+                    chunk_size=self.lm_head_chunk_size,
+                    calculate_entropy=self.calculate_entropy,
+                    need_dummy_grad=need_dummy_grad,
+                ) as captured:
+                    scores = model(
+                        input_ids=input_ids.contiguous(),
+                        attention_mask=None,
+                        position_ids=position_ids,
+                        packed_seq_params=packed_params,
+                    )
+                output = {"log_probs": scores.squeeze(-1).contiguous()}
+                if self.calculate_entropy:
+                    output["entropy"] = captured["entropy"].detach().contiguous()
+                return output
+
+        def process_logits(logits, label, label_mask):
+            assert logits.shape[:2] == label.shape == label_mask.shape
+            if self.calculate_entropy:
+                entropy, log_probs = vocab_parallel_entropy_and_log_probs(
+                    logits, label, calculate_entropy_loss=self.calculate_entropy_loss
+                )
+                return {
+                    "log_probs": log_probs.masked_fill(~label_mask, 0.0),
+                    "entropy": entropy,
+                }
+            log_probs = vocab_parallel_log_probs_from_logits(logits, label)
+            return {"log_probs": log_probs.masked_fill(~label_mask, 0.0)}
+
+        return self.custom_forward(
+            model,
+            input_ids,
+            None,
+            position_ids,
+            sequence_parallel=self.transformer_config.sequence_parallel,
+            logits_processor=process_logits,
+            logits_processor_args={
+                "label": label,
+                "label_mask": label_mask,
+            },
+            temperature=temperature,
+            packed_seq_params=packed_params,
+        )
+
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
 
@@ -192,38 +284,8 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             label_mask, _ = preprocess_ragged_seqs(
                 [torch.arange(n, device=input_ids.device) < n - 1 for n in lengths]
             )
-
-            def logits_processor(logits, label, label_mask):
-                assert logits.shape[:2] == label.shape[:2]
-                assert label.shape == label_mask.shape
-
-                if self.calculate_entropy:
-                    entropy, log_probs = vocab_parallel_entropy_and_log_probs(
-                        logits,
-                        label,
-                        calculate_entropy_loss=self.calculate_entropy_loss,
-                    )
-                    log_probs = log_probs.masked_fill(~label_mask, 0.0)
-                    ret = {"log_probs": log_probs, "entropy": entropy}
-                else:
-                    log_probs = vocab_parallel_log_probs_from_logits(logits, label)
-                    log_probs = log_probs.masked_fill(~label_mask, 0.0)
-                    ret = {"log_probs": log_probs}
-
-                return ret
-
-            logits_processor_args = {"label": label, "label_mask": label_mask}
-
-            output = self.custom_forward(
-                model,
-                input_ids,
-                None,
-                position_ids,
-                sequence_parallel=self.transformer_config.sequence_parallel,
-                logits_processor=logits_processor,
-                logits_processor_args=logits_processor_args,
-                temperature=self.cfg.algorithm.sampling_params.temperature,
-                packed_seq_params=packed_params,
+            output = self._score_packed_tokens(
+                model, input_ids, position_ids, packed_params, label, label_mask
             )
 
             if unwrap_model(model).post_process:
