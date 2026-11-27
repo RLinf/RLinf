@@ -34,7 +34,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
 
 from rlinf.algorithms.losses import compute_ppo_critic_loss
 from rlinf.algorithms.prefix_off_policy import build_prefix_off_policy_algorithm
@@ -134,6 +134,260 @@ def test_openpi_fused_attention_preserves_fully_masked_query_rows(monkeypatch):
 
         torch.testing.assert_close(actual[0], expected[0], rtol=1e-5, atol=1e-6)
         torch.testing.assert_close(fused_in.grad, eager_in.grad, rtol=1e-5, atol=1e-6)
+
+
+def _compose_dm0_example_cfg(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    import rlinf.config as rlinf_config
+
+    class _StubPlacement:
+        def __init__(self, cfg, cluster):
+            pass
+
+        def get_world_size(self, role):
+            return 4
+
+    monkeypatch.setattr(rlinf_config, "Cluster", lambda: None)
+    monkeypatch.setattr(rlinf_config, "HybridComponentPlacement", _StubPlacement)
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        return compose(config_name="libero_spatial_ppo_dexbotic_dm0")
+
+
+def test_dm0_libero_spatial_config_disables_fsdp_input_casting(monkeypatch):
+    cfg = _compose_dm0_example_cfg(monkeypatch)
+    mixed_precision = cfg.actor.fsdp_config.mixed_precision
+
+    assert mixed_precision.cast_forward_inputs is False
+    assert mixed_precision.cast_root_forward_inputs is False
+    validate_embodied_cfg(cfg)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {},
+        {
+            "actor.fsdp_config.mixed_precision.param_dtype": "fp16",
+            "actor.fsdp_config.mixed_precision.reduce_dtype": "fp16",
+            "actor.fsdp_config.mixed_precision.buffer_dtype": "fp16",
+            "actor.fsdp_config.mixed_precision.cast_forward_inputs": False,
+            "actor.fsdp_config.mixed_precision.cast_root_forward_inputs": False,
+        },
+        {
+            "actor.fsdp_config.strategy": "fsdp2",
+            "actor.fsdp_config.mixed_precision.param_dtype": "bf16",
+            "actor.fsdp_config.mixed_precision.cast_forward_inputs": False,
+            "actor.fsdp_config.mixed_precision.cast_root_forward_inputs": True,
+        },
+        {
+            "actor.fsdp_config.mixed_precision.param_dtype": "fp32",
+            "actor.fsdp_config.mixed_precision.reduce_dtype": "fp32",
+            "actor.fsdp_config.mixed_precision.buffer_dtype": "fp32",
+            "actor.fsdp_config.mixed_precision.cast_forward_inputs": True,
+            "actor.fsdp_config.mixed_precision.cast_root_forward_inputs": True,
+        },
+    ],
+)
+def test_dm0_validate_embodied_cfg_accepts_valid_mixed_precision_configs(
+    monkeypatch, overrides
+):
+    cfg = _compose_dm0_example_cfg(monkeypatch)
+    for key, value in overrides.items():
+        OmegaConf.update(cfg, key, value)
+
+    validate_embodied_cfg(cfg)
+
+
+@pytest.mark.parametrize("param_dtype", ["bf16", "fp16"])
+@pytest.mark.parametrize(
+    ("key", "value", "expected_match"),
+    [
+        (
+            "actor.fsdp_config.mixed_precision.cast_forward_inputs",
+            True,
+            "cast_forward_inputs=False",
+        ),
+        (
+            "actor.fsdp_config.mixed_precision.cast_forward_inputs",
+            None,
+            "cast_forward_inputs=False",
+        ),
+        (
+            "actor.fsdp_config.mixed_precision.cast_root_forward_inputs",
+            True,
+            "cast_root_forward_inputs=False",
+        ),
+        (
+            "actor.fsdp_config.mixed_precision.cast_root_forward_inputs",
+            None,
+            "cast_root_forward_inputs=False",
+        ),
+    ],
+)
+def test_dm0_validate_embodied_cfg_rejects_fsdp_input_casting(
+    monkeypatch, param_dtype, key, value, expected_match
+):
+    cfg = _compose_dm0_example_cfg(monkeypatch)
+    OmegaConf.update(cfg, "actor.fsdp_config.mixed_precision.param_dtype", param_dtype)
+    OmegaConf.update(cfg, "actor.fsdp_config.mixed_precision.reduce_dtype", param_dtype)
+    OmegaConf.update(cfg, "actor.fsdp_config.mixed_precision.buffer_dtype", param_dtype)
+    if value is None:
+        key_name = key.rsplit(".", 1)[-1]
+        with open_dict(cfg):
+            del cfg.actor.fsdp_config.mixed_precision[key_name]
+    else:
+        OmegaConf.update(cfg, key, value)
+
+    with pytest.raises(ValueError, match=expected_match):
+        validate_embodied_cfg(cfg)
+
+
+@pytest.mark.parametrize("joint_logprob", [False, True])
+def test_dm0_fsdp1_rescores_rollout_chains_and_backpropagates(joint_logprob, tmp_path):
+    pytest.importorskip("dexbotic")
+    import torch.distributed as dist
+    from dexbotic.model.dm0.dm0_arch import DM0Config
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+    from torch.distributed.fsdp import MixedPrecision
+    from transformers import Qwen3Config, SiglipImageProcessor, SiglipVisionConfig
+
+    from rlinf.models.embodiment.dexbotic_dm0.dm0_policy import (
+        DexboticDM0ForRLActionPrediction,
+    )
+
+    processor_dir = tmp_path / "processor"
+    processor_dir.mkdir()
+    SiglipImageProcessor(size={"height": 16, "width": 16}).save_pretrained(
+        processor_dir
+    )
+
+    llm_cfg = Qwen3Config(
+        vocab_size=32,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        head_dim=8,
+        max_position_embeddings=64,
+    )
+    action_cfg = Qwen3Config(
+        vocab_size=32,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        head_dim=8,
+        max_position_embeddings=64,
+    )
+    vision_cfg = SiglipVisionConfig(
+        model_type="siglip_vision_model",
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        image_size=16,
+        patch_size=8,
+    )
+    cfg = DM0Config(
+        llm_config=llm_cfg,
+        action_config=action_cfg,
+        vision_config=vision_cfg,
+        processor_config=str(processor_dir),
+        mm_projector_type="linear",
+        vocab_size=32,
+        hidden_size=16,
+        action_dim=4,
+        chunk_size=2,
+        bf16=True,
+    )
+    cfg.num_steps = 2
+    cfg.action_env_dim = 4
+    cfg.add_value_head = True
+    cfg.noise_level = 0.5
+    cfg.noise_method = "flow_sde"
+    cfg.detach_critic_input = False
+    cfg.train_expert_only = False
+    cfg.action_horizon = 2
+    cfg.output_action_chunks = 2
+    cfg.safe_get_logprob = False
+    cfg.chunk_critic_input = True
+    cfg.noise_anneal = False
+    cfg.joint_logprob = joint_logprob
+    cfg.value_after_vlm = False
+
+    torch.manual_seed(0)
+    random.seed(0)
+    rollout_model = DexboticDM0ForRLActionPrediction(cfg).to(dtype=torch.bfloat16)
+    rollout_model.eval()
+    obs = {
+        "tokenized_prompt": torch.tensor([[1, 2, 3]], dtype=torch.long),
+        "tokenized_prompt_mask": torch.ones((1, 3), dtype=torch.bool),
+        "observation/state": torch.zeros((1, 4), dtype=torch.float32),
+        "observation/image": torch.full((1, 16, 16, 3), 127, dtype=torch.uint8),
+    }
+    rollout_out = rollout_model.sample_actions(obs, mode="train", compute_values=True)
+    assert rollout_out["chains"].dtype == torch.float32
+
+    dist.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'init'}", rank=0, world_size=1
+    )
+    try:
+        actor_model = DexboticDM0ForRLActionPrediction(cfg)
+        actor_model.load_state_dict(rollout_model.state_dict())
+        actor_model = actor_model.to(dtype=torch.bfloat16)
+        mixed_precision = MixedPrecision(
+            param_dtype=torch.bfloat16,
+            reduce_dtype=torch.float32,
+            buffer_dtype=torch.bfloat16,
+            cast_forward_inputs=False,
+            cast_root_forward_inputs=False,
+        )
+        wrap_policy = get_fsdp_wrap_policy(
+            module=actor_model,
+            config={},
+            is_lora=False,
+            model_type="dexbotic_dm0",
+        )
+        wrapped = FSDP(
+            actor_model,
+            auto_wrap_policy=wrap_policy,
+            mixed_precision=mixed_precision,
+            device_id=torch.device("cpu"),
+        )
+        wrapped.train()
+        wrapped.zero_grad(set_to_none=True)
+        forward_data = {
+            "chains": rollout_out["chains"].clone(),
+            "denoise_inds": rollout_out["denoise_inds"].clone(),
+            "tokenized_prompt": obs["tokenized_prompt"].clone(),
+            "tokenized_prompt_mask": obs["tokenized_prompt_mask"].clone(),
+            "observation/state": obs["observation/state"].clone(),
+            "observation/image": obs["observation/image"].clone(),
+        }
+        result = wrapped(
+            forward_type="default_forward", data=forward_data, compute_values=True
+        )
+        torch.testing.assert_close(
+            result["logprobs"], rollout_out["prev_logprobs"], rtol=0, atol=0
+        )
+
+        loss = result["logprobs"].float().mean() + result["values"].float().mean()
+        loss.backward()
+        gradients = [
+            param.grad for param in wrapped.parameters() if param.grad is not None
+        ]
+        assert gradients
+        assert all(torch.isfinite(grad).all().item() for grad in gradients)
+        assert any(torch.count_nonzero(grad).item() for grad in gradients)
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
 @pytest.mark.parametrize("aspect_ratio", ["pad", "square"])

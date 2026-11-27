@@ -1569,6 +1569,40 @@ def validate_embodied_cfg(cfg):
                 "false for LingBot-VLA V2, which keeps its SDE samples in fp32."
             )
 
+    if (
+        model_type == SupportedModel.DEXBOTIC_DM0
+        and not only_eval
+        and cfg.actor.get("training_backend", "fsdp") == "fsdp"
+    ):
+        fsdp_cfg = cfg.actor.fsdp_config
+        mixed_precision = fsdp_cfg.get("mixed_precision", None)
+        if mixed_precision is not None:
+            raw_param_dtype = mixed_precision.get("param_dtype", None)
+            param_dtype = torch_dtype_from_precision(raw_param_dtype)
+            if param_dtype in (torch.float16, torch.bfloat16):
+                cast_forward_inputs = mixed_precision.get("cast_forward_inputs", True)
+                if cast_forward_inputs is not False:
+                    raise ValueError(
+                        "Expected actor.fsdp_config.mixed_precision."
+                        "cast_forward_inputs=False for Dexbotic DM0 when "
+                        f"param_dtype={raw_param_dtype!r} so rollout chains "
+                        "stay in original precision, got "
+                        f"{cast_forward_inputs!r}."
+                    )
+                if fsdp_cfg.get("strategy", "fsdp") == "fsdp":
+                    cast_root_forward_inputs = mixed_precision.get(
+                        "cast_root_forward_inputs", True
+                    )
+                    if cast_root_forward_inputs is not False:
+                        raise ValueError(
+                            "Expected actor.fsdp_config.mixed_precision."
+                            "cast_root_forward_inputs=False for Dexbotic DM0 "
+                            f"under strategy='fsdp' when param_dtype="
+                            f"{raw_param_dtype!r} so rollout chains stay in "
+                            "original precision, got "
+                            f"{cast_root_forward_inputs!r}."
+                        )
+
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
         # The actor-side recompute reshapes flat logprobs by ``action_dim`` for
         # the OpenVLA family and LingBot-VLA V2. OpenPI already returns the
