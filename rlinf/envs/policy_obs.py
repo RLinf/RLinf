@@ -42,6 +42,7 @@ class PolicyObsSpec:
         "wrist_images",
         "extra_view_images",
         "states",
+        "native_proprio",
         "task_descriptions",
     )
     IMAGE_KEYS: ClassVar[tuple[str, ...]] = KEYS[:3]

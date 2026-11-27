@@ -17,7 +17,7 @@ LIBERO is a robotic manipulation simulation benchmark built on robosuite (MuJoCo
    .. grid-item-card:: Models
       :text-align: center
 
-      OpenPI · OpenVLA-OFT · FastWAM · MolmoAct2 · StarVLA · Evo-1 · π₀-FAST · DreamZero · Cosmos3
+      OpenPI · OpenVLA-OFT · FastWAM · MolmoAct2 · StarVLA · Evo-1 · π₀-FAST · DreamZero · Cosmos3 · OpenWAM
 
    .. grid-item-card:: Config Dir
       :text-align: center
@@ -27,7 +27,7 @@ LIBERO is a robotic manipulation simulation benchmark built on robosuite (MuJoCo
    .. grid-item-card:: Related Training
       :text-align: center
 
-      :doc:`LIBERO <../../examples/embodied/libero>` · :doc:`FastWAM <../../examples/embodied/sft_fastwam>` · :doc:`DreamZero <../../examples/embodied/sft_dreamzero>`
+      :doc:`LIBERO <../../examples/embodied/libero>` · :doc:`FastWAM <../../examples/embodied/sft_fastwam>` · :doc:`DreamZero <../../examples/embodied/sft_dreamzero>` · :doc:`OpenWAM <../../examples/embodied/sft_openwam>`
 
 Setup and Run
 -------------
@@ -264,9 +264,52 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       Requires Linux with an NVIDIA GPU, CUDA toolkit, and Rust toolchain; see :ref:`ApxInf Backend <apxinf-backend>` and :doc:`../../guides/apxinf`.
 
+   .. tab-item:: OpenWAM
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openwam --env libero && source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download OpenWAM/OpenWAM-Alpha-Sim-LIBERO --local-dir ./OpenWAM-Alpha-Sim-LIBERO
+
+      **3. Evaluate (LIBERO-Spatial)**
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh libero libero_spatial_openwam_eval \
+           rollout.model.model_path=./OpenWAM-Alpha-Sim-LIBERO
+
+      The default runs only three episodes, using three GPUs for one environment each and a fourth GPU for inference. Use Full OpenWAM Coverage below for a suite score. Keep the 30 settling steps, 10 executed actions per prediction, and 600-step episode budget. Use ``libero_object_openwam_eval``, ``libero_goal_openwam_eval``, or ``libero_10_openwam_eval`` for the other suites; Long uses 700 steps.
+
+      To evaluate a fine-tuned model, export it using :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>` and pass the exported directory as ``rollout.model.model_path``.
+
+      .. _openwam-libero-full-coverage:
+
+      .. dropdown:: Full OpenWAM Coverage
+
+         On eight GPUs, use four environment workers and four rollout workers to cover all 500 task/initial-state pairs in one evaluation:
+
+         .. code-block:: bash
+
+            bash evaluations/run_eval.sh libero libero_spatial_openwam_eval \
+              rollout.model.model_path=./OpenWAM-Alpha-Sim-LIBERO \
+              cluster.component_placement.env=0-3 \
+              cluster.component_placement.rollout=4-7 \
+              env.eval.total_num_envs=4 \
+              env.eval.max_steps_per_rollout_epoch=75000
+
+         Each environment runs 125 episodes with the preset's ordered initial states. Use the same budget for Object and Goal; for Long, select ``libero_10_openwam_eval`` and set ``env.eval.max_steps_per_rollout_epoch=87500``. Compare checkpoints with identical settings and initial states.
+
 .. note::
 
-   **Host RAM & full-suite coverage:** Each LIBERO env holds ~2 GiB of host RAM, so configs defaulting to ``total_num_envs=500`` need ~1 TiB RAM. On standard hosts, lower ``env.eval.total_num_envs`` and raise ``env.eval.max_steps_per_rollout_epoch`` together (for example ``env.eval.total_num_envs=128 env.eval.max_steps_per_rollout_epoch=960`` on ``libero_spatial``) so ``auto_reset`` still covers all 500 states (see :ref:`Evaluation Configuration <libero-eval-config>`).
+   **Host RAM & full-suite coverage:** Each LIBERO env holds ~2 GiB of host RAM, so configs using ``total_num_envs=500`` need ~1 TiB RAM. On smaller hosts, lower ``env.eval.total_num_envs`` and raise ``env.eval.max_steps_per_rollout_epoch`` together so ``auto_reset`` still covers all 500 states (see :ref:`Evaluation Configuration <libero-eval-config>`).
 
 With ``--env libero``, ``install.sh`` clones LIBERO into ``.venv/libero`` (or reuses ``LIBERO_PATH``) and adds it to ``PYTHONPATH`` in ``.venv/bin/activate``. For SGLang serving, see :doc:`dreamzero_sglang` and :doc:`cosmos3_sglang`; to overlap inference latency with action-chunk execution, see :doc:`RTC <../../guides/rtc>`.
 
@@ -353,6 +396,19 @@ With ``--env libero``, ``install.sh`` clones LIBERO into ``.venv/libero`` (or re
       * - ``libero_mem_openpi_pi05_eval.yaml``
         - LIBERO-Mem (``libero_mem``)
         - π₀.₅ (Short Memory)
+
+      * - ``libero_spatial_openwam_eval.yaml``
+        - Spatial
+        - OpenWAM
+      * - ``libero_object_openwam_eval.yaml``
+        - Object
+        - OpenWAM
+      * - ``libero_goal_openwam_eval.yaml``
+        - Goal
+        - OpenWAM
+      * - ``libero_10_openwam_eval.yaml``
+        - Long
+        - OpenWAM
 
 .. _apxinf-backend:
 

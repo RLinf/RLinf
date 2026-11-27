@@ -1,0 +1,21 @@
+# OpenWAM full-parameter SFT on a mixture of OpenWAM readers.
+# Everything but the paths comes from libero_sft_openwam.yaml: the checkpoint's own
+# config.yaml (dataloader section: type=mixture, cameras, action mode) drives the
+# native OpenWAM reader, so a mixture checkpoint must be paired with mixture data.
+# train_data_paths is one root: every enabled source datasets.<name> of the
+# checkpoint's mixture config is read from <root>/<name>; point a single source
+# elsewhere with data.openwam.datasets.<name>.dataset_dir.
+defaults:
+  - libero_sft_openwam
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "mixture_sft_openwam"
+
+data:
+  train_data_paths: /path/to/mixture_data
+
+actor:
+  model:
+    model_path: /path/to/openwam-mixture-checkpoint

@@ -46,6 +46,14 @@ SFT 与模仿学习
 
       在 LIBERO、Franka、BEHAVIOR-1K、RoboTwin 和自定义 LeRobot 数据集上对 π₀ 与 π₀.₅ 做全量或 LoRA SFT。
 
+   .. grid-item-card:: OpenWAM 监督微调
+      :img-top: https://raw.githubusercontent.com/OpenWAM-Official/OpenWAM/main/assets/repo_images/teaser.jpg
+      :img-alt: OpenWAM 概览
+      :link: embodied/sft_openwam
+      :link-type: doc
+
+      在 LIBERO 上用视频与动作联合 loss 微调 OpenWAM，并导出 checkpoint 用于评测。
+
    .. grid-item-card:: Qwen-VL 监督微调
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/release_0.2/qwen2_5_sft_vlm.png
       :img-alt: Qwen-VL 监督微调
@@ -63,4 +71,5 @@ SFT 与模仿学习
    DreamZero <embodied/sft_dreamzero>
    FastWAM <embodied/sft_fastwam>
    OpenPI <embodied/sft_openpi>
+   OpenWAM <embodied/sft_openwam>
    Qwen-VL <embodied/sft_vlm>

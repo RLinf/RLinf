@@ -17,7 +17,7 @@ RoboTwin is a bimanual manipulation simulation platform covering tabletop tasks 
    .. grid-item-card:: Models
       :text-align: center
 
-      OpenVLA-OFT · OpenPI π₀ / π₀.₅ · LingbotVLA 1.0 / 2.0
+      OpenVLA-OFT · OpenPI π₀ / π₀.₅ · LingbotVLA 1.0 / 2.0 · OpenWAM
 
    .. grid-item-card:: Config Dir
       :text-align: center
@@ -178,9 +178,44 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       Default placement uses 2 GPUs (``rollout: 0``, ``env: 1``). Keep LingbotVLA 1.0 and 2.0 in separate virtual environments because both install a ``lingbotvla`` package (see :doc:`../../examples/embodied/lingbotvlav2`).
 
+   .. tab-item:: OpenWAM (adjust_bottle)
+
+      **1. Install and Download RoboTwin Assets**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openwam --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
+
+      **2. Download Model**
+
+      .. code-block:: bash
+
+         hf download OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full --local-dir ./OpenWAM-Alpha-Sim-RoboTwin-Full
+
+      **3. Evaluate**
+
+      .. code-block:: bash
+
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openwam_eval \
+           rollout.model.model_path=./OpenWAM-Alpha-Sim-RoboTwin-Full \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
+
+      The default uses two GPUs and two environments, producing two trajectories per ``env.eval.rollout_epoch``. Use ``robotwin_click_bell_openwam_eval`` for ``click_bell``. Increase ``env.eval.rollout_epoch`` to evaluate more trajectories; these presets advance through the bundled success seeds between episodes.
+
+      .. dropdown:: Other OpenWAM Tasks and Checkpoints
+
+         Run ``python toolkits/openwam/gen_robotwin_eval_recipes.py --all`` to generate configs for 46 supported tasks. Tasks covered by the bundled seed file use its success seeds; the others sample random reset seeds.
+
+         Keep the preset's ``aloha-agilex`` embodiment, head/wrist cameras, ``absolute_eef20`` actions, and unseen instructions. Each prediction executes 32 actions, with episode budgets rounded up to whole chunks.
+
+         The public `Clean2Random checkpoint <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random>`_ and `joint self-attention study checkpoint <https://huggingface.co/OpenWAM/robotwin_dual_system_joint_self_attention>`_ use the same evaluation flow. RoboTwin SFT has not been validated; use :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>` for LIBERO training.
+
 .. note::
 
-   **Memory & full-seed coverage:** Default configs run ``total_num_envs: 128`` with ``use_fixed_reset_state_ids: True``, which evaluates ~128 of 150–320 task seeds. On memory-constrained hosts, lower ``env.eval.total_num_envs`` (or enable ``env.enable_offload: True`` and ``rollout.enable_offload: True``), and to cover all seeds set ``use_fixed_reset_state_ids: False`` with ``auto_reset: True`` and a larger ``max_steps_per_rollout_epoch`` (see :ref:`Evaluation Configuration <robotwin-eval-config>`).
+   **Memory & full-seed coverage:** The OpenWAM defaults are described in its tab above. Presets with ``total_num_envs: 128`` and ``use_fixed_reset_state_ids: True`` evaluate ~128 of 150–320 task seeds. On memory-constrained hosts, lower ``env.eval.total_num_envs``. See :ref:`Evaluation Configuration <robotwin-eval-config>` for offloading and full-seed coverage.
 
 On AMD ROCm, install with ``--platform amd`` and set ``planner_backend: mplib`` in the task config (see :ref:`Run on Different Hardware Backends <robotwin-hardware>`). ``run_eval.sh`` adds ``ROBOTWIN_PATH`` to ``PYTHONPATH``, and ``env.eval.assets_path`` points to the parent folder of ``assets/``. RLinf uses a ``0.01 m`` camera near plane so SAPIEN 3.0.1 keeps gripper fingers visible in wrist views (override ``env.eval.camera_near`` or set ``null`` for RoboTwin's default ``0.1 m``).
 
@@ -217,13 +252,24 @@ On AMD ROCm, install with ``--platform amd`` and set ``planner_backend: mplib`` 
         - ``click_bell``
         - LingbotVLA 2.0
 
+      * - ``robotwin_adjust_bottle_openwam_eval.yaml``
+        - ``adjust_bottle``
+        - OpenWAM
+      * - ``robotwin_click_bell_openwam_eval.yaml``
+        - ``click_bell``
+        - OpenWAM
+
    If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` only for eval-ready configs that define ``rollout.model`` (with ``model_type`` and ``num_action_chunks``). The bundled ``eval_seeds.json`` covers **22 tasks**; to evaluate a training-only config, adapt it per :doc:`../reference/configuration`.
 
 .. _robotwin-eval-config:
 
 .. dropdown:: Evaluation Configuration
 
-   RoboTwin evaluation runs one trajectory per pre-filtered **success seed** in ``eval_seeds.json`` (150–320 seeds per task across 22 tasks) and reports ``eval/success_once``. On startup, ``success_seeds`` are shuffled and partitioned across env workers without overlap. With default settings (``total_num_envs: 128``, ``rollout_epoch: 1``, ``use_fixed_reset_state_ids: True``), one epoch covers ~128 trajectories; set ``use_fixed_reset_state_ids: False`` so ``auto_reset`` rotates to subsequent seeds.
+   For tasks with bundled seeds, RoboTwin evaluation runs one trajectory per pre-filtered **success seed** in ``eval_seeds.json`` (150–320 seeds per task across 22 tasks) and reports ``eval/success_once``.
+
+   On startup, ``success_seeds`` are shuffled and partitioned across env workers without overlap.
+
+   With ``total_num_envs: 128``, ``rollout_epoch: 1``, and ``use_fixed_reset_state_ids: True``, one epoch covers ~128 trajectories; set ``use_fixed_reset_state_ids: False`` so ``auto_reset`` rotates to subsequent seeds.
 
    **Seed counts and step limits**
 
@@ -335,6 +381,6 @@ The terminal prints ``eval/success_once``; logs and videos go to ``logs/<timesta
    * - GPU out of memory
      - Set ``env.enable_offload: True`` and ``rollout.enable_offload: True``, or lower ``env.eval.total_num_envs``.
    * - Incomplete seed coverage
-     - Default 128 envs with ``use_fixed_reset_state_ids: True`` covers only a subset of seeds; see :ref:`Evaluation Configuration <robotwin-eval-config>`.
+     - Using 128 envs with ``use_fixed_reset_state_ids: True`` covers only a subset of seeds; see :ref:`Evaluation Configuration <robotwin-eval-config>`.
    * - EGL rendering errors
      - ``run_eval.sh`` uses EGL by default; on hosts without EGL, export ``MUJOCO_GL=osmesa`` and ``PYOPENGL_PLATFORM=osmesa``.

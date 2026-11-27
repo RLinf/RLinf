@@ -593,6 +593,18 @@ def test_policy_obs_spec_resizes_stacked_views_and_keeps_pixel_values():
     assert conformed["states"] is obs["states"]
 
 
+def test_policy_obs_spec_selects_native_proprio_without_normalizing_it():
+    proprio = torch.arange(40, dtype=torch.float32).reshape(2, 20)
+    obs = {"states": torch.zeros(2, 7), "native_proprio": proprio}
+
+    selected = PolicyObsSpec(keys=["native_proprio"]).apply(obs)
+
+    assert selected["native_proprio"] is proprio
+    assert selected["states"] is None
+    assert PolicyObsSpec(keys=["states"]).apply(obs)["native_proprio"] is None
+    assert obs["native_proprio"] is proprio
+
+
 def test_policy_obs_spec_passes_control_entries_through_and_conforms_history():
     active_mask = torch.tensor([True, False])
     frame_mask = torch.ones(2, 3, dtype=torch.bool)

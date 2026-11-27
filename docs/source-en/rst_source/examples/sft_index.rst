@@ -46,6 +46,14 @@ Pick this section to cold-start a VLA, WAM, or VLM checkpoint with supervised fi
 
       Run full-parameter or LoRA SFT on π₀ and π₀.₅ across LIBERO, Franka, BEHAVIOR-1K, RoboTwin, and custom LeRobot datasets.
 
+   .. grid-item-card:: OpenWAM SFT
+      :img-top: https://raw.githubusercontent.com/OpenWAM-Official/OpenWAM/main/assets/repo_images/teaser.jpg
+      :img-alt: OpenWAM overview
+      :link: embodied/sft_openwam
+      :link-type: doc
+
+      Fine-tune OpenWAM on LIBERO with joint video and action loss, then export it for evaluation.
+
    .. grid-item-card:: Qwen-VL SFT
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/release_0.2/qwen2_5_sft_vlm.png
       :img-alt: Qwen-VL SFT
@@ -63,4 +71,5 @@ Pick this section to cold-start a VLA, WAM, or VLM checkpoint with supervised fi
    DreamZero <embodied/sft_dreamzero>
    FastWAM <embodied/sft_fastwam>
    OpenPI <embodied/sft_openpi>
+   OpenWAM <embodied/sft_openwam>
    Qwen-VL <embodied/sft_vlm>

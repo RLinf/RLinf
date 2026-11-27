@@ -17,7 +17,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    .. grid-item-card:: 支持模型
       :text-align: center
 
-      OpenPI · OpenVLA-OFT · FastWAM · MolmoAct2 · StarVLA · Evo-1 · π₀-FAST · DreamZero · Cosmos3
+      OpenPI · OpenVLA-OFT · FastWAM · MolmoAct2 · StarVLA · Evo-1 · π₀-FAST · DreamZero · Cosmos3 · OpenWAM
 
    .. grid-item-card:: 配置目录
       :text-align: center
@@ -27,7 +27,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    .. grid-item-card:: 关联训练
       :text-align: center
 
-      :doc:`LIBERO <../../examples/embodied/libero>` · :doc:`FastWAM <../../examples/embodied/sft_fastwam>` · :doc:`DreamZero <../../examples/embodied/sft_dreamzero>`
+      :doc:`LIBERO <../../examples/embodied/libero>` · :doc:`FastWAM <../../examples/embodied/sft_fastwam>` · :doc:`DreamZero <../../examples/embodied/sft_dreamzero>` · :doc:`OpenWAM <../../examples/embodied/sft_openwam>`
 
 安装与运行
 ----------
@@ -264,9 +264,52 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
 
       需要 Linux + NVIDIA GPU、CUDA 工具链与 Rust 工具链，详见 :ref:`ApxInf 推理后端 <apxinf-backend>` 与 :doc:`../../guides/apxinf`。
 
+   .. tab-item:: OpenWAM
+
+      **1. 安装**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openwam --env libero && source .venv/bin/activate
+
+      **2. 下载模型**
+
+      .. code-block:: bash
+
+         hf download OpenWAM/OpenWAM-Alpha-Sim-LIBERO --local-dir ./OpenWAM-Alpha-Sim-LIBERO
+
+      **3. 启动评测（LIBERO-Spatial）**
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh libero libero_spatial_openwam_eval \
+           rollout.model.model_path=./OpenWAM-Alpha-Sim-LIBERO
+
+      默认只运行 3 个 episode：3 张 GPU 各运行一个环境，第 4 张 GPU 运行推理。评测整个套件时，使用下方的完整覆盖配置。保留每次 reset 后的 30 步环境静置（settling steps）、每次预测执行的 10 个动作，以及 600 步单回合步数上限。其他套件使用 ``libero_object_openwam_eval``\、\ ``libero_goal_openwam_eval`` 或 ``libero_10_openwam_eval``\；Long 的单回合步数上限为 700 步。
+
+      评测微调模型前，按 :doc:`OpenWAM SFT <../../examples/embodied/sft_openwam>` 导出 checkpoint，再将导出目录传给 ``rollout.model.model_path``\。
+
+      .. _openwam-libero-full-coverage:
+
+      .. dropdown:: OpenWAM 完整覆盖配置
+
+         在 8 张 GPU 上，分别用 4 张运行环境和推理，一次评测覆盖全部 500 个任务与初始状态组合：
+
+         .. code-block:: bash
+
+            bash evaluations/run_eval.sh libero libero_spatial_openwam_eval \
+              rollout.model.model_path=./OpenWAM-Alpha-Sim-LIBERO \
+              cluster.component_placement.env=0-3 \
+              cluster.component_placement.rollout=4-7 \
+              env.eval.total_num_envs=4 \
+              env.eval.max_steps_per_rollout_epoch=75000
+
+         每个环境运行 125 个 episode，按预设顺序遍历初始状态。Object 和 Goal 使用相同预算；Long 改用 ``libero_10_openwam_eval``\，并设置 ``env.eval.max_steps_per_rollout_epoch=87500``\。比较不同 checkpoint 时，保持评测配置和初始状态一致。
+
 .. note::
 
-   **主机内存与完整套件覆盖：** 单个 LIBERO 环境约占 2 GiB 主机内存，默认 ``total_num_envs=500`` 约需 1 TiB 内存。常规机器上请同步调小 ``env.eval.total_num_envs`` 并调大 ``env.eval.max_steps_per_rollout_epoch``\ （例如 ``libero_spatial`` 设 ``env.eval.total_num_envs=128 env.eval.max_steps_per_rollout_epoch=960``），通过 ``auto_reset`` 完整覆盖 500 个初始状态（详见 :ref:`评测配置详解 <libero-eval-config>`）。
+   **主机内存与完整套件覆盖：** 单个 LIBERO 环境约占 2 GiB 主机内存，使用 ``total_num_envs=500`` 的配置约需 1 TiB 内存。内存较少时，同步调小 ``env.eval.total_num_envs`` 并调大 ``env.eval.max_steps_per_rollout_epoch``\，通过 ``auto_reset`` 完整覆盖 500 个初始状态（详见 :ref:`评测配置详解 <libero-eval-config>`）。
 
 使用 ``--env libero`` 时，``install.sh`` 会将 LIBERO 克隆到 ``.venv/libero``\ （若已设置 ``LIBERO_PATH`` 则复用已有目录）并写入 ``.venv/bin/activate`` 的 ``PYTHONPATH``。SGLang 后端见 :doc:`dreamzero_sglang` 与 :doc:`cosmos3_sglang`；如需与动作块执行重叠以隐藏推理延迟，见 :doc:`RTC <../../guides/rtc>`。
 
@@ -353,6 +396,19 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
       * - ``libero_mem_openpi_pi05_eval.yaml``
         - LIBERO-Mem（``libero_mem``）
         - π₀.₅（Short Memory）
+
+      * - ``libero_spatial_openwam_eval.yaml``
+        - Spatial
+        - OpenWAM
+      * - ``libero_object_openwam_eval.yaml``
+        - Object
+        - OpenWAM
+      * - ``libero_goal_openwam_eval.yaml``
+        - Goal
+        - OpenWAM
+      * - ``libero_10_openwam_eval.yaml``
+        - Long
+        - OpenWAM
 
 .. _apxinf-backend:
 

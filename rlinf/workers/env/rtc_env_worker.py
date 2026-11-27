@@ -222,6 +222,7 @@ class RTCEnvWorker(EnvWorker):
             action_dim=self.model_cfg.action_dim,
             policy=self.model_cfg.get("policy_setup", None),
             wm_env_type=self.eval_assignment.cfg.get("wm_env_type", None),
+            env_cfg=self.eval_assignment.cfg,
         )
         return self._maybe_rewrite_eval_chunk_gripper(chunk_actions)
 
