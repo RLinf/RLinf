@@ -17,7 +17,7 @@ LoRA 微调
      - 说明
    * - 具身 FSDP VLA（OpenVLA、OpenVLA-OFT 等）
      - ``actor.model.is_lora: True``
-     - 支持 ``lora_rank``、``lora_path``、``lora_target_scope``，以及通过 ``merged_loras`` 预合并已有 adapter。
+     - 支持 ``lora_rank``、``lora_path``、``lora_target_scope``、``lora_target_modules``，以及通过 ``merged_loras`` 预合并已有 adapter。
    * - 扩散模型（SD3.5 Medium、Wan2.2 TI2V 5B）
      - ``actor.model.<model>.use_lora: True``
      - 在 :doc:`Diffusion-NFT <../examples/diffusion_nft>` 与 :doc:`DiffusionART <../examples/diffusion_art>` 的 YAML 模型块下配置（例如 ``actor.model.wan22_ti2v_5b.use_lora: True``）。
@@ -35,11 +35,13 @@ LoRA 微调
        lora_rank: 32
        lora_path: null            # 填写已有 adapter 路径即可继续训练
        lora_target_scope: null    # 可选：设为 "all_linear" 适配全部线性层
+       lora_target_modules: null  # 可选：模块名列表或正则字符串；优先于 lora_target_scope
 
 - ``is_lora``：是否启用 LoRA 微调；设为 ``False`` 时转为全参数微调。
 - ``lora_rank``：低秩矩阵的秩（常用 ``8``–``64``）；``is_lora: False`` 时忽略。
 - ``lora_path``：已有 LoRA 权重路径，留空（``null``）表示从头初始化新 adapter。
 - ``lora_target_scope``：未设置时，RLinf 默认注入视觉、投影及 LLM 注意力与 MLP 层（``proj``、``qkv``、``fc1``–``fc3``、``out_proj``、``q_proj``/``k_proj``/``v_proj``/``o_proj``、``gate_proj``/``up_proj``/``down_proj``、``lm_head``）；设为 ``"all_linear"`` 可适配全部线性层。
+- ``lora_target_modules``：可选，填写模块名列表或正则字符串以指定要注入 LoRA 的层。设置后优先于 ``lora_target_scope`` 和默认模块列表，正则用法见 ``examples/sft/config/qwen3_8_27b_rpent_sft.yaml``。
 
 预合并已有 LoRA Adapter
 -----------------------

@@ -7,12 +7,12 @@ Qwen-VL SFT
 
    Qwen2.5-VL supervised fine-tuning on the Robo2VLM visual-QA dataset.
 
-Run **full-parameter** supervised fine-tuning for vision-language models (Qwen2.5-VL, Qwen3-VL, Qwen3-VL-MoE) on multimodal QA data with RLinf — train, evaluate, and convert the resulting checkpoint to HuggingFace format.
+Run supervised fine-tuning for vision-language models with RLinf: **full-parameter** SFT and evaluation for Qwen2.5-VL, Qwen3-VL, and Qwen3-VL-MoE on Robo2VLM visual QA, or **full-parameter and LoRA** SFT for Qwen3.8-27B on multi-turn RPent planner data, then export the trained checkpoint to HuggingFace format.
 
 Overview
 --------
 
-Full-parameter SFT for Qwen-VL models on the Robo2VLM visual-QA dataset, with FSDP and built-in evaluation.
+Both workflows run FSDP supervised fine-tuning through ``examples/sft/run_vlm_sft.sh``; select a tab below for setup and configuration.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -20,27 +20,25 @@ Full-parameter SFT for Qwen-VL models on the Robo2VLM visual-QA dataset, with FS
    .. grid-item-card:: Models
       :text-align: center
 
-      Qwen2.5-VL · Qwen3-VL · Qwen3-VL-MoE
+      Qwen2.5-VL · Qwen3-VL · Qwen3-VL-MoE · Qwen3.8-27B
 
    .. grid-item-card:: Methods
       :text-align: center
 
-      Full-parameter SFT
+      Full-parameter SFT · LoRA
 
    .. grid-item-card:: Data
       :text-align: center
 
-      Robo2VLM (visual QA)
+      Robo2VLM (visual QA) · RPent
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      1–2 nodes · GPUs
+      1–2 nodes · GPUs (4 × 80 GB+ for 27B LoRA)
 
-| **You'll do:** install the environment → download the model + Robo2VLM → edit the config → launch ``run_vlm_sft.sh`` → watch loss and eval accuracy.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Qwen-VL weights · the Robo2VLM dataset.
-
-This recipe centers on two files: the launch script ``examples/sft/run_vlm_sft.sh`` and the training config ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``.
+| **You'll do:** install the environment → prepare weights and data (Robo2VLM or RPent JSONL) → launch ``run_vlm_sft.sh`` → monitor loss/eval metrics and export to HuggingFace.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Qwen-VL or Qwen3.8-27B weights · Robo2VLM or RPent dataset.
 
 Setup and Run
 -------------
@@ -91,6 +89,80 @@ Setup and Run
       .. code-block:: bash
 
          bash examples/sft/run_vlm_sft.sh qwen2_5_vl_sft_vlm
+
+   .. tab-item:: Qwen3.8-27B (RPent)
+
+      Fine-tune Qwen3.8-27B (``qwen3_5`` architecture) on multi-turn `RPent <https://github.com/RLinf/RPent>`_ planner data with ``examples/sft/config/qwen3_8_27b_rpent_sft.yaml``. Loss applies only to the target assistant reply and tool calls. LoRA SFT is verified on 4 × A800 80 GB GPUs; 27B full-parameter SFT requires more GPUs.
+
+      **1. Install**
+
+      Install the default ``agentic --engine sglang`` environment (which pins ``transformers==5.6.1`` with ``qwen3_5`` support):
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+
+      **2. Download and Prepare Data**
+
+      Download the Qwen3.8-27B weights from HuggingFace:
+
+      .. code-block:: bash
+
+         hf download Qwen/Qwen3.8-27B --local-dir ./Qwen3.8-27B
+
+      Prepare an RPent JSONL file or directory (image paths resolve relative to each JSONL file):
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 78
+
+         * - Field
+           - Description
+         * - ``episode_id``, ``turn_id``
+           - Episode and turn identifiers.
+         * - ``tools``
+           - Tool definitions with ``name``, ``description``, and ``input_schema``.
+         * - ``messages``
+           - Conversation history of messages with ``role``, ``content`` blocks (``text`` or ``image``), optional ``tool_calls``, and optional ``tool_call_id``.
+         * - ``target``
+           - Target assistant turn with ``role: "assistant"``, ``content``, and optional ``tool_calls``.
+
+      Minimal single-record JSONL example (formatted across lines for readability):
+
+      .. code-block:: json
+
+         {
+           "episode_id": "ep_001",
+           "turn_id": "P1",
+           "tools": [{"name": "look", "description": "Inspect view", "input_schema": {"type": "object"}}],
+           "messages": [
+             {"role": "user", "content": [{"type": "text", "text": "Find the cup."}]},
+             {"role": "assistant", "content": [], "tool_calls": [{"id": "c1", "name": "look", "arguments": {"view": 1}}]},
+             {"role": "tool", "tool_call_id": "c1", "content": [
+               {"type": "image", "artifact": {"path": "images/view1.png"}},
+               {"type": "text", "text": "Cup on left"}
+             ]}
+           ],
+           "target": {"role": "assistant", "content": [{"type": "text", "text": "Picking up the cup."}]}
+         }
+
+      **3. Launch**
+
+      Point ``RPENT_SAMPLES_PATH`` at your JSONL file or directory and ``QWEN3_8_MODEL_PATH`` at the downloaded weights, then launch full-parameter or rank-16 LoRA SFT from the repository root:
+
+      .. code-block:: bash
+
+         export RPENT_SAMPLES_PATH=./rpent_samples.jsonl
+         export QWEN3_8_MODEL_PATH=./Qwen3.8-27B
+
+         # Full-parameter SFT (default)
+         bash examples/sft/run_vlm_sft.sh qwen3_8_27b_rpent_sft
+
+         # LoRA SFT (rank 16 on language-model attention and MLP layers)
+         bash examples/sft/run_vlm_sft.sh qwen3_8_27b_rpent_sft actor.model.is_lora=true
+
+      After training, export or merge the checkpoint under *Checkpoint conversion (FSDP to HuggingFace)* below, then evaluate the planner in RPent / RoboTwin.
 
 .. dropdown:: Advanced configuration & field reference
 
@@ -165,22 +237,17 @@ Setup and Run
 
 .. dropdown:: Checkpoint conversion (FSDP to HuggingFace)
 
-   FSDP SFT saves checkpoints as ``full_weights.pt``. To export HuggingFace format, configure the built-in ``fsdp_model_convertor`` YAML with:
-
-   - ``convertor.ckpt_path``: path to ``full_weights.pt``
-   - ``convertor.save_path``: output HF model directory
-   - ``model.model_path``: base model path
-   - ``model.model_type``: model type (``qwen2.5_vl``, ``qwen3_vl``, or ``qwen3_vl_moe``)
-
-   Then run the built-in FSDP-to-HF converter:
+   FSDP SFT saves full weights to ``full_weights.pt``. Run the converter from the repository root with the run's saved ``config.yaml``:
 
    .. code-block:: bash
 
+      export REPO_PATH=$(pwd)
       python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
-          --config-path rlinf/utils/ckpt_convertor/fsdp_convertor/config \
-          --config-name fsdp_model_convertor
+          +convertor.train_config_path=./logs/<timestamp>/tensorboard/config.yaml \
+          convertor.ckpt_path=./logs/<timestamp>/<experiment_name>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt \
+          convertor.save_path=./hf_converted_model
 
-   See :doc:`Checkpoint conversion <../../guides/convertor>` for details.
+   Replace ``<timestamp>``, ``<experiment_name>``, and ``<N>`` with the values from your run directory. For LoRA checkpoints, the converter merges adapters into the base weights by default; pass ``convertor.merge_lora_weighs=False`` to save only the adapter under ``lora_adapter/``. See :doc:`Checkpoint conversion <../../guides/convertor>` for details.
 
 .. dropdown:: Troubleshooting
 
@@ -204,7 +271,7 @@ Visualization and Results
 
 A healthy run shows the **loss** decreasing and the **eval accuracy** climbing. Visualize ``logs/<timestamp>`` with TensorBoard (``tensorboard --logdir ./logs --port 6006``). For every logged metric, see :doc:`Training metrics <../../reference/metrics>`.
 
-Reference runs across model scales:
+Reference runs across model scales (Robo2VLM):
 
 .. list-table::
    :header-rows: 1
@@ -226,6 +293,8 @@ Reference runs across model scales:
      - 2 × 8 × A100
      - 1000
      - 58.4% → 91.3%
+
+For **Qwen3.8-27B (RPent)**, monitor ``train/loss`` in TensorBoard. On 4 × A800 80 GB GPUs, a 48-step LoRA run (``actor.model.lora_rank=592``) reached a final ``train/loss`` of 0.199 and, after merging weights, raised solved RoboTwin planner episodes from 8/50 (base model) to 14/50.
 
 **Qwen2.5-VL-3B** — eval accuracy, grad_norm, and loss every 1000 iterations:
 

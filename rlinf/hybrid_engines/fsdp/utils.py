@@ -1294,7 +1294,8 @@ def generate_with_kv_cache(
         for k, v in multi_modal_inputs.items()
         if k not in ("pixel_values", "pixel_values_videos")
     }
-    position_ids, _ = model.model.get_rope_index(
+    base_model = model.get_base_model() if hasattr(model, "get_base_model") else model
+    position_ids, _ = base_model.model.get_rope_index(
         input_ids, attention_mask=generated_attention_mask, **rope_inputs
     )
     next_position = position_ids.amax(dim=(0, 2)) + 1

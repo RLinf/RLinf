@@ -47,6 +47,7 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, read the [RLinf Walk
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports full-parameter and LoRA SFT for Qwen3.8-27B on multi-turn RPent planner data, with HuggingFace checkpoint export and LoRA adapter merging. Doc: [Qwen-VL SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html).
 - [2026/11] 🔥 RLinf supports SuperMimic for Unitree G1 whole-body motion tracking with a differentiable world model in MuJoCo Warp, including multi-GPU FSDP2 scaling, CUDA graphs, and bf16 mixed precision. On NVIDIA A800, it reaches **1.34×** throughput on 1 GPU (0.383 s vs. 0.515 s/update) and **2.27×** on 4 GPUs (0.227 s/update, 6000 updates in ~23 min) over the official single-GPU code, and reaches **0.856** normalized return on 40 LAFAN1 clips (paper: 0.82) with **0** falls. Doc: [SuperMimic](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/supermimic.html).
 - [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
 - [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
@@ -56,12 +57,12 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, read the [RLinf Walk
 - [2026/11] 🔥 RLinf adds a hardware fault-tolerance interface for real-world robots, available first on the Robbyant R2: non-blocking health diagnosis, severity-based automatic recovery with emergency-stop latching, jump-free motion resumption, and episode truncation for interrupted RL rollouts. Doc: [Robotics Interface](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/robotics.html).
 - [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) adopts RLinf as a distributed rollout and training runtime and integrates [demonstration co-training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/co_training.html) for VLA RL post-training.
 - [2026/11] 🎉 The [RLinf website](https://rlinf.org/) is live. Read our [blog posts](https://rlinf.org/en/blog/) and browse [community events](https://rlinf.org/en/events/).
-- [2026/11] 🔥 RLinf supports MuJoCo Warp for batched GPU simulation on five classic locomotion tasks with an MLP + PPO recipe. Doc: [MuJoCo Warp](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/mujoco_warp.html).
-- [2026/11] 🔥 RLinf supports LeKiwi, a three-wheel omnidirectional mobile base, with per-part bring-up tools and a registered real-world drive environment. Doc: [LeKiwi](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html).
 
 <details>
 <summary><b>More updates</b></summary>
 
+- [2026/11] 🔥 RLinf supports MuJoCo Warp for batched GPU simulation on five classic locomotion tasks with an MLP + PPO recipe. Doc: [MuJoCo Warp](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/mujoco_warp.html).
+- [2026/11] 🔥 RLinf supports LeKiwi, a three-wheel omnidirectional mobile base, with per-part bring-up tools and a registered real-world drive environment. Doc: [LeKiwi](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html).
 - [2026/11] 🔥 RLinf supports dual-arm ARX X5 data collection with Pico teleoperation. Doc: [ARX X5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/arx5.html).
 - [2026/11] 🔥 RLinf supports a session server for asynchronous agentic RL: trajectories stay on the rollout nodes instead of node 0, requests are routed by an SGLang router, and agents can use the OpenAI chat completions API. Doc: [Session Server](https://rlinf.readthedocs.io/en/latest/rst_source/guides/session_server.html).
 - [2026/11] 🔥 RLinf supports asynchronous agentic RL: the rollout keeps generating while the actor trains on data from an earlier weight version, with bounded staleness. On Search-R1 with GLM-4.7-Flash, the step time drops from 278.6 s to 139.0 s with a comparable reward. Docs: [Asynchronous Agentic RL](https://rlinf.readthedocs.io/en/latest/rst_source/guides/async_agentic.html), [Asynchronous Search-R1 Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/async.html).
@@ -267,6 +268,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen2.5-VL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3-VL-MoE</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_vlm.html">Qwen3.8-27B</a> ✅</li>
           </ul>
           <li><b>World Model</b></li>
           <ul>

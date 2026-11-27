@@ -52,7 +52,7 @@ SFT 与模仿学习
       :link: embodied/sft_vlm
       :link-type: doc
 
-      对 Qwen2.5-VL、Qwen3-VL 和 Qwen3-VL-MoE 做全量 SFT 与评估。
+      在 Robo2VLM 上对 Qwen2.5-VL、Qwen3-VL 和 Qwen3-VL-MoE 做全量 SFT 与评估，或在 RPent 数据上对 Qwen3.8-27B 做全量与 LoRA SFT。
 
 .. toctree::
    :hidden:

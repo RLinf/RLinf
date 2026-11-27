@@ -2154,3 +2154,15 @@ def test_dynamic_rollout_metrics_allow_empty_dp_rank(tmp_path, empty_rank):
         nprocs=2,
         join=True,
     )
+
+
+def test_vlm_extract_answer_supports_qwen3_5():
+    from rlinf.workers.sft.utils import vlm_extract_answer
+
+    text = (
+        "<|im_start|>assistant\n<think>reason</think>"
+        "Final answer is: A. left.<|im_end|>"
+    )
+    assert vlm_extract_answer(text, "qwen3_5") == "A. left"
+    with pytest.raises(ValueError, match="openvla"):
+        vlm_extract_answer("Done.", "openvla")

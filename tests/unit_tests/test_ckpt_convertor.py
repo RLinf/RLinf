@@ -12,10 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CPU tests for the OpenPI checkpoint convertors."""
+"""CPU tests for checkpoint convertors."""
 
 import numpy as np
+import pytest
+import torch
 
+from rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf import (
+    _normalize_state_dict_keys,
+)
+from rlinf.utils.ckpt_convertor.fsdp_convertor.utils import (
+    copy_model_config_and_code,
+)
 from rlinf.utils.ckpt_convertor.openpi.jax_to_openpi import _unwrap_value_leaves
 
 
@@ -36,3 +44,93 @@ def test_jax_value_wrappers_are_unwrapped():
     assert unwrapped["PaliGemma"]["llm"]["layers"]["Dense_0"]["kernel"] is kernel
     assert unwrapped["action_in_proj"]["kernel"] is kernel
     assert unwrapped["action_in_proj"]["bias"] is bias
+
+
+def test_fsdp_checkpoint_matches_model_weight_names():
+    qwen = "q_proj.base_layer.weight"
+    old = "_orig_mod.module.v_proj.base_layer.weight"
+    checkpoint = {qwen: torch.ones(1), old: torch.zeros(1)}
+    expected = {qwen: checkpoint[qwen], "v_proj.weight": checkpoint[old]}
+    assert _normalize_state_dict_keys(checkpoint, expected.keys()) == expected
+
+
+def test_fsdp_checkpoint_keeps_conflicting_alias_for_strict_load():
+    model = torch.nn.Linear(1, 1, bias=False)
+    checkpoint = {"weight": torch.ones(1, 1), "module.weight": torch.zeros(1, 1)}
+    normalized = _normalize_state_dict_keys(checkpoint, model.state_dict().keys())
+
+    with pytest.raises(RuntimeError, match="Unexpected key"):
+        model.load_state_dict(normalized)
+    torch.testing.assert_close(normalized["weight"], checkpoint["weight"])
+
+
+def test_copy_model_config_and_code_preserves_chat_template_and_merges(tmp_path):
+    src = tmp_path / "base_model"
+    dst = tmp_path / "exported"
+    src.mkdir()
+    (src / "config.json").write_text("{}", encoding="utf-8")
+    (src / "chat_template.jinja").write_text("{{ messages }}", encoding="utf-8")
+    (src / "merges.txt").write_text("#version: 0.2\n", encoding="utf-8")
+    (src / "model.safetensors").write_bytes(b"weights")
+    (src / "model.safetensors.index.json").write_text("{}", encoding="utf-8")
+
+    copy_model_config_and_code(str(src), str(dst))
+
+    assert (dst / "config.json").read_text(encoding="utf-8") == "{}"
+    assert (dst / "chat_template.jinja").read_text(encoding="utf-8") == "{{ messages }}"
+    assert (dst / "merges.txt").read_text(encoding="utf-8") == "#version: 0.2\n"
+    assert not (dst / "model.safetensors").exists()
+    assert not (dst / "model.safetensors.index.json").exists()
+
+
+def test_fsdp_convertor_exports_hub_model_with_tied_weights(tmp_path, monkeypatch):
+    from omegaconf import OmegaConf
+    from safetensors.torch import load_file
+
+    from rlinf.utils.ckpt_convertor.fsdp_convertor import convert_pt_to_hf
+
+    class _TiedModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embed = torch.nn.Embedding(4, 3)
+            self.lm_head = torch.nn.Linear(3, 4, bias=False)
+            self.lm_head.weight = self.embed.weight
+
+    snapshot = tmp_path / "hf_cache_snapshot"
+    save_dir = tmp_path / "exported"
+    snapshot.mkdir()
+    (snapshot / "config.json").write_text('{"model_type": "qwen3_5"}', encoding="utf-8")
+    (snapshot / "preprocessor_config.json").write_text("{}", encoding="utf-8")
+    (snapshot / "chat_template.jinja").write_text("{{ messages }}", encoding="utf-8")
+    (snapshot / "merges.txt").write_text("#version: 0.2\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        convert_pt_to_hf,
+        "resolve_model_path",
+        lambda path: str(snapshot) if path == "Qwen/Qwen3.8-27B" else path,
+    )
+
+    raw_cfg = OmegaConf.create(
+        {"model_type": "qwen3_5", "model_path": "Qwen/Qwen3.8-27B", "is_lora": False}
+    )
+    OmegaConf.set_struct(raw_cfg, True)
+    prepared = convert_pt_to_hf._prepare_model_cfg(raw_cfg)
+    assert prepared.model_path == str(snapshot)
+    assert raw_cfg.model_path == "Qwen/Qwen3.8-27B"
+
+    model = _TiedModel()
+    cfg = OmegaConf.create({"convertor": {"torch_dtype": None}})
+    convert_pt_to_hf._save_hf_checkpoint(model, prepared, cfg, str(save_dir))
+
+    for name in (
+        "config.json",
+        "preprocessor_config.json",
+        "chat_template.jinja",
+        "merges.txt",
+        "model.safetensors.index.json",
+    ):
+        assert (save_dir / name).is_file(), f"missing {name}"
+
+    loaded = load_file(str(save_dir / "model-00001-of-00001.safetensors"))
+    torch.testing.assert_close(loaded["embed.weight"], model.embed.weight)
+    torch.testing.assert_close(loaded["lm_head.weight"], model.embed.weight)

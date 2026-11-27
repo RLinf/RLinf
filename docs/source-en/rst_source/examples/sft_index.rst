@@ -52,7 +52,7 @@ Pick this section to cold-start a VLA, WAM, or VLM checkpoint with supervised fi
       :link: embodied/sft_vlm
       :link-type: doc
 
-      Run full-parameter SFT and evaluation for Qwen2.5-VL, Qwen3-VL, and Qwen3-VL-MoE.
+      Run full-parameter SFT and evaluation for Qwen2.5-VL, Qwen3-VL, and Qwen3-VL-MoE on Robo2VLM, or full-parameter and LoRA SFT for Qwen3.8-27B on RPent.
 
 .. toctree::
    :hidden:

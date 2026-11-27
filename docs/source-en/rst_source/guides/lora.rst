@@ -17,7 +17,7 @@ LoRA configuration differs by model family:
      - Notes
    * - Embodied FSDP VLAs (OpenVLA, OpenVLA-OFT, etc.)
      - ``actor.model.is_lora: True``
-     - Supports ``lora_rank``, ``lora_path``, ``lora_target_scope``, and pre-merged adapters via ``merged_loras``.
+     - Supports ``lora_rank``, ``lora_path``, ``lora_target_scope``, ``lora_target_modules``, and pre-merged adapters via ``merged_loras``.
    * - Diffusion models (SD3.5 Medium, Wan2.2 TI2V 5B)
      - ``actor.model.<model>.use_lora: True``
      - Configured under the model block in :doc:`Diffusion-NFT <../examples/diffusion_nft>` and :doc:`DiffusionART <../examples/diffusion_art>` YAMLs (for example ``actor.model.wan22_ti2v_5b.use_lora: True``).
@@ -35,11 +35,13 @@ Enable LoRA in the ``actor.model`` section of an embodied FSDP YAML:
        lora_rank: 32
        lora_path: null            # Set to an existing adapter path to continue training
        lora_target_scope: null    # Optional: set to "all_linear" to adapt all linear layers
+       lora_target_modules: null  # Optional: module-name list or regex; overrides lora_target_scope
 
 - ``is_lora``: enables (``True``) or disables (``False``) LoRA fine-tuning. Set ``is_lora: False`` for full-model fine-tuning.
 - ``lora_rank``: rank of the low-rank matrices (typically ``8``–``64``). Ignored when ``is_lora: False``.
 - ``lora_path``: path to an existing LoRA adapter to resume training from; leave ``null`` to initialize a new adapter.
 - ``lora_target_scope``: when unset, RLinf injects LoRA into standard vision, projection, and LLM attention/MLP modules (``proj``, ``qkv``, ``fc1``–``fc3``, ``out_proj``, ``q_proj``/``k_proj``/``v_proj``/``o_proj``, ``gate_proj``/``up_proj``/``down_proj``, ``lm_head``). Set ``lora_target_scope: "all_linear"`` to target all linear layers.
+- ``lora_target_modules``: optional list of module names or regex string selecting the layers to adapt. When set, it overrides ``lora_target_scope`` and the default module list (see ``examples/sft/config/qwen3_8_27b_rpent_sft.yaml`` for a regex example).
 
 Pre-Merge Existing LoRA Adapters
 --------------------------------

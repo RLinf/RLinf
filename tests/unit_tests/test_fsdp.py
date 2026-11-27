@@ -2169,3 +2169,77 @@ def test_prefix_async_replay_drains_without_rank_collectives(tmp_path):
         nprocs=2,
         join=True,
     )
+
+
+def test_generate_with_kv_cache_resolves_base_model_rope_index(tmp_path):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
+
+    if dist.is_initialized():
+        pytest.skip("Test requires its own single-rank process group")
+
+    class _Backbone(nn.Module):
+        def get_rope_index(self, input_ids, attention_mask=None, **kwargs):
+            seq_len = input_ids.size(1)
+            pos = torch.arange(seq_len, device=input_ids.device).view(1, 1, seq_len)
+            return pos.expand(3, input_ids.size(0), seq_len), None
+
+    class _VLM(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = _Backbone()
+            self.head = nn.Linear(1, 1)
+            self.step = 0
+
+        def forward(self, input_ids, position_ids, attention_mask, **kwargs):
+            token = 7 if self.step == 0 else 2
+            self.step += 1
+            logits = torch.zeros(input_ids.size(0), input_ids.size(1), 16)
+            logits[:, -1, token] = 1.0
+            return SimpleNamespace(logits=logits, past_key_values=(self.step,))
+
+    class _PeftModel(nn.Module):
+        def __init__(self, model):
+            super().__init__()
+            self.model = model
+
+        def get_base_model(self):
+            return self.model
+
+        def forward(self, *args, **kwargs):
+            return self.model(*args, **kwargs)
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{tmp_path / 'kv-cache-init'}",
+        rank=0,
+        world_size=1,
+    )
+    try:
+        input_ids = torch.tensor([[10, 11, 12]])
+        mm = {"pixel_values": torch.zeros(1, 3), "image_grid_thw": torch.ones(1, 3)}
+        variants = [
+            _VLM(),
+            _PeftModel(_VLM()),
+            FSDP(
+                _PeftModel(_VLM()), use_orig_params=True, device_id=torch.device("cpu")
+            ),
+        ]
+        for model in variants:
+            generated = generate_with_kv_cache(
+                model=model,
+                eos_token_id=2,
+                pad_token_id=0,
+                amp_context=nullcontext(),
+                input_ids=input_ids,
+                attention_mask=torch.ones_like(input_ids),
+                multi_modal_inputs=mm,
+                max_new_tokens=4,
+            )
+            assert generated.tolist() == [[10, 11, 12, 7, 2]]
+    finally:
+        dist.destroy_process_group()

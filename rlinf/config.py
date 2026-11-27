@@ -138,6 +138,7 @@ SupportedModel.WAN22_TI2V_5B = SupportedModel.register("wan22_ti2v_5b", force=Tr
 SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
+SupportedModel.QWEN3_5_SFT = SupportedModel.register("qwen3_5", force=True)
 SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
 SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
 # GLM-4.7-Flash: MLA (DeepSeek-V3-style) + GLM MoE + MTP, via Megatron-Bridge

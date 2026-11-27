@@ -137,6 +137,17 @@ def register_model(
 
 
 def _register_builtin_models():
+    def _build_qwen3_5(cfg: DictConfig, torch_dtype):
+        from transformers import AutoModelForImageTextToText
+
+        from rlinf.utils.attention import resolve_attn_implementation
+
+        return AutoModelForImageTextToText.from_pretrained(
+            cfg.model_path,
+            dtype=torch_dtype,
+            attn_implementation=resolve_attn_implementation(),
+        )
+
     def _build_openvla(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openvla import get_model
 
@@ -292,6 +303,12 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    register_model(
+        SupportedModel.QWEN3_5_SFT.value,
+        _build_qwen3_5,
+        category="vlm",
+        force=True,
+    )
     register_model(
         SupportedModel.OPENVLA.value,
         _build_openvla,
@@ -556,8 +573,11 @@ def get_model(cfg: DictConfig):
         )
 
         if not hasattr(model_cfg, "lora_path") or model_cfg.lora_path is None:
+            modules = model_cfg.get("lora_target_modules")
             target_scope = model_cfg.get("lora_target_scope")
-            if target_scope is None:
+            if modules is not None:
+                target_modules = modules if isinstance(modules, str) else list(modules)
+            elif target_scope is None:
                 target_modules = [
                     "proj",
                     "qkv",
