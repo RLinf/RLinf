@@ -590,6 +590,97 @@ def test_non_hybrid_config_rejects_hybrid_shard_size():
         validate_fsdp_cfg(actor)
 
 
+def test_hybrid_config_requires_fsdp1():
+    actor = OmegaConf.create(
+        {
+            "fsdp_config": {
+                "strategy": "fsdp2",
+                "sharding_strategy": "hybrid_shard",
+                "hybrid_shard_size": 2,
+                "mixed_precision": {},
+            }
+        }
+    )
+    with pytest.raises(ValueError, match="strategy='fsdp'"):
+        validate_fsdp_cfg(actor)
+
+
+@pytest.mark.parametrize("sharding", ["HYBRID_SHARD", "hybrid-shard"])
+def test_hybrid_config_normalizes_sharding_strategy(sharding):
+    missing_size = OmegaConf.create(
+        {
+            "fsdp_config": {
+                "strategy": "FSDP",
+                "sharding_strategy": sharding,
+                "mixed_precision": {},
+            }
+        }
+    )
+    with pytest.raises(ValueError, match="hybrid_shard_size"):
+        validate_fsdp_cfg(missing_size)
+
+    valid = OmegaConf.create(
+        {
+            "fsdp_config": {
+                "strategy": "FSDP",
+                "sharding_strategy": sharding,
+                "hybrid_shard_size": 2,
+                "mixed_precision": {},
+            }
+        }
+    )
+    validated = validate_fsdp_cfg(valid)
+    assert validated.fsdp_config.strategy == "fsdp"
+    assert validated.fsdp_config.sharding_strategy == "hybrid_shard"
+
+
+def test_sync_inference_rejects_non_1d_dtensor(tmp_path):
+    from types import SimpleNamespace
+
+    from torch.distributed.device_mesh import init_device_mesh
+    from torch.distributed.tensor import Replicate, Shard, distribute_tensor
+
+    from rlinf.hybrid_engines.fsdp.strategy.fsdp import FSDPStrategy
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{tmp_path / 'sync-rendezvous'}",
+        rank=0,
+        world_size=1,
+    )
+    try:
+        mesh = init_device_mesh(
+            "cpu", mesh_shape=(1, 1), mesh_dim_names=("ddp", "fsdp")
+        )
+        dt = distribute_tensor(
+            torch.arange(4, dtype=torch.float32), mesh, [Replicate(), Shard(0)]
+        )
+        cfg = validate_fsdp_cfg(
+            OmegaConf.create({"fsdp_config": {"mixed_precision": {}}})
+        ).fsdp_config
+        strategy = FSDPStrategy(cfg, 1)
+
+        inference = SimpleNamespace(
+            _world_size=1,
+            _rank=0,
+            get_model_state_dict=lambda **kwargs: {"weight": dt},
+        )
+        with pytest.raises(NotImplementedError, match="1-D FSDP meshes"):
+            strategy.setup_inference_sync_actor_ranks(inference)
+
+        actor = SimpleNamespace(
+            _inference_group_name="inf",
+            _inference_world_size=0,
+            _world_size=1,
+            _rank=0,
+            get_model_state_dict=lambda **kwargs: {"weight": dt},
+        )
+        with pytest.raises(NotImplementedError, match=r"\('ddp', 'fsdp'\)"):
+            strategy.setup_actor_sync_inference_ranks(actor)
+    finally:
+        dist.destroy_process_group()
+
+
 @pytest.mark.parametrize(
     ("selector", "targets"),
     [

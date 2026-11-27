@@ -364,9 +364,9 @@ OpenPI 监督微调
 
 .. dropdown:: 跨节点混合分片
 
-   选择 ``hybrid_shard``，可以在节点内分片训练状态，并在节点间复制。用 ``hybrid_shard_size`` 指定每个分片组的 actor rank 数。每组至少有 2 个 rank，组大小须整除 actor rank 总数。以下配置适用于两个节点各有 4 个 actor rank 的情况，精度设置沿用上面的配置。
+   选择 ``hybrid_shard`` 后，训练状态在节点内分片、在节点间复制。用 ``hybrid_shard_size`` 指定每个分片组的 actor rank 数（至少为 2，且须整除 actor rank 总数）。以下配置适用于 2 个节点、每节点 4 个 actor rank 的情况，精度设置沿用上面的配置：
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       actor:
         fsdp_config:
@@ -375,11 +375,11 @@ OpenPI 监督微调
           hybrid_shard_size: 4
           use_orig_params: true
 
-   该配置创建两个副本，每个副本由连续的 4 个 actor rank 分片承载。OpenPI 的 RL 和 DAgger actor 训练也使用这组配置。
+   这组配置会创建 2 个副本，每个副本分布在连续的 4 个 actor rank 上。OpenPI 的 RL 和 DAgger actor 训练也适用这套配置。
 
    .. warning::
 
-      将每组连续的 ``hybrid_shard_size`` 个 actor rank 放在同一节点，才能让参数 all-gather 和 reduce-scatter 留在节点内。按 actor 的实际 placement 设置组大小；actor 可能只占用节点上的部分 GPU。
+      将每组连续的 ``hybrid_shard_size`` 个 actor rank 放在同一节点，才能让参数的 all-gather 和 reduce-scatter 通信都限制在节点内。按 actor 的实际 placement 设置组大小；actor 可能只占用节点上的部分 GPU。
 
 .. dropdown:: 支持的数据集与自定义 LeRobot 配置
 

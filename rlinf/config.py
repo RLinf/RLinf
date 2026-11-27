@@ -591,32 +591,29 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
 
     OmegaConf.set_struct(cfg, True)
     with open_dict(cfg):
-        cfg.fsdp_config.strategy = cfg.fsdp_config.get("strategy", "fsdp")
+        raw_strategy = cfg.fsdp_config.get("strategy", "fsdp")
+        raw_sharding = cfg.fsdp_config.get("sharding_strategy", "full_shard")
+        strategy = str(raw_strategy).strip().lower()
+        sharding = str(raw_sharding).strip().lower().replace("-", "_")
 
-        cfg.fsdp_config.sharding_strategy = cfg.fsdp_config.get(
-            "sharding_strategy", "full_shard"
-        )
         model_type = OmegaConf.select(cfg, "model.model_type", default=None)
         if model_type is not None and str(model_type) == SupportedModel.OPENPI.value:
-            sharding = (
-                str(cfg.fsdp_config.sharding_strategy).strip().lower().replace("-", "_")
-            )
             assert sharding == "no_shard" or (
-                cfg.fsdp_config.strategy == "fsdp"
+                strategy == "fsdp"
                 and sharding in ("shard_grad_op", "full_shard", "hybrid_shard")
             ), (
                 "openpi sharded training requires actor.fsdp_config.strategy='fsdp' "
                 "and sharding_strategy in ['shard_grad_op', 'full_shard', 'hybrid_shard']; "
-                f"got strategy={cfg.fsdp_config.strategy!r}, "
-                f"sharding_strategy={cfg.fsdp_config.sharding_strategy!r}."
+                f"got strategy={raw_strategy!r}, "
+                f"sharding_strategy={raw_sharding!r}."
             )
 
         hybrid_shard_size = cfg.fsdp_config.get("hybrid_shard_size")
-        if cfg.fsdp_config.sharding_strategy == "hybrid_shard":
-            if cfg.fsdp_config.strategy != "fsdp":
+        if sharding == "hybrid_shard":
+            if strategy != "fsdp":
                 raise ValueError(
                     "hybrid_shard requires fsdp_config.strategy='fsdp'; "
-                    f"got strategy={cfg.fsdp_config.strategy!r}."
+                    f"got strategy={raw_strategy!r}."
                 )
             if type(hybrid_shard_size) is not int or hybrid_shard_size < 2:
                 raise ValueError(
@@ -627,8 +624,11 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         elif hybrid_shard_size is not None:
             raise ValueError(
                 "hybrid_shard_size requires sharding_strategy='hybrid_shard'; "
-                f"got sharding_strategy={cfg.fsdp_config.sharding_strategy!r}."
+                f"got sharding_strategy={raw_sharding!r}."
             )
+
+        cfg.fsdp_config.strategy = strategy
+        cfg.fsdp_config.sharding_strategy = sharding
 
         cfg.fsdp_config.forward_prefetch = cfg.fsdp_config.get(
             "forward_prefetch", False

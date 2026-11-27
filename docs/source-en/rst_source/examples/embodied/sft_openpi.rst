@@ -371,7 +371,7 @@ Setup and Run
    For two nodes with four actor ranks each, keep the precision settings above and
    override:
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       actor:
         fsdp_config:

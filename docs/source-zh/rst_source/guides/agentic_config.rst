@@ -352,6 +352,7 @@ actor
     fsdp_config:
       strategy: "fsdp"
       sharding_strategy: "no_shard"
+      hybrid_shard_size: null
 
       cpu_offload: False
       offload_pin_memory: False
@@ -597,6 +598,8 @@ actor
      - FSDP 策略：``fsdp`` 或 ``fsdp2``\ （不区分大小写）。
    * - ``actor.fsdp_config.sharding_strategy``
      - 分片策略：``full_shard``、``shard_grad_op``、``hybrid_shard`` 或 ``no_shard``。
+   * - ``actor.fsdp_config.hybrid_shard_size``
+     - FSDP1：``sharding_strategy`` 为 ``hybrid_shard`` 时，每个分片组的 actor rank 数（不小于 2 的整数，且须整除 actor rank 总数）。
    * - ``actor.fsdp_config.cpu_offload``
      - FSDP2：参数保留在 CPU，仅在需要时移到 GPU。
    * - ``actor.fsdp_config.offload_pin_memory``
