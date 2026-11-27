@@ -164,6 +164,33 @@ The following issues were hit and resolved during 48-GPU cross-cluster bring-up 
 | **`json.decoder.JSONDecodeError` in SGLang `l2norm_fwd_kernel` after pod crash / disk full** | Interrupted writes leave 0-byte `*.json` files inside `/root/.triton/cache`, causing all SGLang workers on that node to crash during prefill. | Audit `/root/.triton/cache` for 0-byte or invalid JSON files (`find /root/.triton/cache -type f -size 0`) before launch, and sync a verified cache from a healthy peer node. |
 | **Transient SGLang `TCPStore` `EADDRINUSE` during 8-way startup** | Concurrent `tp=1` SGLang workers on the same host can occasionally race on ephemeral ports at startup. | Cleanly retry launch once Ray reports `0.0/32.0 GPU` used and routers report `active_sessions: 0`. |
 
+## RoboLab and RoboTwin smoke run
+
+Use the RPent revision from [the RoboLab integration PR](https://github.com/zhexuanxu/RPent/pull/4). The run uses four training GPUs, two ready RoboLab workers, two ready RoboTwin workers, and a SAM3 endpoint for segmentation. Start with one RoboLab worker per simulator GPU and size each pool from its measured memory use. The training runtime loads a local Qwen3.5-4B SFT checkpoint through `RPENT_MODEL_PATH`.
+
+Set `RPENT_ROOT` to the directory containing both checkouts as `RLinf` and `RPent`. Set `ROBOTWIN_SEED_TABLE` to the RPent seed table and run from the RLinf checkout.
+
+```bash
+python examples/agent/rpent/prepare_tasks.py \
+  --robolab-catalog "$RPENT_ROOT/RPent/robots/robolab/task_catalog.json" \
+  --seeds 0 --output-dir "$RPENT_ROOT/data/robolab"
+
+python examples/agent/rpent/prepare_tasks.py \
+  --robotwin-seeds "$ROBOTWIN_SEED_TABLE" \
+  --output-dir "$RPENT_ROOT/data/robotwin"
+```
+
+The RoboLab command writes 120 rows for seed 0 and records the source revision and catalog and JSONL checksums in `train-manifest.json`. Generate more seeded scenes with explicit seed IDs or ranges such as `--seeds 0-3`.
+
+Start the pools using the simulator setup instructions in RPent. Point `ROBOLAB_POOL_URL` and `ROBOTWIN_POOL_URL` at the pools or their routers. The defaults are local ports 28566 and 28562. For pools sharing training GPUs, use `sleepable` to release their GPU memory for the Megatron update. Reserve memory for both SGLang and simulation during rollout.
+
+```bash
+bash examples/agent/rpent/run_train.sh \
+  --config-name train_qwen3.5_4b_rpent_robolab_smoke
+```
+
+The run collects one group of two episodes per simulator and performs one GRPO optimizer step. The startup capacity check requires two resident worker slots per simulator. RPent returns the native success flag used for reward, and infrastructure failures follow the episode retry policy. The run writes group rewards under `sampling/` and optimizer metrics to TensorBoard.
+
 ## Unit Tests
 
 ```bash
