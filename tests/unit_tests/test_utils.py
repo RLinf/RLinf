@@ -1743,6 +1743,7 @@ def megatron_cpu(monkeypatch, tmp_path):
         worker.kl_beta = 0
         worker.clip_ratio_c = None
         worker.clip_ratio_low = worker.clip_ratio_high = 0.2
+        worker.lm_head_chunk_size = 0
         worker.value_clip = 0.5
         worker.num_microbatches = 1
         return worker
@@ -2507,7 +2508,12 @@ class TestMegatronModelConfig:
         [
             ("qwen3_5", True, {}, None),
             ("qwen3_5", True, {"load_mtp": False}, None),
-            ("qwen3_5", True, {"load_mtp": True, "mtp_loss_scaling_factor": 0.2}, None),
+            (
+                "qwen3_5",
+                True,
+                {"load_mtp": True, "mtp_loss_scaling_factor": 0.2},
+                "Dedicated critic models do not support critic.model.load_mtp=True.",
+            ),
             ("qwen3_5", False, {}, "mbridge=True"),
             ("qwen3_5", True, {"load_mtp": "false"}, "load_mtp"),
             (
@@ -2571,7 +2577,7 @@ class TestMegatronModelConfig:
             }
         )
         if error:
-            with pytest.raises(AssertionError, match=error):
+            with pytest.raises((AssertionError, ValueError), match=error):
                 validate_cfg(cfg)
             return
         result = validate_cfg(cfg).critic

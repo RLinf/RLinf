@@ -5912,6 +5912,52 @@ def test_ragged_reasoning_batch_matches_dense_merge(advantage_mode):
     assert folded["response_lengths"].tolist() == [11, 3]
 
 
+def test_pack_traj_batch_merges_turn_ref_logprobs():
+    """Keep earlier turns' ref_logprobs when folding multi-turn rows."""
+    from rlinf.algorithms.utils import kl_penalty, masked_mean
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    full_logprobs = torch.tensor(
+        [0.0, -7.2, -8.5, -6.4, -5.1, -4.9, -9.1, -7.8], dtype=torch.float32
+    )
+    turn0_mask = torch.tensor([False, False, True, True])
+    turn1_mask = torch.tensor([False, False, False, False, False, False, True, True])
+    turn0_lp = full_logprobs[:4].masked_fill(~turn0_mask, 0.0)
+    turn1_lp = full_logprobs.masked_fill(~turn1_mask, 0.0)
+
+    result = DynamicRolloutResult(
+        num_sequence=2,
+        group_size=1,
+        idx_to_traj=[0, 0],
+        input_ids=[[1, 2, 3, 4], [1, 2, 3, 4, 5, 6, 7, 8]],
+        prompt_lengths=[2, 6],
+        response_lengths=[2, 2],
+        is_end=[False, True],
+        rewards=[1.0, 1.0],
+        recomputed_logprobs=[turn0_lp.clone(), turn1_lp.clone()],
+        ref_logprobs=[turn0_lp.clone(), turn1_lp.clone()],
+    )
+    batch = result.to_actor_batch()
+    batch["loss_scales"] = [mask.float() for mask in batch["response_mask"]]
+    packed = DynamicRolloutResult.pack_traj_batch({"folding_scale": []}, batch)
+
+    expected_mask = torch.tensor([False, False, True, True, False, False, True, True])
+    expected_lp = full_logprobs.masked_fill(~expected_mask, 0.0)
+    assert len(packed["ref_logprobs"]) == 1
+    torch.testing.assert_close(packed["response_mask"][0], expected_mask)
+    torch.testing.assert_close(packed["recomputed_logprobs"][0], expected_lp)
+    torch.testing.assert_close(packed["ref_logprobs"][0], expected_lp)
+    kld = kl_penalty(
+        packed["recomputed_logprobs"][0].unsqueeze(0),
+        packed["ref_logprobs"][0].unsqueeze(0),
+        "low_var_kl",
+    )
+    kl_loss = masked_mean(
+        kld * packed["loss_scales"][0].unsqueeze(0), expected_mask.unsqueeze(0)
+    )
+    torch.testing.assert_close(kl_loss, torch.tensor(0.0))
+
+
 @pytest.mark.parametrize(
     ("adv_type", "advantage_mode"),
     [

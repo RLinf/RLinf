@@ -1297,6 +1297,7 @@ class DynamicRolloutResult:
                 "response_mask",
                 "recomputed_logprobs",
                 "rollout_logprobs",
+                "ref_logprobs",
                 "advantages",
                 "values",
                 "returns",
@@ -1315,6 +1316,7 @@ class DynamicRolloutResult:
             for key in [
                 "recomputed_logprobs",
                 "rollout_logprobs",
+                "ref_logprobs",
                 "advantages",
                 "values",
                 "returns",
