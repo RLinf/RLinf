@@ -1,0 +1,41 @@
+defaults:
+  - qwen2.5-1.5b-ppo-megatron
+  - _self_
+
+runner:
+  synchronous: false
+  async_mode: true
+  resume_dir: null
+  max_steps: 2
+  seq_length: 4096
+  max_tokens_per_mbs: 4096
+  experiment_name: searchr1-qwen2.5-1.5b-sao-megatron
+
+data:
+  max_prompt_length: 1024
+  rollout_batch_size: 16
+
+algorithm:
+  n_minibatches: 1
+  loss_type: dis
+  critic_loss_type: mse
+  adv_type: sao_gae
+  gae_lambda_alpha: 1.5
+  clip_ratio_low: 0.3
+  clip_ratio_high: 5.0
+  sampling_params:
+    max_new_tokens: 4096
+
+agentloop:
+  task_name: searchr1
+  max_turns: 5
+  max_actor_accept_staleness: null
+
+rollout:
+  pause_mode: retract
+  max_running_requests: 4
+  cuda_graph_max_bs: 4
+
+critic:
+  compute_advantages_after_update: true
+  update_epochs: 2

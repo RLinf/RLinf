@@ -14,6 +14,7 @@
 
 import os
 import sys
+from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import MagicMock
 
@@ -869,6 +870,103 @@ class TestDisaggregatedMultiAgentPlacement:
         assert len(rank_map) == 8
         for actor_rank in range(8):
             assert rank_map[actor_rank] == [(actor_rank, 0)]
+
+
+class TestSearchr1SaoValidation:
+    @staticmethod
+    def _make_cfg(name="train_qwen2.5_sao"):
+        from pathlib import Path
+
+        from hydra import compose, initialize_config_dir
+
+        config_dir = Path(__file__).parents[2] / "examples/agent/searchr1/config"
+        with initialize_config_dir(config_dir=str(config_dir), version_base="1.1"):
+            return compose(config_name=name)
+
+    @staticmethod
+    def _mock_cluster(monkeypatch):
+        import rlinf.config as cfg_mod
+
+        cluster = create_fake_cluster(num_nodes=1, accelerators_per_node=8)
+        monkeypatch.setattr(cfg_mod, "Cluster", lambda *args, **kwargs: cluster)
+
+    @pytest.mark.parametrize(
+        "sglang_version", ["0.5.2", "0.5.4", "0.5.12", "0.5.12.post1"]
+    )
+    def test_collocated_async_requires_request_parking(
+        self, monkeypatch, sglang_version
+    ):
+        import rlinf.config as cfg_mod
+
+        self._mock_cluster(monkeypatch)
+        monkeypatch.setattr(cfg_mod, "version", lambda name: sglang_version)
+        cfg = self._make_cfg()
+        if sglang_version in ("0.5.2", "0.5.4"):
+            with pytest.raises(ValueError, match="SGLang >= 0.5.12"):
+                cfg_mod.validate_searchr1_cfg(cfg)
+        else:
+            cfg_mod.validate_searchr1_cfg(cfg)
+
+    @pytest.mark.parametrize("sglang_version", ["0.5.2", "0.5.4"])
+    def test_synchronous_ppo_keeps_legacy_sglang_support(
+        self, monkeypatch, sglang_version
+    ):
+        import rlinf.config as cfg_mod
+
+        self._mock_cluster(monkeypatch)
+        monkeypatch.setattr(cfg_mod, "version", lambda name: sglang_version)
+        cfg_mod.validate_searchr1_cfg(self._make_cfg("train_qwen2.5_ppo"))
+
+    def test_clipped_critic_requires_values_before_updates(self, monkeypatch):
+        import rlinf.config as cfg_mod
+
+        self._mock_cluster(monkeypatch)
+        cfg = self._make_cfg()
+        cfg.algorithm.critic_loss_type = "critic"
+        with pytest.raises(ValueError, match="requires old values"):
+            cfg_mod.validate_searchr1_cfg(cfg)
+
+    def test_collocated_async_can_train_without_a_critic(self, monkeypatch):
+        import rlinf.config as cfg_mod
+
+        self._mock_cluster(monkeypatch)
+        monkeypatch.setattr(cfg_mod, "version", lambda name: "0.5.12.post1")
+        cfg = self._make_cfg()
+        cfg.critic.use_critic_model = False
+        del cfg.cluster.component_placement.critic
+        cfg.algorithm.adv_type = "grpo_dynamic"
+        cfg.algorithm.loss_type = "actor"
+        cfg.algorithm.group_size = 4
+        cfg_mod.validate_searchr1_cfg(cfg)
+
+    @pytest.mark.parametrize("loss_type", [None, "mse"])
+    def test_megatron_critic_defaults_old_configs_once(self, monkeypatch, loss_type):
+        import torch
+        from transformers import AutoConfig, Qwen2Config
+
+        import rlinf.config as cfg_mod
+
+        self._mock_cluster(monkeypatch)
+        cfg = self._make_cfg("train_qwen2.5_ppo")
+        if loss_type is None:
+            del cfg.algorithm.critic_loss_type
+        else:
+            cfg.algorithm.critic_loss_type = loss_type
+        hf_config = Qwen2Config(
+            architectures=["Qwen2ForCausalLM"],
+            hidden_size=16,
+            intermediate_size=32,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            num_hidden_layers=1,
+            vocab_size=32,
+            torch_dtype=torch.float16,
+        )
+        monkeypatch.setattr(
+            AutoConfig, "from_pretrained", lambda *args, **kwargs: hf_config
+        )
+        cfg_mod.validate_cfg(cfg)
+        assert cfg.algorithm.critic_loss_type == (loss_type or "critic")
 
 
 class TestSearchr1DisaggregatedValidation:
@@ -2261,8 +2359,11 @@ class TestSearchr1AsyncAdmissionCfg:
         ):
             return cfg_mod.validate_searchr1_cfg(cfg)
 
-    def test_collocated_placement_is_rejected(self):
-        """Async training requires the actor and rollout on separate GPUs."""
+    @pytest.mark.parametrize(
+        "offload_key", ["offload_weight", "offload_grad", "offload_optimizer"]
+    )
+    def test_collocated_placement_requires_offload(self, offload_key):
+        """Shared training must release actor memory before generation resumes."""
         import rlinf.config as cfg_mod
 
         placement = MagicMock()
@@ -2272,8 +2373,17 @@ class TestSearchr1AsyncAdmissionCfg:
         with mock.patch.object(
             cfg_mod, "ModelParallelComponentPlacement", return_value=placement
         ):
-            with pytest.raises(ValueError, match="disaggregated placement.*COLLOCATED"):
-                cfg_mod.validate_searchr1_cfg(self._make_cfg())
+            cfg = self._make_cfg(
+                **{
+                    f"actor.{key}": key != offload_key
+                    for key in ("offload_weight", "offload_grad", "offload_optimizer")
+                }
+            )
+            with pytest.raises(
+                ValueError,
+                match="requires actor weight, gradient and optimizer offload",
+            ):
+                cfg_mod.validate_searchr1_cfg(cfg)
 
     @pytest.mark.parametrize(
         ("key", "value"),
@@ -2288,6 +2398,17 @@ class TestSearchr1AsyncAdmissionCfg:
         with pytest.raises(ValueError, match="requires.{0,20}rollout_backend: sglang"):
             self._validate(self._make_cfg(**{key: value}))
 
+    def test_collocated_async_uses_the_rollout_dispatch_gate(self, monkeypatch):
+        import rlinf.config as cfg_mod
+
+        placement = SimpleNamespace(is_collocated=True, is_disaggregated=False)
+        monkeypatch.setattr(
+            cfg_mod, "ModelParallelComponentPlacement", lambda *args: placement
+        )
+        cfg = self._make_cfg(**{"session_server.enable": True})
+        with pytest.raises(ValueError, match="session_server.enable requires separate"):
+            cfg_mod.validate_searchr1_cfg(cfg)
+
     def test_defaults_are_derived(self):
         """Unset caps derive from engine capacity and batch size."""
         cfg = self._validate(self._make_cfg())
@@ -2295,6 +2416,38 @@ class TestSearchr1AsyncAdmissionCfg:
         assert cfg.rollout_buffer.max_inflight_groups == 77
         assert cfg.rollout_buffer.max_buffered_groups == 128
         assert cfg.rollout_buffer.max_dropped_groups_per_step == 640
+
+    @pytest.mark.parametrize(
+        "overrides, error",
+        [
+            (
+                {"algorithm.recompute_logprobs": True},
+                "original rollout behavior logprobs",
+            ),
+            ({"algorithm.clip_ratio_low": 1.0}, "0 <= clip_ratio_low < 1"),
+            ({"algorithm.clip_ratio_high": 0.0}, "positive finite clip_ratio_high"),
+            ({"algorithm.clip_ratio_high": None}, "positive finite clip_ratio_high"),
+        ],
+    )
+    def test_dis_rejects_invalid_settings_without_critic(self, overrides, error):
+        options = {
+            "algorithm.loss_type": "dis",
+            "algorithm.clip_ratio_low": 0.3,
+            "algorithm.clip_ratio_high": 5.0,
+        }
+        with pytest.raises(ValueError, match=error):
+            self._validate(self._make_cfg(**(options | overrides)))
+
+    def test_dis_accepts_the_actor_clip_default_without_critic(self):
+        self._validate(
+            self._make_cfg(
+                **{
+                    "algorithm.loss_type": "dis",
+                    "algorithm.ratio_clip_eps": 0.2,
+                    "algorithm.clip_ratio_low": None,
+                }
+            )
+        )
 
     def test_default_inflight_sums_over_instances_and_rounds_up(self):
         """The derivation sums instances and rounds up to whole groups."""

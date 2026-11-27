@@ -1,0 +1,26 @@
+defaults:
+  - train_qwen2.5_ppo
+  - _self_
+
+runner:
+  synchronous: false
+  async_mode: true
+  experiment_name: searchr1-sao-qwen2.5-3b-ins
+
+algorithm:
+  loss_type: dis
+  critic_loss_type: mse
+  clip_ratio_low: 0.3
+  clip_ratio_high: 5.0
+  adv_type: sao_gae
+  gae_lambda_alpha: 1.5
+
+agentloop:
+  task_name: searchr1
+
+rollout:
+  pause_mode: retract
+
+critic:
+  update_epochs: 2
+  compute_advantages_after_update: true

@@ -12,12 +12,11 @@ needs changing and you want to know which one and why.
 Turning It On
 -------------
 
-Asynchronous training is a runner switch on top of an agentic configuration,
-plus two requirements on how the job is deployed. The actor and the rollout
-must sit on separate GPUs, because both run at the same time, and the rollout
-must use the SGLang server backend, because the weight sync pauses and resumes
-generation through the server's HTTP routes. Starting from a synchronous
-Search-R1 configuration, these are the lines that change:
+Asynchronous training requires a Megatron actor and the SGLang server backend.
+Put actor and rollout on separate GPU sets to overlap generation and training,
+or on the same GPU set to retain unfinished trajectories while alternating
+between generation and training. Starting from a synchronous Search-R1
+configuration, the separate-GPU example changes these settings:
 
 .. code-block:: yaml
 
@@ -73,10 +72,27 @@ and ``rollout/buffer/admission_wait_buffer_full``. They show which of the two
 limits is holding generation back, and the sections below explain what to do
 about each.
 
+Share GPUs
+~~~~~~~~~~
+
+For a shared-GPU run, use SGLang 0.5.12 or later. Place actor and rollout
+on the same GPUs, enable ``actor.offload_weight``, ``actor.offload_grad``,
+and ``actor.offload_optimizer``, and set ``rollout.pause_mode: retract``.
+Use separate GPUs for the session server path.
+
+After the learner receives a full batch, rollout pauses generation and
+frees GPU memory. It keeps the tokens and log probabilities already generated
+for unfinished requests. Once training and weight sync finish, rollout
+processes the retained token prefixes with the updated weights and continues
+generation. Tool calls can finish during training.
+
+For SAO, place the critic on the same GPUs with the same offload settings
+and use TP=PP=CP=1. See :ref:`searchr1-sao` for setup and the update order.
+
 Why It Helps
 ------------
 
-To see what the limits are for, start with what asynchrony changes. In a
+The overlap measurements in this section use separate GPUs. In a
 synchronous agent run, the two expensive sides of the loop take turns being
 idle. While the actor trains on a batch of trajectories, the rollout engines
 have nothing to generate. When the actor is done, the engines fill up again,
@@ -92,10 +108,10 @@ it is ready for the next step.
 The measured effect is close to an ideal overlap. On the reference run (steps
 2–19, TensorBoard), the synchronous run's ``time/step`` of 278.6 s splits into
 ``time/rollout`` 181.9 + ``time/training`` 93.3 + ``time/sync_weights`` 1.4.
-The asynchronous run's ``time/step`` of 139.0 s splits into ``time/training``
-91.7 + ``time/wait_data`` 46.0 + ``time/sync_weights`` 1.3. Training takes
-almost the same time in both; what disappears is the time each side spent
-waiting for the other.
+The asynchronous run records 139.0 s per step, with 91.7 s of training and
+1.3 s of weight synchronization. The remaining 46.0 s includes
+``time/wait_data`` and other scheduling overhead. Training takes almost the same time in both runs;
+overlap reduces the time each side spends waiting for the other.
 
 How It Fits Together
 --------------------
@@ -263,9 +279,6 @@ rollout, giving the rollout more capacity or generating with a smaller model.
 Limitations
 -----------
 
-Asynchronous agentic RL runs only on the combination it was built for: a
-Megatron actor, the multi-turn agent loop, the SGLang server backend, and a
-disaggregated placement of actor and rollout. There is no off-policy
-correction: the rollout logprob is used directly as the PPO old logprob, so
-the staleness bounds described above are what keeps the training data close to
-the current policy.
+Asynchronous agentic RL uses a Megatron actor, the multi-turn agent loop, and
+the SGLang server backend. GRPO and SAO use the log probabilities recorded
+during rollout. SAO uses them for double-sided importance sampling.

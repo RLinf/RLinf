@@ -209,13 +209,61 @@ Search-R1 强化学习训练
 
       ``max_inflight_groups``、``max_buffered_groups``、``max_actor_accept_staleness`` 与 ``rollout.pause_mode``\ （retract、in_place、drain）的调优原理见 :doc:`异步 Agent RL </rst_source/guides/async_agentic>`。如需启用 Session Server，追加 ``session_server.enable=true``\ （要求见 :doc:`Session Server </rst_source/guides/session_server>`\ ）。
 
+      共用 GPU 时，参照 :ref:`searchr1-sao` 运行异步训练。
+
       .. dropdown:: 异步指标、断点续训与限制
 
          **核心指标：** 关注 ``rollout/buffer/inflight_groups``、``rollout/buffer/size``、``rollout/buffer/admission_wait_*``\ （在途上限与缓冲满等待比例）、``rollout/data_staleness/mean`` 与 ``rollout/buffer/dropped_groups``。
 
          **断点续训：** checkpoint 将 dataloader 进度保存在 ``data/data.pt``，恢复时跳过存档前已投放的 prompt（Qwen 默认配置实测跳过 192 个：在途与缓冲 128 个加预取 64 个）。
 
-         **限制：** 需配合 Megatron actor、多轮 agent loop、SGLang server 后端与分离式 placement 使用；直接使用 rollout logprob（``algorithm.recompute_logprobs: False``）；开启 ``reject_equal_reward`` 时需监控 ``dropped_groups``\ （``max_dropped_groups_per_step`` 默认为 10 × batch size）。
+         **双节点 GLM 配置的限制：** 需配合 Megatron actor、多轮 agent loop、SGLang server 后端与分离式 placement 使用；直接使用 rollout logprob（``algorithm.recompute_logprobs: False``）；开启 ``reject_equal_reward`` 时需监控 ``dropped_groups``\ （``max_dropped_groups_per_step`` 默认为 10 × batch size）。
+
+.. _searchr1-sao:
+
+在共享 GPU 上运行 SAO
+---------------------
+
+使用 ``train_qwen2.5_sao.yaml`` 在单台 8 卡机器上训练 Qwen2.5。此配置需要 SGLang 0.5.12 或更高版本，TP、PP 和 CP 均为 1。actor、critic 和 rollout 共用 GPU，learner 更新后可以继续生成未完成的轨迹。
+
+按 Qwen2.5-3B 标签页安装环境并下载模型和训练数据，再按本地检索服务标签页启动服务。在 SAO 继承的 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml`` 中填写模型、数据和检索服务地址：
+
+.. code-block:: yaml
+
+   rollout:
+     model:
+       model_path: ./Qwen2.5-3B-Instruct
+   data:
+     train_data_paths: ["./Search-R1-Data/train.jsonl"]
+   tools:
+     search:
+       server_addr: localhost:8000
+
+启动 SAO：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_sao
+
+每批只有一个 minibatch 时，SAO 先更新两次 critic，用更新后的 critic 计算 policy advantage，再更新一次 actor。训练直接使用 rollout 记录的 logprob（``algorithm.recompute_logprobs: false``），保留生成的完整回答（``agentloop.truncate_response: false``）。双侧重要性采样和按轨迹长度调整的 GAE 见 `SAO 论文 <https://arxiv.org/abs/2607.07508>`__\ 。
+
+学习率预热沿用 PPO 的设置，持续 10 次 critic optimizer 更新。actor 从第一批开始更新。本示例不包含离线 critic 预训练。
+
+通过 ``critic_update/<index>/critic/*`` 查看每次 critic 更新的指标。更新索引在每批中从 0 开始。
+
+对比 PPO 与 SAO
+~~~~~~~~~~~~~~~
+
+Qwen3-4B 的 Search-R1 实验比较了同步 PPO 与全参数 SAO。两组在同一台机器的 8 张 A100 80 GB GPU 上训练，均使用 BF16 精度。上下文上限为 16k，最多调用 5 轮工具，随机种子为 1234。每步使用 1024 条轨迹和一个 minibatch，共训练 150 步。PPO 每步更新一次 critic，SAO 更新两次。
+
+.. raw:: html
+
+   <div style="text-align: center;">
+     <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/qwen3_4b_searchr1_ppo_sao_reward.png" alt="Qwen3-4B Search-R1 训练 reward：同步 PPO 与异步 SAO" style="width: 100%; background-color: white;"/>
+     <p><em>训练集上的精确匹配（EM）奖励随训练步数和实际用时变化。浅色线为原始值，深色线为最近 10 步的均值。</em></p>
+   </div>
+
+最后 10 步的训练 EM 奖励均值分别为 PPO 31.06%、SAO 36.57%。两组耗时分别为 11.11 小时和 8.11 小时，包含 checkpoint 保存，不含初始化。这些指标均在训练集上测得，每组只使用一个随机种子。
 
 可视化与结果
 ------------

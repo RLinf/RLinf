@@ -209,13 +209,80 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       See :doc:`Async Agentic RL </rst_source/guides/async_agentic>` for tuning ``max_inflight_groups``, ``max_buffered_groups``, ``max_actor_accept_staleness``, and ``rollout.pause_mode`` (retract, in_place, drain). To run with the session server, add ``session_server.enable=true`` (see :doc:`Session Server </rst_source/guides/session_server>`).
 
+      See :ref:`searchr1-sao` for asynchronous training on shared GPUs.
+
       .. dropdown:: Async metrics, resume, and limitations
 
          **Metrics:** watch ``rollout/buffer/inflight_groups``, ``rollout/buffer/size``, ``rollout/buffer/admission_wait_*`` (inflight limit vs buffer full), ``rollout/data_staleness/mean``, and ``rollout/buffer/dropped_groups``.
 
          **Resume:** checkpoints save the dataloader position to ``data/data.pt`` and skip prompts already issued before saving (192 on the default Qwen config: 128 in-flight/buffered + 64 prefetched).
 
-         **Limitations:** requires Megatron actor, multi-turn agent loop, SGLang server backend, and disaggregated placement; uses rollout logprobs directly (``algorithm.recompute_logprobs: False``); monitor ``dropped_groups`` when enabling ``reject_equal_reward`` (``max_dropped_groups_per_step`` defaults to 10 × batch size).
+         **Limitations of the two-node GLM recipe:** requires a Megatron actor, multi-turn agent loop, SGLang server backend, and disaggregated placement; uses rollout logprobs directly (``algorithm.recompute_logprobs: False``); monitor ``dropped_groups`` when enabling ``reject_equal_reward`` (``max_dropped_groups_per_step`` defaults to 10 × batch size).
+
+.. _searchr1-sao:
+
+Run SAO on Shared GPUs
+----------------------
+
+Use ``train_qwen2.5_sao.yaml`` to train Qwen2.5 on one 8-GPU node with
+SGLang 0.5.12 or later and TP=PP=CP=1. The actor, critic, and rollout share
+the GPUs, and unfinished trajectories continue across learner updates.
+
+Follow Install and Download in the Qwen2.5-3B tab, then start the service
+from the Local Wiki Retriever tab. Set the model, data, and retriever paths
+in the inherited ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``:
+
+.. code-block:: yaml
+
+   rollout:
+     model:
+       model_path: ./Qwen2.5-3B-Instruct
+   data:
+     train_data_paths: ["./Search-R1-Data/train.jsonl"]
+   tools:
+     search:
+       server_addr: localhost:8000
+
+Launch SAO:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_sao
+
+With one minibatch per batch, SAO updates the critic twice, computes policy
+advantages with the updated critic, and updates the actor once. It uses the
+recorded rollout log probabilities (``algorithm.recompute_logprobs: false``)
+and keeps the generated responses (``agentloop.truncate_response: false``).
+See the `SAO paper <https://arxiv.org/abs/2607.07508>`__ for double-sided
+importance sampling and length-adaptive GAE.
+
+The recipe inherits PPO's learning rate warmup of 10 critic optimizer
+updates. Actor updates start with the first batch. Offline critic
+pretraining is outside this recipe.
+
+Monitor ``critic_update/<index>/critic/*`` for each critic update. The
+update index starts at 0 in each batch.
+
+Compare PPO and SAO
+~~~~~~~~~~~~~~~~~~~
+
+The Search-R1 experiment below compares synchronous PPO with full-parameter
+SAO on Qwen3-4B. Both runs used the same eight A100 80 GB GPUs, BF16, a 16k
+context limit, up to five tool turns, seed 1234, and 1024 trajectories per learner
+step. Each run completed 150 steps with one minibatch per step. PPO updated
+the critic once per step; SAO updated it twice.
+
+.. raw:: html
+
+   <div style="text-align: center;">
+     <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/qwen3_4b_searchr1_ppo_sao_reward.png" alt="Qwen3-4B Search-R1 training reward: synchronous PPO and asynchronous SAO" style="width: 100%; background-color: white;"/>
+     <p><em>Training exact-match (EM) reward by learner step and elapsed time. Faint lines show raw values. Darker lines show the mean over the latest 10 steps.</em></p>
+   </div>
+
+Over the last ten steps, mean training EM reward was 31.06% for PPO and
+36.57% for SAO. The runs took 11.11 and 8.11 hours, respectively, including
+checkpoint saves and excluding initialization. These are single-seed training
+measurements.
 
 Visualization and Results
 -------------------------

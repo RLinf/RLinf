@@ -12,16 +12,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from typing import Callable, Optional
 
 import torch
 
-from rlinf.algorithms.registry import register_policy_loss
+from rlinf.algorithms.registry import register_critic_loss, register_policy_loss
 from rlinf.algorithms.utils import apply_importance_sampling_correction, huber_loss
 from rlinf.utils.metric_utils import (
     compute_critic_explained_variance_stats,
 )
 from rlinf.utils.utils import masked_mean, masked_mean_ratio, masked_reduce
+
+
+@register_policy_loss("dis")
+def compute_dis_actor_loss(
+    logprobs: torch.Tensor,
+    old_logprobs: torch.Tensor,
+    advantages: torch.Tensor,
+    clip_ratio_low: float,
+    clip_ratio_high: float,
+    loss_mask: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """SAO score-function loss with detached, double-sided behavior weights."""
+    mask = (
+        torch.ones_like(logprobs, dtype=torch.bool)
+        if loss_mask is None
+        else loss_mask.bool()
+    )
+    delta = (logprobs.float() - old_logprobs.float()).detach()
+    keep = (
+        mask
+        & (delta > math.log1p(-clip_ratio_low))
+        & (delta < math.log1p(clip_ratio_high))
+    )
+    # Exponentiate only accepted ratios; padding and divergent tokens may be nonfinite.
+    ratios = torch.where(keep, delta, 0.0).exp().masked_fill(~keep, 0.0)
+    scores = torch.where(keep, logprobs.float(), 0.0)
+    weights = torch.where(keep, advantages.float().detach(), 0.0)
+    loss = -(ratios * weights * scores).sum() / mask.sum().clamp_min(1)
+    metrics = {
+        "actor/policy_loss": loss.detach(),
+        "actor/ratio": masked_mean(ratios, mask),
+        "actor/clip_fraction": masked_mean((~keep).float(), mask),
+        "actor/approx_kl": -masked_mean(
+            torch.where(mask & torch.isfinite(delta), delta, 0.0), mask
+        ),
+    }
+    return loss, metrics
 
 
 def compute_decoupled_ppo_actor_loss(
@@ -410,6 +449,22 @@ def compute_ppo_actor_loss(
     return policy_loss, metrics_data
 
 
+@register_critic_loss("mse")
+def compute_mse_critic_loss(
+    values: torch.Tensor,
+    returns: torch.Tensor,
+    loss_mask: torch.Tensor,
+    **kwargs,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Compute unclipped mean squared error on valid value targets."""
+    error = torch.where(loss_mask, values.float() - returns.float(), 0.0)
+    loss = error.square().sum() / loss_mask.sum().clamp_min(1)
+    metrics = {"critic/value_loss": loss.detach()}
+    metrics.update(compute_critic_explained_variance_stats(returns, values, loss_mask))
+    return loss, {key: value.detach() for key, value in metrics.items()}
+
+
+@register_critic_loss("critic")
 def compute_ppo_critic_loss(
     values: torch.Tensor,
     returns: torch.Tensor,
@@ -602,27 +657,17 @@ def compute_opd_actor_loss(
 
 
 @register_policy_loss("actor")
-def compute_grpo_actor_loss_fn(**kwargs) -> tuple[torch.Tensor, dict]:
-    """
-    Compute actor loss for Group Relative Policy Optimization (GRPO).
+def compute_ppo_actor_loss_fn(**kwargs) -> tuple[torch.Tensor, dict]:
+    """Compute the clipped PPO actor loss shared by PPO and GRPO.
 
-    This function implements the PPO-style actor loss with clipping for GRPO.
-    Adapted from https://github.com/huggingface/trl/blob/main/trl/trainer/ppotrainer.py#L1122
+    The advantage estimator is selected independently of the policy loss.
 
     Args:
-        log_prob (torch.Tensor): Current log probabilities
-        old_log_prob (torch.Tensor): Previous log probabilities
-        advantages (torch.Tensor): Advantage values of shape
-        clip_ratio_high (float): Upper clipping ratio for PPO
-        clip_ratio_low (float): Lower clipping ratio for PPO
-        loss_mask (Optional[torch.Tensor]): Mask tensor of shape to apply to the loss
+        **kwargs: Log probabilities, advantages, masks, and clipping parameters
+            forwarded to compute_ppo_actor_loss.
 
     Returns:
-        Tuple[torch.Tensor, Dict]: Policy gradient loss and metrics dictionary containing:
-            - actor/loss: Total actor loss
-            - actor/policy_loss: Policy gradient loss
-            - actor/clip_fraction: Fraction of clipped policy gradient loss
-            - actor/ppo_kl: Approximate KL divergence
+        The policy loss and actor metrics.
     """
     metrics_data = {}
     actor_loss, actor_metrics_data = compute_ppo_actor_loss(**kwargs)

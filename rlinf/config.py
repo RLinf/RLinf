@@ -19,12 +19,14 @@ import math
 import os
 from dataclasses import asdict
 from enum import Enum
+from importlib.metadata import version
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional
 
 import torch
 import torch.nn.functional as F
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
+from packaging.version import Version
 
 # Register built-in physical robots before parsing cluster hardware configs.
 import rlinf.robotics.robots  # noqa: F401
@@ -2361,17 +2363,17 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
 
 def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
     """Validate SearchR1 multi-agent training requirements before launch."""
-    expected_adv_type = (
-        "gae_dynamic"
+    expected_adv_types = (
+        ("gae_dynamic", "sao_gae")
         if OmegaConf.select(cfg, "critic.use_critic_model", default=False)
-        else "grpo_dynamic"
+        else ("grpo_dynamic",)
     )
     if (
         OmegaConf.select(cfg, "agentloop.is_dynamic_rollout_batch", default=False)
-        and cfg.algorithm.adv_type != expected_adv_type
+        and cfg.algorithm.adv_type not in expected_adv_types
     ):
         raise ValueError(
-            f"Multi-turn training requires algorithm.adv_type={expected_adv_type!r}, "
+            f"Multi-turn training requires algorithm.adv_type in {expected_adv_types!r}, "
             f"got {cfg.algorithm.adv_type!r}."
         )
     reward_cfg = cfg.get("reward", None)
@@ -2389,6 +2391,25 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             "SearchR1 with the FSDP multi-agent actor does not support "
             "algorithm.importance_sampling_fix=True."
         )
+    if cfg.algorithm.get("loss_type") == "dis":
+        if cfg.algorithm.recompute_logprobs:
+            raise ValueError("DIS requires the original rollout behavior logprobs.")
+        clip_eps = cfg.algorithm.get("ratio_clip_eps")
+        clip_low = cfg.algorithm.get("clip_ratio_low")
+        clip_high = cfg.algorithm.get("clip_ratio_high")
+        clip_low = clip_eps if clip_low is None else clip_low
+        clip_high = clip_eps if clip_high is None else clip_high
+        if (
+            clip_low is None
+            or clip_high is None
+            or not 0 <= clip_low < 1
+            or not 0 < clip_high < math.inf
+        ):
+            raise ValueError(
+                "DIS requires 0 <= clip_ratio_low < 1 and a positive finite "
+                f"clip_ratio_high after applying ratio_clip_eps; found {clip_low!r} "
+                f"and {clip_high!r}."
+            )
     expect_rollout_logprobs = not cfg.algorithm.recompute_logprobs
     if cfg.rollout.get("return_logprobs", False) != expect_rollout_logprobs:
         raise ValueError(
@@ -2427,8 +2448,44 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         )
 
     if cfg.critic.get("use_critic_model", False):
-        if not cfg.runner.get("synchronous", False):
-            raise ValueError("SearchR1 PPO requires runner.synchronous=True.")
+        async_mode = cfg.runner.get("async_mode", False)
+        if not async_mode and not cfg.runner.get("synchronous", False):
+            raise ValueError(
+                "SearchR1 PPO requires runner.synchronous=True or runner.async_mode=True."
+            )
+        with open_dict(cfg.critic):
+            cfg.critic.setdefault("update_epochs", 1)
+            cfg.critic.setdefault("compute_advantages_after_update", False)
+        from rlinf.algorithms.registry import get_critic_loss
+
+        get_critic_loss(cfg.algorithm.critic_loss_type)
+        if (
+            not isinstance(cfg.critic.update_epochs, int)
+            or cfg.critic.update_epochs < 1
+        ):
+            raise ValueError(
+                f"Expected a positive critic.update_epochs, found {cfg.critic.update_epochs!r}."
+            )
+        if cfg.algorithm.adv_type == "sao_gae":
+            with open_dict(cfg.algorithm):
+                cfg.algorithm.setdefault("gae_lambda_alpha", 1.5)
+            if cfg.algorithm.gae_lambda_alpha < 1:
+                raise ValueError("Length-adaptive GAE requires gae_lambda_alpha >= 1.")
+        if (
+            cfg.critic.compute_advantages_after_update
+            and cfg.algorithm.adv_type != "sao_gae"
+        ):
+            raise ValueError(
+                "Post-update value inference requires value-independent critic targets (sao_gae)."
+            )
+        if (
+            cfg.critic.compute_advantages_after_update
+            and cfg.algorithm.critic_loss_type == "critic"
+        ):
+            raise ValueError(
+                "algorithm.critic_loss_type=critic requires old values before critic "
+                "updates; use mse with critic.compute_advantages_after_update=True."
+            )
         if (
             cfg.actor.training_backend != "megatron"
             or cfg.critic.training_backend != "megatron"
@@ -2441,12 +2498,12 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             cfg.rollout.sglang = {}
         cfg.rollout.sglang.setdefault("backend_type", "server")
         if (
-            cfg.algorithm.adv_type != "gae_dynamic"
+            cfg.algorithm.adv_type not in ("gae_dynamic", "sao_gae")
             or cfg.algorithm.kl_beta != 0
             or cfg.algorithm.get("reinpp_kl_beta", 0) != 0
         ):
             raise ValueError(
-                "SearchR1 PPO requires gae_dynamic and zero KL reward/loss coefficients."
+                "SearchR1 actor/critic training requires its matching GAE and zero KL reward/loss coefficients."
             )
         if cfg.algorithm.group_size != 1:
             raise ValueError("SearchR1 PPO requires algorithm.group_size=1.")
@@ -2467,7 +2524,7 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
                 or cfg[role].model.get("context_parallel_size", 1) != 1
             ):
                 raise ValueError(
-                    "Synchronous SearchR1 PPO currently requires TP=PP=CP=1."
+                    "SearchR1 actor/critic training currently requires TP=PP=CP=1."
                 )
         if cfg.algorithm.get("importance_sampling_fix", False):
             raise ValueError(
@@ -2481,7 +2538,7 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         != component_placement.get_hardware_ranks("actor")
     ):
         raise ValueError(
-            "Synchronous SearchR1 PPO requires actor, critic, and rollout "
+            "SearchR1 actor/critic training requires actor, critic, and rollout "
             "to share the same GPUs."
         )
     if not component_placement.is_collocated:
@@ -2494,13 +2551,39 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
                 "placement unless actor.training_backend is megatron."
             )
     if cfg.runner.get("async_mode", False):
-        if not component_placement.is_disaggregated:
+        if not (
+            component_placement.is_disaggregated or component_placement.is_collocated
+        ):
             raise ValueError(
-                "SearchR1 async training requires the actor and the rollout "
-                "to be deployed on separate GPUs (disaggregated placement); "
-                "the current placement mode is "
+                "SearchR1 async training requires collocated or disaggregated placement, found "
                 f"{component_placement.placement_mode.name}."
             )
+        if cfg.actor.training_backend != "megatron":
+            raise ValueError(
+                "SearchR1 async training currently requires a Megatron actor."
+            )
+        if cfg.algorithm.recompute_logprobs:
+            raise ValueError(
+                "SearchR1 async training requires recompute_logprobs=False."
+            )
+        if component_placement.is_collocated:
+            if OmegaConf.select(cfg, "session_server.enable", default=False):
+                raise ValueError(
+                    "session_server.enable requires separate actor and rollout GPUs; "
+                    "collocated async training uses the rollout dispatch gate."
+                )
+            for role in (
+                ("actor", "critic")
+                if cfg.critic.get("use_critic_model", False)
+                else ("actor",)
+            ):
+                if not all(
+                    cfg[role].get(key, False)
+                    for key in ("offload_weight", "offload_grad", "offload_optimizer")
+                ):
+                    raise ValueError(
+                        f"Shared async training requires {role} weight, gradient and optimizer offload."
+                    )
         # Deliberately no setdefault for backend_type: this runs after
         # validate_sglang_cfg, and filling a default here would bypass its
         # mutual-exclusion check between serving_mode and the server backend.
@@ -2518,6 +2601,13 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
                 f"{rollout_backend!r} and rollout.sglang.backend_type="
                 f"{backend_type!r}."
             )
+        if component_placement.is_collocated:
+            sglang_version = version("sglang")
+            if Version(sglang_version) < Version("0.5.12"):
+                raise ValueError(
+                    "Collocated async training requires SGLang >= 0.5.12 for "
+                    f"request retraction and memory release; found {sglang_version}."
+                )
         if cfg.algorithm.get("staleness_threshold", None) is not None:
             raise ValueError(
                 f"algorithm.staleness_threshold is the embodied async "
@@ -2661,6 +2751,10 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             raise ValueError(
                 f"rollout.pause_mode must be one of in_place/retract/drain, "
                 f"found {cfg.rollout.pause_mode!r}."
+            )
+        if component_placement.is_collocated and cfg.rollout.pause_mode != "retract":
+            raise ValueError(
+                "Shared async training requires rollout.pause_mode=retract to release GPU memory without finishing all trajectories."
             )
         if cfg.data.get("rollout_batch_size", None) is not None:
             actor_dp_size = component_placement.actor_dp_size
@@ -3130,6 +3224,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.get("critic", None) is not None:
         if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":
+            with open_dict(cfg.algorithm):
+                cfg.algorithm.setdefault("critic_loss_type", "critic")
             cfg.critic = validate_megatron_cfg(cfg.critic)
             cfg.critic = validate_model_cfg_by_hf_config(
                 cfg.critic, cfg.rollout.model.model_path
