@@ -35,9 +35,10 @@ agentloop:
   max_actor_accept_staleness: 4
 
 rollout_buffer:
-  max_inflight_groups: 160
-  max_buffered_groups: 256
-  max_dropped_groups_per_step: 1280
+  # 16 groups x 8 trajectories = 128 concurrent sessions across 2 TP8 replicas (64/replica).
+  max_inflight_groups: 16
+  max_buffered_groups: 160
+  max_dropped_groups_per_step: 100000
 
 session_server:
   num_servers: 2
@@ -53,3 +54,7 @@ rollout:
   sglang:
     max_mamba_cache_size: 256
     torch_compile_max_bs: 64
+
+actor:
+  optim:
+    streamed_adamw: True

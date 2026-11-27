@@ -197,6 +197,15 @@ class FSDPModelManager:
             trust_remote_code=True,
             attn_implementation=resolve_attn_implementation(),
         )
+        fp32_modules = tuple(
+            cfg.fsdp_config.get("mixed_precision", {}).get("fp32_modules", None) or ()
+        )
+        vision_cfg = getattr(model_config, "vision_config", None)
+        if vision_cfg is not None and any(
+            target == "visual" or target.endswith(".visual") for target in fp32_modules
+        ):
+            # FlashAttention does not support FP32 inputs when visual runs in FP32.
+            vision_cfg._attn_implementation = "sdpa"
 
         if use_gptq:
             from auto_gptq import AutoGPTQForCausalLM  # type: ignore[import-not-found]

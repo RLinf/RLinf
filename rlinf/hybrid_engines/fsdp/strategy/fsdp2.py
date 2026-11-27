@@ -33,6 +33,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     apply_fsdp2_to_model,
     clip_grad_by_total_norm_,
     get_grad_norm,
+    install_fp32_residual_stream,
 )
 from rlinf.utils.utils import clear_memory
 
@@ -53,30 +54,40 @@ class FSDP2Strategy(FSDPStrategyBase):
         param_dtype = torch_dtype_from_precision(mixed_precision_config.param_dtype)
         reduce_dtype = torch_dtype_from_precision(mixed_precision_config.reduce_dtype)
         fp32_residual = bool(mixed_precision_config.get("fp32_residual", False))
-        # When fp32_residual=True, keep forward inputs uncast so the residual
-        # stream stays in fp32 across FSDP2 transformer layers (PEAR patch 0030).
+        # Keep forward inputs uncast so the residual stream stays in FP32
+        # across FSDP2 layers while layernorm outputs cast to param_dtype.
         cast_forward_inputs = (
             False
             if fp32_residual
             else mixed_precision_config.get("cast_forward_inputs", True)
         )
+        if fp32_residual:
+            install_fp32_residual_stream(
+                model,
+                compute_dtype=param_dtype or torch.bfloat16,
+            )
         fp32_modules = tuple(mixed_precision_config.get("fp32_modules", None) or ())
-        if fp32_modules and bool(
-            mixed_precision_config.get("fp32_modules_tf32", False)
-        ):
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+        if fp32_modules:
+            allow_tf32 = bool(mixed_precision_config.get("fp32_modules_tf32", False))
+            if hasattr(torch.backends, "cuda") and hasattr(
+                torch.backends.cuda, "matmul"
+            ):
+                torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+            if hasattr(torch.backends, "cudnn"):
+                torch.backends.cudnn.allow_tf32 = allow_tf32
 
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype,
             reduce_dtype=reduce_dtype,
             cast_forward_inputs=cast_forward_inputs,
         )
+        # FP32 modules always cast incoming bf16 activations (e.g. pixel_values)
+        # up to fp32 on entry, matching PEAR patch 0027.
         fp32_mp_policy = (
             MixedPrecisionPolicy(
                 param_dtype=torch.float32,
                 reduce_dtype=torch.float32,
-                cast_forward_inputs=cast_forward_inputs,
+                cast_forward_inputs=True,
             )
             if fp32_modules
             else None

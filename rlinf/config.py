@@ -2930,6 +2930,36 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             f"must both be >= 1, found {cfg.session_server.num_servers} and "
             f"{cfg.session_server.payload_shards}."
         )
+    if cfg.session_server.topk_log_probs < 0:
+        raise ValueError(
+            f"session_server.topk_log_probs must be >= 0, found "
+            f"{cfg.session_server.topk_log_probs}."
+        )
+    pear_cfg = OmegaConf.select(cfg, "algorithm.pear", default=None) or {}
+    if bool(pear_cfg.get("score_centering", False)):
+        loss_type = OmegaConf.select(cfg, "algorithm.loss_type", default=None)
+        if loss_type != "pear_reinforce":
+            raise ValueError(
+                "algorithm.pear.score_centering=True requires "
+                f"algorithm.loss_type='pear_reinforce', found {loss_type!r}."
+            )
+        if cfg.session_server.topk_log_probs <= 0:
+            raise ValueError(
+                "algorithm.pear.score_centering=True requires "
+                "session_server.topk_log_probs > 0, found "
+                f"{cfg.session_server.topk_log_probs}."
+            )
+        sampling_cfg = (
+            OmegaConf.select(cfg, "algorithm.sampling_params", default=None) or {}
+        )
+        top_p = float(sampling_cfg.get("top_p", 1.0))
+        top_k = int(sampling_cfg.get("top_k", -1))
+        if top_p != 1.0 or top_k != -1:
+            raise ValueError(
+                "algorithm.pear.score_centering=True requires full-support "
+                f"sampling (top_p=1.0 and top_k=-1), found top_p={top_p}, "
+                f"top_k={top_k}."
+            )
     component_placement = ModelParallelComponentPlacement(cfg, Cluster())
     if component_placement.rollout_num_model_instances == 1:
         logging.warning(

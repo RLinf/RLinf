@@ -14,7 +14,7 @@
 
 """The multi-turn actor batch shared by Megatron and FSDP."""
 
-from typing import TypeAlias, TypedDict
+from typing import Any, Optional, TypeAlias, TypedDict
 
 import torch
 
@@ -36,6 +36,9 @@ class DynamicActorBatch(TypedDict, total=False):
     rollout_logprobs: TokenRows
     recomputed_logprobs: TokenRows
     ref_logprobs: TokenRows
+    multi_modal_inputs: list[Optional[dict[str, Any]]]
+    rollout_topk_ids: TokenRows
+    rollout_topk_logprobs: TokenRows
     values: TokenRows
     returns: TokenRows
     advantages: TokenRows
@@ -72,11 +75,17 @@ def pad_actor_batch_rows(
         if key == "idx_to_traj":
             value.extend([0] * missing)
         elif isinstance(value, list):
-            for _ in range(missing):
-                row = value[0].new_zeros((1, *value[0].shape[1:]))
-                if key == "attention_mask":
-                    row.fill_(True)
-                value.append(row)
+            if not value or not torch.is_tensor(value[0]):
+                value.extend([None] * missing)
+            elif key in ("rollout_topk_ids", "rollout_topk_logprobs"):
+                for _ in range(missing):
+                    value.append(value[0].new_zeros((0, *value[0].shape[1:])))
+            else:
+                for _ in range(missing):
+                    row = value[0].new_zeros((1, *value[0].shape[1:]))
+                    if key == "attention_mask":
+                        row.fill_(True)
+                    value.append(row)
         else:
             batch[key] = torch.cat(
                 (value, value.new_zeros((missing, *value.shape[1:])))

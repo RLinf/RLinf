@@ -24,7 +24,6 @@ the writing side: the puts, their settlements, and the pending-byte budget.
 """
 
 import asyncio
-import math
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterator, Optional
 
@@ -421,14 +420,20 @@ def extract_topk_logprobs(
     if topk <= 0:
         return token_logprobs, None, None
 
+    if not output_ids:
+        return token_logprobs, [], []
+
     raw_topk = meta_info.get("output_top_logprobs")
     if not isinstance(raw_topk, list) or len(raw_topk) != len(output_ids):
-        return token_logprobs, None, None
+        got_len = len(raw_topk) if isinstance(raw_topk, list) else None
+        raise ValueError(
+            f"Expected {len(output_ids)} output_top_logprobs entries for "
+            f"topk={topk}, got {type(raw_topk).__name__} (len={got_len})."
+        )
 
-    placeholder_lp = -math.log(max(topk, 1))
     topk_ids: list[list[int]] = []
     topk_lps: list[list[float]] = []
-    for step_entries in raw_topk:
+    for step_idx, step_entries in enumerate(raw_topk):
         step_ids: list[int] = []
         step_lps: list[float] = []
         if isinstance(step_entries, list):
@@ -442,9 +447,11 @@ def extract_topk_logprobs(
                     continue
                 step_ids.append(tid)
                 step_lps.append(lp)
-        while len(step_ids) < topk:
-            step_ids.append(len(step_ids))
-            step_lps.append(placeholder_lp)
+        if len(step_ids) < topk:
+            raise ValueError(
+                f"Token {step_idx} returned {len(step_ids)} output_top_logprobs "
+                f"entries, expected {topk}."
+            )
         topk_ids.append(step_ids)
         topk_lps.append(step_lps)
     return token_logprobs, topk_ids, topk_lps

@@ -57,6 +57,7 @@ data:
   # 8 groups x 8 trajectories = 64 trajectories per step (1 group per actor DP rank).
   rollout_batch_size: 8
   val_rollout_batch_size: null
+  pixel_dtype: "bf16"
   num_workers: 0
   shuffle: True
   seed: 42
@@ -89,7 +90,7 @@ algorithm:
       # DAPO equal-reward group filtering in RolloutBufferWorker.
       reject_equal_reward: True
   pear:
-    score_centering: False
+    score_centering: True
     global_token_mean: True
   sampling_params:
     do_sample: True
@@ -104,15 +105,16 @@ agentloop:
   group_name: "AgentLoopGroup"
   task_name: "embodied_vlm"
   is_dynamic_rollout_batch: True
-  max_turns: 16
+  max_turns: 300
   tokens_per_image_estimate: 256
   print_outputs: False
   max_actor_accept_staleness: 4
 
 rollout_buffer:
-  max_inflight_groups: 12
+  # 6 groups x 8 trajectories = 48 concurrent sessions on 1 TP8 replica (32 running slots).
+  max_inflight_groups: 6
   max_buffered_groups: 16
-  max_dropped_groups_per_step: 80
+  max_dropped_groups_per_step: 10000
 
 session_server:
   enable: True
@@ -121,7 +123,7 @@ session_server:
   merge_continuous_turns: True
   engine_streaming_session: True
   keep_sessions_on_weight_sync: True
-  topk_log_probs: 0
+  topk_log_probs: 32
   generate_timeout_s: 1800.0
   payload_put_timeout_s: 300.0
   max_pending_payload_bytes: 2147483648
@@ -130,10 +132,10 @@ tools:
   embodied_env:
     camera_height: 512
     camera_width: 512
-    reset_gripper_open: False
+    reset_gripper_open: True
     num_steps_wait: 10
     max_concurrent_envs: 64
-    seed: 42
+    seed: 7
 
 rollout:
   group_name: "RolloutGroup"
@@ -166,7 +168,7 @@ rollout:
     torch_compile_max_bs: 32
     reasoning_effort: xhigh
     response_budget: 160000
-    fp32_modules: ["visual", "A_log", "lm_head"]
+    fp32_modules: ["visual", "A_log"]
   router:
     type: sglang
     policy: manual
@@ -216,9 +218,9 @@ actor:
   optim:
     lr: 1.0e-6
     adam_beta1: 0.9
-    adam_beta2: 0.95
+    adam_beta2: 0.999
     adam_eps: 1.0e-8
-    weight_decay: 0.0
+    weight_decay: 0.01
     clip_grad: 1.0
   fsdp_config:
     strategy: "fsdp2"

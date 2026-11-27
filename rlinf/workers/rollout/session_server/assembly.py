@@ -51,6 +51,7 @@ def _assemble_multimodal_trajectory(
     return_logprobs: bool,
     processor: Any,
     response_budget: Optional[int],
+    pixel_dtype: Optional[str] = None,
 ) -> dict[str, Any]:
     """Fold one multimodal streaming trajectory into a single episode sequence."""
     assert processor is not None, (
@@ -65,10 +66,16 @@ def _assemble_multimodal_trajectory(
     # turns that were already generated and kept are never dropped at assembly.
     budget = int(response_budget) if response_budget is not None else 10**9
     episode = IncrementalEpisodeTokens(response_budget=budget)
-    has_topk = all(
+    topk_flags = [
         part.topk_ids is not None and part.topk_logprobs is not None
         for part in trained_turns
-    )
+    ]
+    if any(topk_flags) and not all(topk_flags):
+        raise ValueError(
+            f"group {group_id} trajectory {traj_index} has inconsistent "
+            "top-K logprobs across turns"
+        )
+    has_topk = bool(trained_turns) and all(topk_flags)
     v_starts: list[int] = []
     v_ends: list[int] = []
     turn_is_end = False
@@ -158,12 +165,20 @@ def _assemble_multimodal_trajectory(
             if 0 <= offset < resp_len:
                 seq_logprobs[offset] = float(lp)
 
+    pixels = (
+        torch.cat(episode.pixel_chunks, dim=0)
+        if len(episode.pixel_chunks) > 1
+        else episode.pixel_chunks[0].clone()
+    )
+    if pixel_dtype is not None:
+        from rlinf.config import torch_dtype_from_precision
+
+        target_dtype = torch_dtype_from_precision(pixel_dtype)
+        if target_dtype is not None:
+            pixels = pixels.to(dtype=target_dtype)
+
     mm_inputs: dict[str, Any] = {
-        "pixel_values": (
-            torch.cat(episode.pixel_chunks, dim=0)
-            if len(episode.pixel_chunks) > 1
-            else episode.pixel_chunks[0].clone()
-        ),
+        "pixel_values": pixels,
         "image_grid_thw": (
             torch.cat(episode.grid_chunks, dim=0)
             if len(episode.grid_chunks) > 1
@@ -230,9 +245,15 @@ def _merge_token_id_runs(
                 f"{group_id} has no logprobs but the result must carry them"
             )
             seq_lps = [float(x) for x in first.logprobs[:first_kept]]
-        has_topk = all(
+        topk_flags = [
             p.topk_ids is not None and p.topk_logprobs is not None for p in run
-        )
+        ]
+        if any(topk_flags) and not all(topk_flags):
+            raise ValueError(
+                f"group {group_id} trajectory {traj_index} has inconsistent "
+                "top-K logprobs across continuous turns"
+            )
+        has_topk = all(topk_flags)
         topk_ids: Optional[list[list[int]]] = (
             list(first.topk_ids[:first_kept]) if has_topk else None
         )
@@ -317,6 +338,7 @@ def assemble_group_payload(
     merge_continuous_turns: bool = False,
     processor: Any = None,
     response_budget: Optional[int] = None,
+    pixel_dtype: Optional[str] = None,
 ) -> DynamicRolloutResult:
     """Assemble one group's parts into a `DynamicRolloutResult`.
 
@@ -428,6 +450,7 @@ def assemble_group_payload(
                         return_logprobs,
                         processor,
                         response_budget,
+                        pixel_dtype=pixel_dtype,
                     )
                 ]
             else:
@@ -454,6 +477,25 @@ def assemble_group_payload(
                     # episode, take the final turn's value for the episode.
                     extra_fields_train.setdefault(name, []).append(values[-1])
             for seq in merged_seqs:
+                seq_has_topk = (
+                    seq["topk_ids"] is not None and seq["topk_logprobs"] is not None
+                )
+                if seq_has_topk:
+                    if rollout_topk_ids is None:
+                        if idx_to_traj:
+                            raise ValueError(
+                                f"group {payload.group_id} has inconsistent "
+                                "top-K logprobs across trajectories"
+                            )
+                        rollout_topk_ids = []
+                        rollout_topk_logprobs = []
+                    rollout_topk_ids.append(seq["topk_ids"])
+                    rollout_topk_logprobs.append(seq["topk_logprobs"])
+                elif rollout_topk_ids is not None:
+                    raise ValueError(
+                        f"group {payload.group_id} trajectory {traj_index} is "
+                        "missing top-K logprobs present on earlier trajectories"
+                    )
                 idx_to_traj.append(traj_index)
                 input_ids.append(seq["input_ids"])
                 prompt_lengths.append(seq["prompt_length"])
@@ -463,12 +505,6 @@ def assemble_group_payload(
                     rollout_logprobs.append(seq["rollout_logprobs"])
                 if multi_modal_inputs is not None:
                     multi_modal_inputs.append(seq["multi_modal_inputs"])
-                if seq["topk_ids"] is not None and seq["topk_logprobs"] is not None:
-                    if rollout_topk_ids is None:
-                        rollout_topk_ids = []
-                        rollout_topk_logprobs = []
-                    rollout_topk_ids.append(seq["topk_ids"])
-                    rollout_topk_logprobs.append(seq["topk_logprobs"])
                 is_end.append(seq["is_end"])
                 rewards.append(seq["reward"])
                 version_start.append(seq["version_start"])

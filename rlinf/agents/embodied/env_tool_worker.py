@@ -21,6 +21,7 @@ import base64
 import io
 import os
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -58,9 +59,9 @@ class LiberoEpisodeBackend:
         *,
         camera_height: int = 512,
         camera_width: int = 512,
-        reset_gripper_open: bool = False,
+        reset_gripper_open: bool = True,
         num_steps_wait: Optional[int] = None,
-        seed: int = 0,
+        seed: int = 7,
     ) -> None:
         self._spec = dict(spec)
         self._camera_height = int(camera_height)
@@ -72,6 +73,44 @@ class LiberoEpisodeBackend:
         self._remaining_native_budget = 0
         self._done = False
         self._instruction = ""
+        self._render_cache: dict[tuple[int, int, bool], Any] = {}
+
+    def _noop_render(
+        self,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        *,
+        camera_name: Optional[str] = None,
+        depth: bool = False,
+        mode: str = "offscreen",
+        device_id: int = -1,
+        segmentation: bool = False,
+    ) -> Any:
+        """Cached render stub that skips offscreen rendering on intermediate steps."""
+        del camera_name, mode, device_id, segmentation
+        import numpy as np
+
+        h, w = height or 1, width or 1
+        key = (h, w, depth)
+        result = self._render_cache.get(key)
+        if result is None:
+            frame = np.zeros((h, w, 3), dtype=np.uint8)
+            result = (frame, np.zeros((h, w), dtype=np.float32)) if depth else frame
+            self._render_cache[key] = result
+        return result
+
+    @contextmanager
+    def _no_render(self):
+        """Suppress camera renders inside the block; proprioception stays live."""
+        from rlinf.envs.sim.libero.vlm_controller import _robosuite_env
+
+        sim = _robosuite_env(self._env).sim
+        render = sim.render
+        sim.render = self._noop_render
+        try:
+            yield
+        finally:
+            sim.render = render
 
     def open(self) -> dict[str, Any]:
         """Create, reset, and settle the LIBERO episode; return Turn 0 obs."""
@@ -86,7 +125,7 @@ class LiberoEpisodeBackend:
             get_libero_image,
             get_libero_wrist_image,
         )
-        from rlinf.envs.sim.libero.vlm_controller import observe_state
+        from rlinf.envs.sim.libero.vlm_controller import _robosuite_env, observe_state
 
         _init_libero()
         import libero.libero as l_base
@@ -106,6 +145,7 @@ class LiberoEpisodeBackend:
             bddl_file_name=bddl_path,
             camera_heights=self._camera_height,
             camera_widths=self._camera_width,
+            hard_reset=False,
         )
         self._env.seed(self._seed)
         self._env.reset()
@@ -113,12 +153,13 @@ class LiberoEpisodeBackend:
         self._env.set_init_state(init_states[trial_id])
 
         wait_steps = reset_wait_steps(True, self._num_steps_wait)
-        raw_obs = None
-        for _ in range(wait_steps):
-            zero_action = np.zeros(7, dtype=np.float64)
-            if self._reset_gripper_open:
-                zero_action[-1] = -1.0
-            raw_obs, _reward, _done, _info = self._env.step(zero_action)
+        zero_action = np.zeros(7, dtype=np.float64)
+        if self._reset_gripper_open:
+            zero_action[-1] = -1.0
+        with self._no_render():
+            for _ in range(wait_steps):
+                self._env.step(zero_action)
+        raw_obs = _robosuite_env(self._env)._get_observations(force_update=True)
 
         source_suite = str(self._spec.get("source_suite", suite_name))
         self._remaining_native_budget = native_step_budget(source_suite)
@@ -144,7 +185,7 @@ class LiberoEpisodeBackend:
             get_libero_image,
             get_libero_wrist_image,
         )
-        from rlinf.envs.sim.libero.vlm_controller import execute_action
+        from rlinf.envs.sim.libero.vlm_controller import _robosuite_env, execute_action
 
         if self._env is None or self._done:
             return {
@@ -158,19 +199,20 @@ class LiberoEpisodeBackend:
                 "remaining_native_budget": self._remaining_native_budget,
             }
 
-        result = execute_action(
-            self._env,
-            action,
-            native_budget=self._remaining_native_budget,
-        )
+        with self._no_render():
+            result = execute_action(
+                self._env,
+                action,
+                native_budget=self._remaining_native_budget,
+            )
         self._remaining_native_budget = max(
             self._remaining_native_budget - int(result["native_steps"]), 0
         )
         done = bool(result["done"]) or self._remaining_native_budget <= 0
         self._done = done
-        raw_obs = result.get("observation")
         image_data = None
-        if not done and raw_obs is not None:
+        if not done:
+            raw_obs = _robosuite_env(self._env)._get_observations(force_update=True)
             image_data = [
                 encode_rgb_to_png_b64(get_libero_image(raw_obs)),
                 encode_rgb_to_png_b64(get_libero_wrist_image(raw_obs)),
@@ -191,6 +233,7 @@ class LiberoEpisodeBackend:
         env = self._env
         self._env = None
         self._done = True
+        self._render_cache.clear()
         if env is not None:
             try:
                 env.close()
@@ -233,9 +276,9 @@ class EmbodiedEnvToolWorker(ToolWorker):
             embodied_cfg = OmegaConf.create({})
         self._camera_height = int(embodied_cfg.get("camera_height", 512))
         self._camera_width = int(embodied_cfg.get("camera_width", 512))
-        self._reset_gripper_open = bool(embodied_cfg.get("reset_gripper_open", False))
+        self._reset_gripper_open = bool(embodied_cfg.get("reset_gripper_open", True))
         self._num_steps_wait = embodied_cfg.get("num_steps_wait", None)
-        self._seed = int(embodied_cfg.get("seed", cfg.get("seed", 0)))
+        self._seed = int(embodied_cfg.get("seed", cfg.get("seed", 7)))
         self._max_concurrent_envs = int(embodied_cfg.get("max_concurrent_envs", 32))
         self._backend_factory = backend_factory
 

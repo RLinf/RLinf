@@ -14,7 +14,7 @@ Train a reasoning VLM end-to-end on multi-turn tabletop manipulation tasks from 
    .. grid-item-card:: Environments
       :text-align: center
 
-      LIBERO (``libero_gso``, ``libero_10``) · RoboDojo schema
+      LIBERO (``libero_gso``, ``libero_all``) · RoboDojo schema
 
    .. grid-item-card:: Algorithms
       :text-align: center
@@ -58,15 +58,19 @@ Tasks
    * - LIBERO
      - ``libero_gso`` (Goal, Spatial, Object)
      - ``libero_gso_grpo_pear_sglang.yaml``
-     - Stage 1 default (2 nodes, 16 GPUs, 8 groups/step, 160k budget, ``max_steps: 2`` quick check)
+     - Stage 1 default (2 nodes, 16 GPUs, 8 groups/step, 160k budget, top-K score centering, ``max_steps: 2`` quick check)
+   * - LIBERO
+     - ``libero_spatial`` (Spatial)
+     - ``libero_spatial_grpo_pear_sglang_a100_4node.yaml``
+     - Stage 1 80 GB A100 convergence setup (4 nodes, 1 actor + 3 rollout nodes with 6 TP4 replicas, 32 groups/step, 32k context, ``reasoning_effort: low``)
    * - LIBERO
      - ``libero_gso`` (Goal, Spatial, Object)
      - ``libero_gso_grpo_pear_sglang_paper.yaml``
      - Stage 1 paper scale (4 nodes, 32 GPUs, 128 groups/step, ``max_turns: 300``, ``max_steps: 1000``)
    * - LIBERO
-     - ``libero_10`` (Long)
+     - ``libero_all`` (Goal, Spatial, Object, Long)
      - ``libero_10_grpo_pear_stage2.yaml``
-     - Stage 2 long-horizon training (262,144 token budget, ``max_turns: 64``)
+     - Stage 2 long-horizon training (262,144 token budget, ``max_turns: 520``)
    * - LIBERO / RoboDojo
      - Mixed multi-embodiment
      - ``pear_stage3_libero_robodojo.yaml``
@@ -131,6 +135,9 @@ Start a multi-node Ray cluster before launching (2 nodes for the default and Sta
          * - 2-node default (16 GPUs)
            - ``libero_gso_grpo_pear_sglang.yaml``
            - ``cluster.num_nodes: 2``, ``max_steps: 2`` quick check
+         * - 4-node A100 convergence (32 × 80 GB)
+           - ``libero_spatial_grpo_pear_sglang_a100_4node.yaml``
+           - ``cluster.num_nodes: 4``, 6 TP4 replicas, 32 groups/step, ``reasoning_effort: low``
          * - 4-node paper scale (32 GPUs)
            - ``libero_gso_grpo_pear_sglang_paper.yaml``
            - ``cluster.num_nodes: 4``, 128 groups/step, ``max_steps: 1000``
@@ -179,9 +186,9 @@ Start a multi-node Ray cluster before launching (2 nodes for the default and Sta
             * - SGLang and FSDP2 memory
               - ``rollout.sglang.attention_backend``, ``rollout.sglang.max_mamba_cache_size``, ``actor.fsdp_config.enable_gradient_accumulation``
               - Keep ``attention_backend: null``, ``max_mamba_cache_size: 256``, and ``enable_gradient_accumulation: False`` on 80 GB GPUs.
-            * - Filtering and Stage 3
+            * - Filtering and score centering
               - ``algorithm.down_sampling.down_sampling_config.reject_equal_reward``, ``algorithm.pear.score_centering``, ``session_server.topk_log_probs``
-              - Drop zero-variance groups under DAPO; enable top-K score centering for Stage 3.
+              - Drop zero-variance groups under DAPO; keep ``score_centering: True`` and ``topk_log_probs: 32`` enabled across all stages.
 
    .. tab-item:: Stage 2 & Stage 3
       :sync: pear-stage23
@@ -199,14 +206,14 @@ Start a multi-node Ray cluster before launching (2 nodes for the default and Sta
          * - Setting
            - Config (``examples/embodiment/config/``)
            - Notes
-         * - Stage 2 (LIBERO-10 Long)
+         * - Stage 2 (LIBERO-All)
            - ``libero_10_grpo_pear_stage2.yaml``
-           - ``cluster.num_nodes: 2``, 262,144 token budget, ``max_turns: 64``
+           - ``cluster.num_nodes: 2``, 262,144 token budget, ``max_turns: 520``
          * - Stage 3 (Mixed RoboDojo)
            - ``pear_stage3_libero_robodojo.yaml``
            - ``cluster.num_nodes: 2``, ``score_centering: True``, ``topk_log_probs: 32``
 
-      Launch Stage 2 on ``libero_10`` (2 nodes, 16 GPUs) from the head node:
+      Launch Stage 2 on ``libero_all`` (2 nodes, 16 GPUs) from the head node:
 
       .. code-block:: bash
 

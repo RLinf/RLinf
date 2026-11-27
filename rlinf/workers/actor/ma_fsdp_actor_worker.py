@@ -121,6 +121,12 @@ class MAFSDPActor(FSDPActor):
         self._use_fp32_head = bool(self.cfg.actor.get("use_fp32_head", is_pear))
         self._global_token_mean = bool(pear_cfg.get("global_token_mean", is_pear))
         self._current_global_valid_tokens: Optional[float] = None
+        if self._sp_size > 1:
+            raise NotImplementedError(
+                "MAFSDPActor does not support actor.fsdp_config.ulysses_sp_size > 1 "
+                f"(got {self._sp_size}): Qwen3.8 hybrid Gated DeltaNet + "
+                "FullAttention requires sequence-parallel kernels."
+            )
 
     def _processor_or_load(self) -> Any:
         if self._processor is None:
@@ -164,12 +170,14 @@ class MAFSDPActor(FSDPActor):
         response_budget = OmegaConf.select(
             self.cfg, "rollout.sglang.response_budget", default=None
         )
+        pixel_dtype = OmegaConf.select(self.cfg, "data.pixel_dtype", default=None)
         result = assemble_group_payload(
             payload,
             not self.cfg.algorithm.recompute_logprobs,
             merge_continuous_turns=merge_turns,
             processor=processor,
             response_budget=response_budget,
+            pixel_dtype=pixel_dtype,
         )
         result.group_id = delivery.group_id
         result.task_name = delivery.task_name
@@ -254,10 +262,14 @@ class MAFSDPActor(FSDPActor):
         idx_starts, idx_ends = [0] * len(rows), lengths
         multi_modal_inputs = {}
         if "multi_modal_inputs" in m_batch:
-            for key in m_batch["multi_modal_inputs"][0]:
-                multi_modal_inputs[key] = torch.cat(
-                    [inputs[key] for inputs in m_batch["multi_modal_inputs"]], dim=0
-                ).to(device)
+            valid_mm = [
+                inputs for inputs in m_batch["multi_modal_inputs"] if inputs is not None
+            ]
+            if valid_mm:
+                for key in valid_mm[0]:
+                    multi_modal_inputs[key] = torch.cat(
+                        [inputs[key] for inputs in valid_mm], dim=0
+                    ).to(device)
         if self.enable_dynamic_batch_size:
             input_ids, position_ids, attention_mask = pack_fsdp_input(
                 rows,
@@ -523,6 +535,12 @@ class MAFSDPActor(FSDPActor):
             and hasattr(self.model, "get_output_embeddings")
             and self.model.get_output_embeddings() is not None
         )
+        if self._pear_score_centering and not can_use_fp32_head:
+            raise RuntimeError(
+                "algorithm.pear.score_centering=True requires the chunked FP32 "
+                "LM head path (actor.use_fp32_head=True on a model exposing "
+                ".model and get_output_embeddings())."
+            )
         train_head_rows: Optional[list[torch.Tensor]] = None
         if can_use_fp32_head:
             logprobs, entropy, train_head_rows = self._forward_chunked_fp32_head(
@@ -578,11 +596,15 @@ class MAFSDPActor(FSDPActor):
         clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
 
         extra_loss_kwargs: dict[str, Any] = {}
-        if (
-            self._pear_score_centering
-            and train_head_rows is not None
-            and raw_topk_logprobs is not None
-        ):
+        if self._pear_score_centering:
+            if train_head_rows is None or raw_topk_logprobs is None:
+                raise RuntimeError(
+                    "algorithm.pear.score_centering=True requires "
+                    "rollout_topk_ids and rollout_topk_logprobs on every "
+                    "training micro-batch; got "
+                    f"train_head_rows={'present' if train_head_rows is not None else 'None'}, "
+                    f"rollout_topk_logprobs={'present' if raw_topk_logprobs is not None else 'None'}."
+                )
             from rlinf.algorithms.pear_score_centering import (
                 score_centering_correction,
             )
@@ -594,8 +616,18 @@ class MAFSDPActor(FSDPActor):
                 zip(train_head_rows, raw_topk_logprobs)
             ):
                 resp_pos = loss_mask[row_idx].nonzero(as_tuple=False).flatten()
-                if resp_pos.numel() == 0 or train_head.shape[0] != resp_pos.numel():
+                if resp_pos.numel() == 0:
                     continue
+                if (
+                    train_head.shape[0] != resp_pos.numel()
+                    or sampler_head.shape[0] != resp_pos.numel()
+                ):
+                    raise ValueError(
+                        f"Score centering top-K head length mismatch on row {row_idx}: "
+                        f"train_head={train_head.shape[0]}, "
+                        f"sampler_head={sampler_head.shape[0]}, "
+                        f"expected response tokens={resp_pos.numel()}."
+                    )
                 corr, s_mass, t_mass = score_centering_correction(
                     train_head,
                     sampler_head.to(device=device, dtype=torch.float32),

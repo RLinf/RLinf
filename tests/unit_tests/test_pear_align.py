@@ -26,18 +26,12 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from rlinf.algorithms.pear_objective import (
-    compact_episode_sequence_batch,
-    count_valid_sequence_tokens,
-    dapo_group_mask,
-    fill_dapo_groups,
-    keep_last_valid_step,
-    pear_reinforce_loss,
-)
+from rlinf.algorithms.pear_objective import pear_reinforce_loss
 from rlinf.envs.sim.libero.utils import _aggregated_libero_benchmark
 from rlinf.models.embodiment.qwen_vlm.conversation import (
     IncrementalEpisodeTokens,
     assistant_positions,
+    render_incremental_user_delta,
 )
 from rlinf.models.embodiment.qwen_vlm.protocol import (
     LIBERO_SCHEMA,
@@ -152,35 +146,56 @@ def test_gso_benchmark_keeps_each_suite_budget():
     ]
 
 
-def test_one_episode_then_two_optimizer_steps():
+def test_assistant_positions_and_incremental_user_delta_preserve_newline():
     sequence = [1, 2, 10, 11, 3, 4, 20, 21]
     assert assistant_positions(sequence, [[10, 11], [20, 21]]) == [2, 3, 6, 7]
-    loss_mask = torch.tensor([[[1.0], [1.0]], [[1.0], [0.0]], [[0.0], [0.0]]])
-    kept = keep_last_valid_step(loss_mask)
-    assert kept[:, 0, 0].tolist() == [0.0, 1.0, 0.0]
-    assert kept[:, 1, 0].tolist() == [1.0, 0.0, 0.0]
 
+    class _ChatMLProcessor:
+        eos_token = "<|im_end|>"
 
-def test_dapo_drops_constant_groups_and_fills_to_target():
-    rewards = torch.tensor(
-        [
-            [[0.0], [0.0], [1.0], [1.0], [0.0], [1.0]],
-        ]
+        def apply_chat_template(
+            self, messages, tokenize=False, add_generation_prompt=False, **kwargs
+        ):
+            del tokenize, kwargs
+            parts = []
+            for msg in messages:
+                parts.append(f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n")
+            if add_generation_prompt:
+                parts.append("<|im_start|>assistant\n<think>\n")
+            return "".join(parts)
+
+    processor = _ChatMLProcessor()
+    user_msg = {"role": "user", "content": "OBS_TURN_1"}
+    full_delta, no_eos_delta = render_incremental_user_delta(processor, user_msg, {})
+    assert full_delta == (
+        "<|im_end|>\n<|im_start|>user\nOBS_TURN_1<|im_end|>\n"
+        "<|im_start|>assistant\n<think>\n"
     )
-    keep, metrics = dapo_group_mask(rewards, group_size=2)
-    assert keep.tolist() == [False, False, False, False, True, True]
-    assert metrics["dapo/kept_groups"] == 1.0
-    assert metrics["dapo/dropped_groups"] == 2.0
-
-    batches = iter(
-        [
-            torch.tensor([[0.0, 0.0], [1.0, 1.0]]),
-            torch.tensor([[0.0, 1.0], [1.0, 1.0]]),
-            torch.tensor([[1.0, 0.0]]),
-        ]
+    assert no_eos_delta == (
+        "\n<|im_start|>user\nOBS_TURN_1<|im_end|>\n<|im_start|>assistant\n<think>\n"
     )
-    filled = fill_dapo_groups(2, 2, lambda: next(batches), max_batches=3)
-    assert filled.tolist() == [[0.0, 1.0], [1.0, 0.0]]
+    expected_full = processor.apply_chat_template(
+        [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "U0"},
+            {"role": "assistant", "content": "<think>\nA0"},
+            user_msg,
+        ],
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    turn0 = processor.apply_chat_template(
+        [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "U0"},
+        ],
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    # Sampler emitted <|im_end|> at the end of turn 0.
+    assert turn0 + "A0<|im_end|>" + no_eos_delta == expected_full
+    # Sampler stopped without emitting <|im_end|>.
+    assert turn0 + "A0" + full_delta == expected_full
 
 
 def test_chunked_head_matches_the_full_logits_and_spans_chunks():
@@ -248,45 +263,15 @@ def test_user_content_includes_camera_labels_for_libero_and_robodojo():
     ]
 
 
-def test_compact_episode_sequence_batch_and_global_token_mean():
-    batch = {
-        "loss_mask": torch.tensor([[[0.0], [1.0]], [[0.0], [0.0]], [[1.0], [0.0]]]),
-        "loss_mask_sum": torch.ones(3, 2, 1),
-        "rewards": torch.tensor([[[0.0], [1.0]], [[0.0], [0.0]], [[1.0], [0.0]]]),
-        "dones": torch.tensor(
-            [[[0.0], [0.0]], [[0.0], [1.0]], [[0.0], [1.0]], [[1.0], [1.0]]]
-        ),
-        "prev_logprobs": torch.arange(3 * 2 * 4, dtype=torch.float32).view(3, 2, 4),
-        "forward_inputs": {
-            "input_ids": torch.arange(3 * 2 * 5).view(3, 2, 5),
-            "response_mask": torch.tensor(
-                [
-                    [[True, False, False, False], [True, True, False, False]],
-                    [[True, True, False, False], [False, False, False, False]],
-                    [[True, True, True, True], [False, False, False, False]],
-                ]
-            ),
-        },
-    }
-    compacted = compact_episode_sequence_batch(batch)
-    assert compacted["prev_logprobs"].shape == (1, 2, 4)
-    assert compacted["dones"].shape == (2, 2, 1)
-    assert compacted["rewards"][0, :, 0].tolist() == [1.0, 1.0]
-
-    flat = {
-        "loss_mask": compacted["loss_mask"].reshape(-1, 1),
-        "forward_inputs": {
-            "response_mask": compacted["forward_inputs"]["response_mask"].reshape(-1, 4)
-        },
-    }
-    total_tokens = count_valid_sequence_tokens(flat)
-    assert total_tokens == 6.0
-
+def test_pear_reinforce_global_token_mean_matches_full_batch():
     lp = torch.tensor(
         [[-0.5, -1.0, -1.5, -2.0], [-0.2, -0.4, 0.0, 0.0]], requires_grad=True
     )
     adv = torch.tensor([[1.0], [-1.0]]).expand_as(lp)
-    mask = flat["forward_inputs"]["response_mask"]
+    mask = torch.tensor(
+        [[True, True, True, True], [True, True, False, False]], dtype=torch.bool
+    )
+    total_tokens = float(mask.sum().item())
     full_loss, _ = pear_reinforce_loss(lp, adv, mask)
     mb0, _ = pear_reinforce_loss(
         lp[:1], adv[:1], mask[:1], global_valid_tokens=total_tokens
@@ -588,7 +573,13 @@ def test_embodied_vlm_agent_loop_multi_turn_and_cleanup_on_discard():
             del add_special_tokens
             return [1] * min(len(text), 4)
 
-    def _make_worker(gen_responses):
+        @staticmethod
+        def decode(ids, skip_special_tokens=False):
+            assert skip_special_tokens is False
+            del ids
+            return valid_json
+
+    def _make_worker(gen_responses, *, max_turns=None):
         worker = EmbodiedVLMAgentLoopWorker.__new__(EmbodiedVLMAgentLoopWorker)
         worker.tokenizer = _FakeTokenizer()
         worker._processor = _FakeProcessor()
@@ -596,11 +587,12 @@ def test_embodied_vlm_agent_loop_multi_turn_and_cleanup_on_discard():
         worker._cameras = cameras_for_schema(LIBERO_SCHEMA)
         worker._template_kwargs = chat_template_kwargs("xhigh")
         worker._response_budget = 100
-        worker._max_turns = 8
+        worker._max_turns = max_turns
         worker._tokens_per_image_estimate = 2
         worker.log_warning = lambda msg: None
 
         env_calls: list[str] = []
+        seen_sampling_params: list[dict] = []
         gen_iter = iter(gen_responses)
 
         async def fake_call_env(env_sid, req_type, tool_args=None):
@@ -653,7 +645,8 @@ def test_embodied_vlm_agent_loop_multi_turn_and_cleanup_on_discard():
 
         class _FakeSessionClient:
             async def generate_multimodal(self, *args, **kwargs):
-                del args, kwargs
+                del args
+                seen_sampling_params.append(dict(kwargs.get("sampling_params") or {}))
                 nxt = next(gen_iter)
                 if isinstance(nxt, BaseException):
                     raise nxt
@@ -661,22 +654,23 @@ def test_embodied_vlm_agent_loop_multi_turn_and_cleanup_on_discard():
 
         worker._call_env_tool = fake_call_env
         worker.session_server_client = _FakeSessionClient()
-        return worker, env_calls
+        return worker, env_calls, seen_sampling_params
 
     binding = SessionBinding(group_id=1, traj_index=0, session_id="sid0")
     spec = json.dumps({"instruction": "pick cup"})
 
-    # Normal 2-turn episode -> reward 1.0 and clean session_end.
-    worker, env_calls = _make_worker(
+    # Normal 2-turn episode: even when engine text lacks </think>, decoding
+    # output_ids with skip_special_tokens=False recovers the valid JSON action.
+    worker, env_calls, seen_params = _make_worker(
         [
             {
                 "output_ids": [10, 11, 99],
-                "text": valid_json,
+                "text": "stripped text without json",
                 "finish_reason": {"type": "stop"},
             },
             {
                 "output_ids": [12, 13, 99],
-                "text": valid_json,
+                "text": "stripped text without json",
                 "finish_reason": {"type": "stop"},
             },
         ]
@@ -688,9 +682,10 @@ def test_embodied_vlm_agent_loop_multi_turn_and_cleanup_on_discard():
     assert reward == 1.0
     assert close_fields == {"kept_lens": {0: 3, 1: 3}, "is_end": {0: False, 1: True}}
     assert env_calls == ["session_start", "execute", "execute", "session_end"]
+    assert all(p.get("skip_special_tokens") is False for p in seen_params)
 
     # Discard mid-episode still runs session_end in finally.
-    worker2, env_calls2 = _make_worker([SessionDiscardedError("group aborted")])
+    worker2, env_calls2, _ = _make_worker([SessionDiscardedError("group aborted")])
     with pytest.raises(GroupDiscarded, match="group aborted"):
         asyncio.run(worker2.run_session_trajectory(binding, [0], spec))
     assert env_calls2 == ["session_start", "session_end"]
@@ -777,6 +772,7 @@ def test_assemble_group_payload_merge_continuous_turns_multimodal_and_topk():
         return_logprobs=True,
         merge_continuous_turns=True,
         processor=_FakeProcessor(),
+        pixel_dtype="bf16",
     )
     assert result.num_sequence == 1
     assert result.input_ids == [[10, 11, 12, 20, 21, 30, 31, 40, 41]]
@@ -788,6 +784,7 @@ def test_assemble_group_payload_merge_continuous_turns_multimodal_and_topk():
     assert result.rollout_logprobs == [[-0.2, -0.3, 0.0, 0.0, -0.1, -0.5]]
     assert result.multi_modal_inputs is not None
     assert result.multi_modal_inputs[0]["pixel_values"].shape == (4, 4)
+    assert result.multi_modal_inputs[0]["pixel_values"].dtype == torch.bfloat16
     assert result.multi_modal_inputs[0]["image_grid_thw"].shape == (4, 3)
     assert result.rollout_topk_ids is not None and len(result.rollout_topk_ids[0]) == 4
 
@@ -799,6 +796,156 @@ def test_assemble_group_payload_merge_continuous_turns_multimodal_and_topk():
     )
     assert mat["rollout_topk_ids"][0].shape == (4, 2)
 
+    # Inconsistent top-K presence across turns must fail loudly.
+    broken_parts = [
+        parts[0],
+        PayloadPart(**{**parts[1].__dict__, "topk_ids": None, "topk_logprobs": None}),
+        parts[2],
+    ]
+    with pytest.raises(ValueError, match="inconsistent top-K"):
+        assemble_group_payload(
+            GroupPayload(group_id=5, parts=broken_parts),
+            return_logprobs=True,
+            merge_continuous_turns=True,
+            processor=_FakeProcessor(),
+        )
+
+
+def test_extract_topk_logprobs_fails_loudly_on_missing_or_short_heads():
+    from rlinf.workers.rollout.session_server.payload import extract_topk_logprobs
+
+    assert extract_topk_logprobs({}, [], topk=4) == (None, [], [])
+    with pytest.raises(ValueError, match="output_top_logprobs"):
+        extract_topk_logprobs({}, [10, 11], topk=4)
+    with pytest.raises(ValueError, match="expected 4"):
+        extract_topk_logprobs(
+            {"output_top_logprobs": [[(-0.2, 10), (-1.5, 11)]]},
+            [10],
+            topk=4,
+        )
+
+
+def test_pad_actor_batch_rows_handles_multimodal_and_topk_columns(monkeypatch):
+    from rlinf.data.schema.actor_batch import pad_actor_batch_rows
+
+    def _fake_all_reduce(tensor, op=None, group=None):
+        del op, group
+        tensor.fill_(3)
+
+    monkeypatch.setattr(torch.distributed, "all_reduce", _fake_all_reduce)
+    batch = {
+        "input_ids": [torch.tensor([1, 2, 3], dtype=torch.long)],
+        "attention_mask": [torch.tensor([True, True, True], dtype=torch.bool)],
+        "response_mask": [torch.tensor([False, True, True], dtype=torch.bool)],
+        "multi_modal_inputs": [
+            {"pixel_values": torch.ones(2, 4, dtype=torch.bfloat16)}
+        ],
+        "rollout_topk_ids": [torch.tensor([[1, 2], [3, 4]], dtype=torch.long)],
+        "rollout_topk_logprobs": [torch.tensor([[-0.1, -1.0], [-0.2, -1.2]])],
+        "rewards": torch.tensor([1.0]),
+        "idx_to_traj": [0],
+    }
+    padded = pad_actor_batch_rows(batch, divisor=2, dp_group=None, device="cpu")
+    assert len(padded["input_ids"]) == 4
+    assert padded["multi_modal_inputs"][0] is not None
+    assert padded["multi_modal_inputs"][1:] == [None, None, None]
+    assert padded["rollout_topk_ids"][0].shape == (2, 2)
+    assert [t.shape for t in padded["rollout_topk_ids"][1:]] == [(0, 2), (0, 2), (0, 2)]
+    assert [t.shape for t in padded["rollout_topk_logprobs"][1:]] == [
+        (0, 2),
+        (0, 2),
+        (0, 2),
+    ]
+
+
+def test_install_fp32_residual_stream_keeps_residual_fp32_and_norms_bf16():
+    from rlinf.hybrid_engines.fsdp.utils import install_fp32_residual_stream
+
+    class _Block(torch.nn.Module):
+        def __init__(self, dim: int):
+            super().__init__()
+            self.input_layernorm = torch.nn.RMSNorm(dim)
+            self.attn = torch.nn.Linear(dim, dim, bias=False).to(torch.bfloat16)
+            self.post_attention_layernorm = torch.nn.RMSNorm(dim)
+            self.mlp = torch.nn.Linear(dim, dim, bias=False).to(torch.bfloat16)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            normed = self.input_layernorm(x)
+            assert normed.dtype == torch.bfloat16
+            x = x + self.attn(normed)
+            assert x.dtype == torch.float32
+            normed2 = self.post_attention_layernorm(x)
+            assert normed2.dtype == torch.bfloat16
+            x = x + self.mlp(normed2)
+            assert x.dtype == torch.float32
+            return x
+
+    class _MiniModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embed = torch.nn.Embedding(16, 8).to(torch.bfloat16)
+            self.layer = _Block(8)
+            self.norm = torch.nn.RMSNorm(8)
+
+        def get_input_embeddings(self):
+            return self.embed
+
+        def forward(self, ids: torch.Tensor) -> torch.Tensor:
+            h = self.embed(ids)
+            assert h.dtype == torch.float32
+            return self.norm(self.layer(h))
+
+    model = _MiniModel()
+    install_fp32_residual_stream(model, compute_dtype=torch.bfloat16)
+    out = model(torch.tensor([[1, 2, 3]]))
+    assert out.dtype == torch.float32
+
+
+def test_validate_session_server_score_centering_guards():
+    from rlinf.config import validate_session_server_cfg
+
+    def _base_cfg(**overrides):
+        cfg = OmegaConf.create(
+            {
+                "cluster": {"auto_scheduler": False},
+                "runner": {"async_mode": True},
+                "actor": {"training_backend": "fsdp"},
+                "reward": {"reward_type": "embodied_vlm"},
+                "algorithm": {
+                    "loss_type": "pear_reinforce",
+                    "pear": {"score_centering": True},
+                    "sampling_params": {"top_p": 1.0, "top_k": -1},
+                },
+                "rollout": {
+                    "pause_mode": "retract",
+                    "sglang": {"backend_type": "server"},
+                    "router": {
+                        "type": "sglang",
+                        "policy": "manual",
+                        "disable_health_check": True,
+                        "request_timeout_secs": 1800,
+                    },
+                },
+                "session_server": {
+                    "enable": True,
+                    "engine_streaming_session": True,
+                    "topk_log_probs": 32,
+                },
+            }
+        )
+        for key, value in overrides.items():
+            OmegaConf.update(cfg, key, value, merge=False)
+        return cfg
+
+    with pytest.raises(ValueError, match="topk_log_probs > 0"):
+        validate_session_server_cfg(_base_cfg(**{"session_server.topk_log_probs": 0}))
+    with pytest.raises(ValueError, match="pear_reinforce"):
+        validate_session_server_cfg(_base_cfg(**{"algorithm.loss_type": "actor"}))
+    with pytest.raises(ValueError, match="full-support"):
+        validate_session_server_cfg(
+            _base_cfg(**{"algorithm.sampling_params.top_p": 0.9})
+        )
+
 
 def test_disaggregated_pear_configs_compose_and_match_session_server_contract():
     from hydra import compose, initialize_config_dir
@@ -808,27 +955,44 @@ def test_disaggregated_pear_configs_compose_and_match_session_server_contract():
     )
     shared = OmegaConf.load(config_dir / "hybrid_engines" / "sglang_router_server.yaml")
     assert shared.server.attention_backend == "triton"
-    for name, expected_nodes, expected_batch in (
-        ("libero_gso_grpo_pear_sglang", 2, 8),
-        ("libero_gso_grpo_pear_sglang_paper", 4, 128),
-        ("libero_10_grpo_pear_stage2", 2, 8),
-        ("pear_stage3_libero_robodojo", 2, 8),
+    for name, expected_nodes, expected_batch, expected_turns in (
+        ("libero_gso_grpo_pear_sglang", 2, 8, 300),
+        ("libero_spatial_grpo_pear_sglang_a100_4node", 4, 32, 300),
+        ("libero_gso_grpo_pear_sglang_paper", 4, 128, 300),
+        ("libero_10_grpo_pear_stage2", 2, 8, 520),
+        ("pear_stage3_libero_robodojo", 2, 8, 520),
     ):
         with initialize_config_dir(config_dir=str(config_dir), version_base=None):
             cfg = compose(config_name=name)
         assert cfg.cluster.num_nodes == expected_nodes
         assert cfg.data.rollout_batch_size == expected_batch
+        assert cfg.agentloop.max_turns == expected_turns
         assert cfg.runner.task_type == "reasoning"
         assert cfg.runner.async_mode is True
         assert cfg.session_server.enable is True
         assert cfg.session_server.merge_continuous_turns is True
         assert cfg.session_server.engine_streaming_session is True
+        assert cfg.session_server.topk_log_probs == 32
+        assert cfg.algorithm.pear.score_centering is True
         assert cfg.rollout.sglang.backend_type == "server"
         assert cfg.rollout.sglang.attention_backend is None
         assert cfg.rollout.sglang.max_mamba_cache_size == 256
+        assert list(cfg.rollout.sglang.fp32_modules) == ["visual", "A_log"]
         assert cfg.rollout.router.policy == "manual"
         assert cfg.algorithm.recompute_logprobs is False
         assert cfg.algorithm.loss_type == "pear_reinforce"
         assert cfg.actor.training_backend == "fsdp"
         assert cfg.actor.fsdp_config.strategy == "fsdp2"
         assert cfg.reward.reward_type == "embodied_vlm"
+        if name == "libero_spatial_grpo_pear_sglang_a100_4node":
+            assert cfg.rollout.tensor_parallel_size == 4
+            assert cfg.rollout.sglang.reasoning_effort == "low"
+            assert cfg.runner.seq_length == 32768
+            assert cfg.rollout.sglang.response_budget == 28672
+            assert cfg.session_server.num_servers == 3
+            assert cfg.rollout_buffer.max_inflight_groups == 18
+            assert cfg.actor.optim.streamed_adamw is True
+            assert cfg.actor.optim.streamed_adamw_chunk_bytes == 536870912
+        if name == "libero_gso_grpo_pear_sglang_paper":
+            assert cfg.rollout_buffer.max_inflight_groups == 16
+            assert cfg.actor.optim.streamed_adamw is True

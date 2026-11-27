@@ -334,9 +334,15 @@ def test_vlm_policy_stage_configs_compose():
     )
     expected = {
         "libero_gso_grpo_pear_sglang": ("libero_gso", 8, "libero", 8),
+        "libero_spatial_grpo_pear_sglang_a100_4node": (
+            "libero_spatial",
+            8,
+            "libero",
+            32,
+        ),
         "libero_gso_grpo_pear_sglang_paper": ("libero_gso", 8, "libero", 128),
-        "libero_10_grpo_pear_stage2": ("libero_10", 8, "libero", 8),
-        "pear_stage3_libero_robodojo": ("libero_10", 8, "robodojo", 8),
+        "libero_10_grpo_pear_stage2": ("libero_all", 8, "libero", 8),
+        "pear_stage3_libero_robodojo": ("libero_all", 8, "robodojo", 8),
     }
     for name, values in expected.items():
         with initialize_config_dir(config_dir=str(config_dir), version_base=None):
@@ -351,6 +357,14 @@ def test_vlm_policy_stage_configs_compose():
         assert cfg.session_server.enable is True
         assert cfg.session_server.merge_continuous_turns is True
         assert cfg.session_server.engine_streaming_session is True
+        assert cfg.session_server.topk_log_probs == 32
+        assert cfg.algorithm.pear.score_centering is True
+        assert cfg.data.pixel_dtype == "bf16"
+        assert cfg.tools.embodied_env.reset_gripper_open is True
+        assert cfg.tools.embodied_env.seed == 7
+        assert list(cfg.rollout.sglang.fp32_modules) == ["visual", "A_log"]
+        assert cfg.actor.optim.adam_beta2 == 0.999
+        assert cfg.actor.optim.weight_decay == 0.01
         assert cfg.rollout.rollout_backend == "sglang"
         assert cfg.rollout.sglang.backend_type == "server"
         assert cfg.rollout.sglang.attention_backend is None

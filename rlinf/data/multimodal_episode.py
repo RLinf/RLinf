@@ -62,45 +62,55 @@ def render_incremental_user_delta(
 ) -> tuple[str, str]:
     """Render the exact chat-template suffix for appending one user turn.
 
-    Returns ``(full_delta, without_leading_im_end)`` so callers can avoid
-    duplicating the assistant end-of-turn token if the sampler already emitted
-    it as part of ``output_ids``.
+    Returns ``(full_delta, without_leading_eos)`` so callers append the exact
+    inter-turn delimiter (including any newline after the assistant stop token)
+    without duplicating the stop token when the sampler already emitted it.
     """
+    marker = "__RLINF_A0__"
     dummy_prefix = [
         {"role": "system", "content": "__RLINF_SYS__"},
         {"role": "user", "content": "__RLINF_U0__"},
-        {"role": "assistant", "content": "__RLINF_A0__"},
+        {"role": "assistant", "content": marker},
     ]
-    prefix_text = processor.apply_chat_template(
-        dummy_prefix,
-        tokenize=False,
-        add_generation_prompt=False,
-        **template_kwargs,
-    )
     extended_text = processor.apply_chat_template(
         [*dummy_prefix, user_message],
         tokenize=False,
         add_generation_prompt=True,
         **template_kwargs,
     )
-    if extended_text.startswith(prefix_text):
-        delta = extended_text[len(prefix_text) :]
-    else:
-        # Fallback if template alters whitespace before the trailing turn.
-        marker = "__RLINF_A0__"
-        pos = extended_text.find(marker)
-        delta = extended_text[pos + len(marker) :] if pos >= 0 else extended_text
-
-    # Determine whether the assistant stop token sits at the end of prefix_text.
     tokenizer = getattr(processor, "tokenizer", processor)
     eos_token = getattr(tokenizer, "eos_token", None) or ""
-    if eos_token and prefix_text.rstrip().endswith(eos_token):
-        # The stop token already closed the previous assistant turn inside prefix_text.
-        return delta, delta
-    stripped = delta
-    if eos_token and delta.startswith(eos_token):
-        stripped = delta[len(eos_token) :]
-    return delta, stripped
+
+    # Slice right after the assistant sentinel so the inter-turn closing token
+    # and trailing newline (e.g. "<|im_end|>\n<|im_start|>user\n...") stay
+    # intact; stripping only eos_token preserves the newline when SGLang
+    # already emitted eos_token at the end of the previous turn.
+    pos = extended_text.find(marker)
+    if pos >= 0:
+        full_delta = extended_text[pos + len(marker) :]
+        no_eos_delta = (
+            full_delta[len(eos_token) :]
+            if eos_token and full_delta.startswith(eos_token)
+            else full_delta
+        )
+        return full_delta, no_eos_delta
+
+    # Fallback for synthetic templates that omit message contents.
+    prefix_text = processor.apply_chat_template(
+        dummy_prefix,
+        tokenize=False,
+        add_generation_prompt=False,
+        **template_kwargs,
+    )
+    delta = (
+        extended_text[len(prefix_text) :]
+        if extended_text.startswith(prefix_text)
+        else extended_text
+    )
+    no_eos_delta = (
+        delta[len(eos_token) :] if eos_token and delta.startswith(eos_token) else delta
+    )
+    return delta, no_eos_delta
 
 
 def _extract_1d_tokens(tensor: Any) -> list[int]:

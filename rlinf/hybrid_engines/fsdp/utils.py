@@ -30,6 +30,7 @@ import functools
 import math
 import warnings
 from enum import Enum
+from importlib import import_module
 from typing import ContextManager, Iterable, Optional, Union
 
 import torch
@@ -501,6 +502,104 @@ def _matches_fp32_module(name: str, fp32_modules: tuple[str, ...]) -> bool:
     return False
 
 
+def _wrap_fp32_disable_autocast(submodule: torch.nn.Module) -> None:
+    """Run ``submodule.forward`` outside AMP autocast so FP32 modules stay FP32."""
+    if getattr(submodule, "_rlinf_fp32_autocast_disabled", False):
+        return
+    orig_forward = submodule.forward
+
+    @functools.wraps(orig_forward)
+    def _fp32_forward(*args, **kwargs):
+        dev_type = Worker.torch_device_type
+        if dev_type is None:
+            first_param = next(submodule.parameters(), None)
+            dev_type = first_param.device.type if first_param is not None else "cpu"
+        with torch.amp.autocast(device_type=dev_type, enabled=False):
+            return orig_forward(*args, **kwargs)
+
+    submodule.forward = _fp32_forward
+    submodule._rlinf_fp32_autocast_disabled = True
+
+
+def _cast_output_dtype(output, dtype: torch.dtype):
+    if torch.is_tensor(output):
+        return output.to(dtype=dtype) if output.is_floating_point() else output
+    if isinstance(output, tuple):
+        return tuple(_cast_output_dtype(item, dtype) for item in output)
+    return output
+
+
+def install_fp32_residual_stream(
+    module: torch.nn.Module,
+    compute_dtype: torch.dtype = torch.bfloat16,
+) -> None:
+    """Keep the residual stream in FP32 while running layer projections in ``compute_dtype``.
+
+    Promotes token embeddings to FP32, casts ``input_layernorm`` and
+    ``post_attention_layernorm`` outputs to ``compute_dtype`` so linear
+    projections match ``param_dtype`` when FSDP2 sets ``cast_forward_inputs=False``,
+    and preserves query/key dtypes across ``apply_rotary_pos_emb``.
+    """
+    if getattr(module, "_rlinf_fp32_residual_installed", False):
+        return
+
+    inner = module
+    if not hasattr(inner, "get_input_embeddings") and isinstance(
+        getattr(module, "model", None), torch.nn.Module
+    ):
+        inner = module.model
+
+    get_embed = getattr(inner, "get_input_embeddings", None)
+    embed = get_embed() if callable(get_embed) else None
+    if embed is None:
+        raise ValueError(
+            "fp32_residual=True requires the model to expose get_input_embeddings()."
+        )
+    embed.register_forward_hook(
+        lambda _m, _args, out: _cast_output_dtype(out, torch.float32)
+    )
+
+    if compute_dtype != torch.float32:
+        for submodule in inner.modules():
+            for norm_attr in ("input_layernorm", "post_attention_layernorm"):
+                norm_mod = getattr(submodule, norm_attr, None)
+                if isinstance(norm_mod, torch.nn.Module) and not getattr(
+                    norm_mod, "_rlinf_fp32_residual_norm_hooked", False
+                ):
+                    norm_mod.register_forward_hook(
+                        lambda _m, _args, out, dt=compute_dtype: _cast_output_dtype(
+                            out, dt
+                        )
+                    )
+                    norm_mod._rlinf_fp32_residual_norm_hooked = True
+
+    candidate_modules = {type(inner).__module__}
+    for attr in ("model", "language_model"):
+        child = getattr(inner, attr, None)
+        if isinstance(child, torch.nn.Module):
+            candidate_modules.add(type(child).__module__)
+            grandchild = getattr(child, "language_model", None)
+            if isinstance(grandchild, torch.nn.Module):
+                candidate_modules.add(type(grandchild).__module__)
+
+    for mod_name in candidate_modules:
+        modeling = import_module(mod_name)
+        rotate = getattr(modeling, "apply_rotary_pos_emb", None)
+        if callable(rotate) and not getattr(
+            rotate, "_rlinf_fp32_residual_wrapped", False
+        ):
+
+            @functools.wraps(rotate)
+            def _wrapped_rope(q, k, cos, sin, *args, _orig=rotate, **kwargs):
+                q_embed, k_embed = _orig(q, k, cos, sin, *args, **kwargs)
+                return q_embed.to(q.dtype), k_embed.to(k.dtype)
+
+            _wrapped_rope._rlinf_fp32_residual_wrapped = True
+            modeling.apply_rotary_pos_emb = _wrapped_rope
+
+    module._rlinf_fp32_residual_installed = True
+
+
 def apply_fsdp2_to_model(
     module,
     config: dict,
@@ -580,6 +679,11 @@ def apply_fsdp2_to_model(
                 name == target or name.endswith(f".{target}") for target in fp32_targets
             )
         )
+        if is_fp32_root and fp32_mp_policy is not None:
+            sub_cfg = getattr(submodule, "config", None)
+            if sub_cfg is not None:
+                sub_cfg._attn_implementation = "sdpa"
+            _wrap_fp32_disable_autocast(submodule)
         if (
             submodule.__class__.__name__ in transformer_cls_names
             or (custom_module_classes and isinstance(submodule, custom_module_classes))

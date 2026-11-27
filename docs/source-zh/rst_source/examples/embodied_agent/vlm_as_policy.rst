@@ -14,7 +14,7 @@ VLM-as-Policy：LIBERO + Qwen3.8-27B
    .. grid-item-card:: 环境
       :text-align: center
 
-      LIBERO（``libero_gso``、``libero_10``）· RoboDojo 动作格式
+      LIBERO（``libero_gso``、``libero_all``）· RoboDojo 动作格式
 
    .. grid-item-card:: 算法
       :text-align: center
@@ -58,15 +58,19 @@ VLM-as-Policy：LIBERO + Qwen3.8-27B
    * - LIBERO
      - ``libero_gso``\ （Goal、Spatial、Object）
      - ``libero_gso_grpo_pear_sglang.yaml``
-     - 第一阶段默认配置（2 机 16 卡，每步 8 组，160k 预算，默认 ``max_steps: 2`` 快速验证）
+     - 第一阶段默认配置（2 机 16 卡，每步 8 组，160k 预算，开启 top-K score centering，默认 ``max_steps: 2`` 快速验证）
+   * - LIBERO
+     - ``libero_spatial``\ （Spatial）
+     - ``libero_spatial_grpo_pear_sglang_a100_4node.yaml``
+     - 第一阶段 80 GB A100 收敛配置（4 机 32 卡，1 机 Actor + 3 机 6 个 TP4 副本，每步 32 组，32k 上下文，``reasoning_effort: low``）
    * - LIBERO
      - ``libero_gso``\ （Goal、Spatial、Object）
      - ``libero_gso_grpo_pear_sglang_paper.yaml``
      - 第一阶段论文规模（4 机 32 卡，每步 128 组，``max_turns: 300``，``max_steps: 1000``）
    * - LIBERO
-     - ``libero_10``\ （Long）
+     - ``libero_all``\ （Goal、Spatial、Object、Long）
      - ``libero_10_grpo_pear_stage2.yaml``
-     - 第二阶段长程任务（262,144 token 预算，``max_turns: 64``）
+     - 第二阶段长程任务（262,144 token 预算，``max_turns: 520``）
    * - LIBERO / RoboDojo
      - 混合多本体
      - ``pear_stage3_libero_robodojo.yaml``
@@ -131,6 +135,9 @@ VLM-as-Policy：LIBERO + Qwen3.8-27B
          * - 2 机默认（16 卡）
            - ``libero_gso_grpo_pear_sglang.yaml``
            - ``cluster.num_nodes: 2``，默认 ``max_steps: 2`` 快速验证
+         * - 4 机 A100 收敛验证（32 × 80 GB）
+           - ``libero_spatial_grpo_pear_sglang_a100_4node.yaml``
+           - ``cluster.num_nodes: 4``，6 个 TP4 副本，每步 32 组，``reasoning_effort: low``
          * - 4 机论文规模（32 卡）
            - ``libero_gso_grpo_pear_sglang_paper.yaml``
            - ``cluster.num_nodes: 4``，每步 128 组，``max_steps: 1000``
@@ -179,9 +186,9 @@ VLM-as-Policy：LIBERO + Qwen3.8-27B
             * - SGLang 与 FSDP2 显存
               - ``rollout.sglang.attention_backend``、``rollout.sglang.max_mamba_cache_size``、``actor.fsdp_config.enable_gradient_accumulation``
               - 80 GB 显存下保持 ``attention_backend: null``、``max_mamba_cache_size: 256`` 与 ``enable_gradient_accumulation: False``。
-            * - 组过滤与第三阶段
+            * - 组过滤与 score centering
               - ``algorithm.down_sampling.down_sampling_config.reject_equal_reward``、``algorithm.pear.score_centering``、``session_server.topk_log_probs``
-              - 开启 DAPO 零方差组过滤；第三阶段按需开启 top-K score centering。
+              - 开启 DAPO 零方差组过滤；各阶段默认开启 ``score_centering: True`` 与 ``topk_log_probs: 32``。
 
    .. tab-item:: 第二、三阶段
       :sync: pear-stage23
@@ -199,14 +206,14 @@ VLM-as-Policy：LIBERO + Qwen3.8-27B
          * - 场景
            - 配置（``examples/embodiment/config/``）
            - 说明
-         * - 第二阶段（LIBERO-10 长程）
+         * - 第二阶段（LIBERO-All）
            - ``libero_10_grpo_pear_stage2.yaml``
-           - ``cluster.num_nodes: 2``，262,144 token 预算，``max_turns: 64``
+           - ``cluster.num_nodes: 2``，262,144 token 预算，``max_turns: 520``
          * - 第三阶段（混合 RoboDojo）
            - ``pear_stage3_libero_robodojo.yaml``
            - ``cluster.num_nodes: 2``，``score_centering: True``，``topk_log_probs: 32``
 
-      在头节点启动 2 机 16 卡第二阶段 ``libero_10`` 训练（需 2 节点，``cluster.num_nodes: 2``）：
+      在头节点启动 2 机 16 卡第二阶段 ``libero_all`` 训练（需 2 节点，``cluster.num_nodes: 2``）：
 
       .. code-block:: bash
 

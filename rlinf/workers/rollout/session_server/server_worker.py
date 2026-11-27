@@ -975,9 +975,12 @@ class SessionServerWorker(Worker):
         topk_ids = None
         topk_logprobs = None
         if need_topk:
-            token_lps, topk_ids, topk_logprobs = extract_topk_logprobs(
-                meta_info, output_ids, self._topk_log_probs
-            )
+            try:
+                token_lps, topk_ids, topk_logprobs = extract_topk_logprobs(
+                    meta_info, output_ids, self._topk_log_probs
+                )
+            except ValueError as exc:
+                return None, (500, f"invalid engine top-K logprobs: {exc}")
             if self._return_logprob:
                 logprobs = token_lps if token_lps is not None else []
         elif self._return_logprob:

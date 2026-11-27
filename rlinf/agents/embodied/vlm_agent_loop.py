@@ -97,7 +97,12 @@ class EmbodiedVLMAgentLoopWorker(MultiAgentLoopWorker):
                 cfg.algorithm.sampling_params.get("max_new_tokens", 160_000),
             )
         )
-        self._max_turns = int(agentloop_cfg.get("max_turns", 64))
+        raw_max_turns = agentloop_cfg.get("max_turns", None)
+        self._max_turns: Optional[int] = (
+            int(raw_max_turns)
+            if raw_max_turns is not None and int(raw_max_turns) > 0
+            else None
+        )
         self._tokens_per_image_estimate = int(
             agentloop_cfg.get("tokens_per_image_estimate", 256)
         )
@@ -214,7 +219,9 @@ class EmbodiedVLMAgentLoopWorker(MultiAgentLoopWorker):
             turn_index = 0
             done = bool(obs.get("done", False))
 
-            while not done and turn_index < self._max_turns:
+            while not done and (
+                self._max_turns is None or turn_index < self._max_turns
+            ):
                 delta_text = self._render_turn_delta(
                     turn_index=turn_index,
                     instruction=instruction,
@@ -237,13 +244,15 @@ class EmbodiedVLMAgentLoopWorker(MultiAgentLoopWorker):
                         binding.session_id,
                         text=delta_text,
                         image_data=image_data,
-                        sampling_params={"max_new_tokens": remaining_budget},
+                        sampling_params={
+                            "max_new_tokens": remaining_budget,
+                            "skip_special_tokens": False,
+                        },
                     )
                 except SessionDiscardedError as exc:
                     raise GroupDiscarded(exc.reason) from exc
 
                 output_ids = list(gen_resp["output_ids"])
-                output_text = str(gen_resp.get("text") or "")
                 finish_reason = gen_resp.get("finish_reason") or {}
                 kept_lens[turn_index] = len(output_ids)
                 remaining_budget -= len(output_ids)
@@ -256,8 +265,15 @@ class EmbodiedVLMAgentLoopWorker(MultiAgentLoopWorker):
                     reward = 0.0
                     break
 
+                # Decode token IDs with skip_special_tokens=False so </think>
+                # is preserved even if the engine strips special tokens in text.
+                parsed_text = (
+                    self.tokenizer.decode(output_ids, skip_special_tokens=False)
+                    if output_ids
+                    else str(gen_resp.get("text") or "")
+                )
                 try:
-                    action = parse_action(output_text, self._schema)
+                    action = parse_action(parsed_text, self._schema)
                 except InvalidAction:
                     is_end[turn_index] = True
                     reward = 0.0
