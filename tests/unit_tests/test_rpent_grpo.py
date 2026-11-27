@@ -16,7 +16,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
+import sys
+from types import SimpleNamespace
 
 import pytest
 from omegaconf import OmegaConf
@@ -95,7 +99,8 @@ def test_merge_prefix_turns_respects_chain_and_budget():
     assert len(split) == 2
 
 
-def test_mixed_simulators_and_sampler_quotas():
+@pytest.mark.parametrize("second", ["robotwin", "metaworld"])
+def test_mixed_simulators_and_sampler_quotas(second):
     cfg = OmegaConf.create(
         {
             "algorithm": {"group_size": 8},
@@ -106,7 +111,7 @@ def test_mixed_simulators_and_sampler_quotas():
                         "endpoint": "http://127.0.0.1:28561",
                         "train_data_paths": "/tmp/a.jsonl",
                     },
-                    "robotwin": {
+                    second: {
                         "endpoint": "http://127.0.0.1:28562",
                         "train_data_paths": "/tmp/b.jsonl",
                     },
@@ -115,7 +120,7 @@ def test_mixed_simulators_and_sampler_quotas():
         }
     )
     sims = mixed_simulators(cfg)
-    assert set(sims) == {"libero", "robotwin"}
+    assert set(sims) == {"libero", second}
     assert sims["libero"].rollout_groups == 1
     assert sims["libero"].sampling_groups == 2
 
@@ -155,7 +160,8 @@ def test_aggregate_metrics_and_qwen35_bf16_norm():
     assert torch.equal(got, (t.float() + 1.0).to(torch.bfloat16))
 
 
-def test_validate_sim_pool_capacity():
+@pytest.mark.parametrize("second", ["robotwin", "metaworld"])
+def test_validate_sim_pool_capacity(second):
     from rlinf.agents.rpent.simulators import SimulatorSpec
     from rlinf.runners.rpent_runner import validate_sim_pool_capacity
 
@@ -163,9 +169,7 @@ def test_validate_sim_pool_capacity():
         "libero": SimulatorSpec(
             "libero", "http://127.0.0.1:28561", "/tmp/a.jsonl", 1, 2
         ),
-        "robotwin": SimulatorSpec(
-            "robotwin", "http://127.0.0.1:28562", "/tmp/b.jsonl", 1, 2
-        ),
+        second: SimulatorSpec(second, "http://127.0.0.1:28562", "/tmp/b.jsonl", 1, 2),
     }
 
     # Exact capacity succeeds with uncapped client
@@ -179,7 +183,7 @@ def test_validate_sim_pool_capacity():
         fetch_health=lambda ep: {"ok": True, "workers_total": 16, "workers_idle": 16},
     )
     assert statuses["libero"]["workers_total"] == 16
-    assert statuses["robotwin"]["required"] == 16
+    assert statuses[second]["required"] == 16
 
     # Undersized simulator pool fails fast
     with pytest.raises(RuntimeError, match="workers_total=10"):
@@ -431,3 +435,83 @@ def test_rpent_runner_pool_sleep_wake_lifecycle(monkeypatch) -> None:
         "http://127.0.0.1:28561/pool/wake",
         "http://127.0.0.1:28562/pool/wake",
     }
+
+
+def test_metaworld_task_pools(tmp_path, monkeypatch):
+    from examples.agent.rpent.prepare_tasks import write_metaworld_tasks
+
+    def initial_scene(name, index, benchmark):
+        return SimpleNamespace(close=lambda: None), {
+            "task_index": index,
+            "rand_vec_sha256": name,
+        }
+
+    monkeypatch.setitem(
+        sys.modules, "metaworld", SimpleNamespace(MT1=lambda name, seed: name)
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "robots.rl.envs.metaworld",
+        SimpleNamespace(initial_scene=initial_scene),
+    )
+    args = SimpleNamespace(seeds="49", output_dir=tmp_path)
+    write_metaworld_tasks(args)
+    pools = {}
+    for split, count in [("mt50", 50), ("ml45-train", 45), ("ml45-ood", 5)]:
+        payload = (tmp_path / f"{split}.jsonl").read_bytes()
+        rows = [json.loads(line) for line in payload.splitlines()]
+        manifest = json.loads((tmp_path / f"{split}-manifest.json").read_bytes())
+        assert len(rows) == count
+        assert manifest["files"][split] == {
+            "rows": count,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+        pools[split] = {r["query_id"] for r in rows}
+        for row in rows:
+            task = episode_task(row["answer"])
+            assert task["environment"] == "metaworld"
+            assert (
+                task["task_index"]
+                == task["init_state_id"]
+                == task["seed"]
+                == row["initial_state"]["task_index"]
+                == 49
+            )
+    assert pools["ml45-train"].isdisjoint(pools["ml45-ood"])
+    assert pools["ml45-train"] | pools["ml45-ood"] == pools["mt50"]
+    args.seeds = "50"
+    with pytest.raises(ValueError, match="0, 49"):
+        write_metaworld_tasks(args)
+
+
+def test_metaworld_validation_retry():
+    from rlinf.agents.rpent.history import EpisodeConversation
+
+    move = {
+        "type": "object",
+        "properties": {"action": {"const": "move_to"}, "xyz": {"type": "array"}},
+        "required": ["action", "xyz"],
+        "additionalProperties": False,
+    }
+    schema = {
+        "type": "object",
+        "properties": {"actions": {"type": "array", "items": move}},
+    }
+    conv = EpisodeConversation(
+        system_prompt="SYS",
+        user_message="TASK",
+        initial_observation_text="{}",
+        environment="metaworld",
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "execute_actions", "parameters": schema},
+            }
+        ],
+    )
+    action = {"action": "move_to", "xyz": [1, 2, 3], "orientation_rpy": [0, 0, 0]}
+    kind, message, parsed, retry = conv.validate_or_retry(
+        [{"name": "execute_actions", "arguments": {"actions": [action]}}]
+    )
+    assert kind == "tool_arguments" and parsed is None and retry
+    assert "xyz only" in message

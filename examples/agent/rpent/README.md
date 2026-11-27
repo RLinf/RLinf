@@ -1,6 +1,6 @@
 # RPent Multi-Turn Embodied GRPO Training
 
-This example trains a 4B Vision-Language-Action reasoning model (Qwen3.5-4B) with synchronous multi-turn GRPO and oversampling across multiple manipulation simulators (LIBERO and RoboTwin, with extensible registry support for RoboCasa and RoboDojo) served by [RPent](https://github.com/RLinf/RPent).
+This example trains a 4B Vision-Language-Action reasoning model (Qwen3.5-4B) with synchronous multi-turn GRPO and oversampling across multiple manipulation simulators (LIBERO and RoboTwin, with extensible registry support for RoboCasa, RoboDojo and MetaWorld) served by [RPent](https://github.com/RLinf/RPent).
 
 ## Architecture
 
@@ -58,6 +58,34 @@ python examples/agent/rpent/prepare_tasks.py \
   --libero-out /path/to/data/libero/train.jsonl \
   --robotwin-out /path/to/data/robotwin/train.jsonl
 ```
+
+In the MetaWorld Python 3.11 environment, with both repositories on `PYTHONPATH`, prepare the MT50, ML45 train and ML45 held-out pools for native index 49 under `${RPENT_ROOT}/data/metaworld`:
+
+```bash
+python examples/agent/rpent/prepare_tasks.py \
+  --metaworld \
+  --seeds 49 \
+  --output-dir "${RPENT_ROOT:-/path/to/rpent_ppo}/data/metaworld"
+```
+
+To mix MetaWorld into the 8-GPU GRPO config (`train_qwen3.5_4b_rpent_grpo.yaml`, which sets `rollout_batch_size: 2`, `sampling_batch_size: 4`, `group_size: 8` → `16` rollout / `32` sampling episodes total), **replace** the default `env.rpent` block (`libero` + `robotwin`) with the `libero` + `metaworld` block below (do not merge it on top of `robotwin` without adjusting `rollout_episodes` / `sampling_episodes` so they still sum to `16` / `32`), and launch the RPent MetaWorld pool with at least `--workers 16` (matching `sampling_episodes: 16`) so startup capacity validation passes:
+
+```yaml
+env:
+  rpent:
+    libero:
+      endpoint: http://127.0.0.1:28561
+      train_data_paths: ${oc.env:RPENT_ROOT,/path/to/rpent_ppo}/data/libero/train.jsonl
+      rollout_episodes: 8
+      sampling_episodes: 16
+    metaworld:
+      endpoint: http://127.0.0.1:28565
+      train_data_paths: ${oc.env:RPENT_ROOT,/path/to/rpent_ppo}/data/metaworld/ml45-train.jsonl
+      rollout_episodes: 8
+      sampling_episodes: 16
+```
+
+> **MetaWorld runtime notes**: RPent clamps `max_episode_steps` to MetaWorld's native **500-step horizon** regardless of larger requested values. MetaWorld's fixed-wrist Sawyer enforces a strict **4-DoF `move_to` schema (`xyz`-only)** — passing `orientation_rpy` triggers a validation retry with MetaWorld's 4-DoF hint, while observations still report the calibrated live `pose.orientation_rpy`.
 
 ### 2. Start Simulator & SAM3 Services (GPUs 4–7)
 

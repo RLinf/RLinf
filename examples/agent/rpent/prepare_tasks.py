@@ -136,6 +136,57 @@ def write_robotwin_tasks(args: argparse.Namespace) -> None:
     )
 
 
+def write_metaworld_tasks(args: argparse.Namespace) -> None:
+    """Replay native MT1 indices once per task and partition them by ML45 split."""
+    from metaworld import MT1
+    from robots.rl.envs.metaworld import initial_scene
+
+    seeds = list(range(50)) if args.seeds == "all" else parse_seeds(args.seeds)
+    if any(seed >= 50 for seed in seeds):
+        raise ValueError("MetaWorld task indices must be in [0, 49]")
+    config = json.loads(
+        (
+            Path(__file__).resolve().parents[3]
+            / "rlinf/envs/sim/metaworld/metaworld_config.json"
+        ).read_text(encoding="utf-8")
+    )
+    descriptions = config["TASK_DESCRIPTIONS"]
+    pools = {
+        "mt50": sorted(descriptions),
+        "ml45-train": sorted(config["ML45"]["train"]),
+        "ml45-ood": sorted(config["ML45"]["test"]),
+    }
+    rows = {}
+    for name in pools["mt50"]:
+        benchmark = MT1(name, seed=0)
+        rows[name] = []
+        for seed in seeds:
+            env, identity = initial_scene(name, seed, benchmark)
+            env.close()
+            task = {
+                "environment": "metaworld",
+                "task_name": name,
+                "seed": seed,
+                "init_state_id": seed,
+                "task_index": seed,
+            }
+            rows[name].append(
+                {
+                    "query_id": f"metaworld-{name}-s{seed}",
+                    "prompt": descriptions[name],
+                    "answer": json.dumps(task, sort_keys=True),
+                    "initial_state": identity,
+                }
+            )
+    for split, names in pools.items():
+        write_task_pool(
+            args.output_dir,
+            split,
+            [row for name in names for row in rows[name]],
+            {"environment": "metaworld", "seeds": seeds},
+        )
+
+
 def write_task_pool(
     output_dir: Path, split: str, rows: list[dict], manifest: dict
 ) -> None:
@@ -173,7 +224,11 @@ def main() -> None:
     parser.add_argument(
         "--suites", nargs="+", default=EPISODE_SUITES, help="LIBERO suite names"
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--metaworld", action="store_true", help="Prepare MT50 and ML45 pools"
+    )
+    mode.add_argument(
         "--robotwin-seeds", type=Path, help="RPent RoboTwin task/seed table"
     )
     parser.add_argument(
@@ -183,7 +238,9 @@ def main() -> None:
         "--split", choices=("train", "dev", "test", "eval"), default="train"
     )
     args = parser.parse_args()
-    if args.robotwin_seeds is not None:
+    if args.metaworld:
+        write_metaworld_tasks(args)
+    elif args.robotwin_seeds is not None:
         write_robotwin_tasks(args)
     else:
         write_libero_tasks(args)
