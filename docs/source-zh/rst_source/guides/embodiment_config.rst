@@ -140,6 +140,41 @@ algorithm
 ``algorithm.group_size``\ （每个 prompt 的回复数；GRPO 始终 > 1）为共享键，在
 :doc:`basic_config` 中说明。
 
+用 KL 早停控制 Actor 更新幅度
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+同一批 rollout 数据反复用于更新时，policy 可能在一轮内变化过大。Actor 在第一次 optimizer step 前记录一组固定动作块的去噪转移分布，之后每一步都在同一组转移上比较当前分布和最初记录的分布，计算平均条件 KL。KL 达到目标后结束本轮更新，触发早停的这一步仍然生效。
+
+该功能仅适用于同步 FSDP 的 OpenPI PPO 或 GRPO 训练（OpenPI 配置见 :doc:`../examples/embodied/pi0`），配置需满足以下条件：
+
+- 奖励和 log-prob 均按动作块计算：``algorithm.reward_type: chunk_level``、``algorithm.logprob_type: chunk_level``。
+- OpenPI 使用噪声强度大于 0 的 Flow-SDE：``openpi.noise_method: flow_sde``、``openpi.noise_level > 0``，并关闭 ``openpi.joint_logprob``。
+
+在符合条件的训练配置（例如 ``examples/embodiment/config/libero_object_ppo_openpi.yaml``）中加入以下内容：
+
+.. code:: yaml
+
+  algorithm:
+    kl_stop:
+      enabled: true
+      target_kl: 0.05
+
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
+
+   * - 参数
+     - 说明
+   * - ``algorithm.kl_stop.enabled``
+     - 是否在每批 rollout 数据的多轮更新中启用 KL 早停。默认关闭（``false``）；启用后若没有有效动作块可供测量，仍按配置执行全部更新。
+   * - ``algorithm.kl_stop.target_kl``
+     - 触发早停的条件 KL 目标，启用时须填写有限的正数。
+   * - ``algorithm.kl_stop.cache_prefix``
+     - 仅训练 action expert 且 VLM prefix 已冻结、未使用 dropout 时，复用 prefix attention KV cache。启用后会用额外显存换取更少的 prefix 重复计算，默认关闭（``false``）。
+
+``train/actor/kl_stop/first_kl`` 和 ``train/actor/update_kl`` 分别记录第一次和最后一次 optimizer step 后的 KL，``train/actor/kl_stop/used_frac`` 是实际执行步数占计划步数的比例，``train/actor/optimizer_steps_used`` 是实际步数。其余训练指标见 :doc:`../reference/metrics`。
+
+
 env
 ---------------
 

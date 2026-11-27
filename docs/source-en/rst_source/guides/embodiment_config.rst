@@ -147,6 +147,41 @@ algorithm
 ``algorithm.group_size`` (responses per prompt; always > 1 for GRPO) is shared and
 documented in :doc:`basic_config`.
 
+Stop Actor Updates at a KL Target
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+KL early stopping skips the remaining actor updates for a rollout batch once the mean conditional KL reaches the target. Before the first optimizer step, the actor records the denoising transition distributions for a fixed set of action chunks. After each step, it compares the updated distributions with those recorded for the same transitions. The step that reaches the target still takes effect.
+
+Use this setting with synchronous FSDP OpenPI PPO or GRPO (see :doc:`../examples/embodied/pi0` for OpenPI setup). The training config must set:
+
+- ``algorithm.reward_type: chunk_level`` and ``algorithm.logprob_type: chunk_level``
+- ``openpi.noise_method: flow_sde``, ``openpi.noise_level > 0``, and ``openpi.joint_logprob: false``
+
+Add these keys to a matching config, such as ``examples/embodiment/config/libero_object_ppo_openpi.yaml``:
+
+.. code:: yaml
+
+  algorithm:
+    kl_stop:
+      enabled: true
+      target_kl: 0.05
+
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
+
+   * - Parameter
+     - Description
+   * - ``algorithm.kl_stop.enabled``
+     - Enable KL early stopping across optimizer updates for each rollout batch. Off by default (``false``). When enabled, the actor still runs the configured update budget if there are no valid chunks to score.
+   * - ``algorithm.kl_stop.target_kl``
+     - Finite positive KL threshold at which the actor stops remaining updates for the current batch.
+   * - ``algorithm.kl_stop.cache_prefix``
+     - Reuse the frozen VLM prefix attention KV cache across KL checks when training only the action expert without dropout. Saves repeated prefix computation at the cost of GPU memory. Off by default (``false``).
+
+Use ``train/actor/kl_stop/first_kl`` and ``train/actor/update_kl`` to compare the KL after the first and last optimizer steps, ``train/actor/kl_stop/used_frac`` for the fraction of scheduled steps that ran, and ``train/actor/optimizer_steps_used`` for the step count. See :doc:`../reference/metrics` for the full training metrics reference.
+
+
 env
 ---------------
 

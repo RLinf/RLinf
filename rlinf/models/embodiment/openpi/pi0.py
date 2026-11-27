@@ -21,8 +21,9 @@ subclasses (eval / RL / DAgger / DSRL) inherit this module.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from types import SimpleNamespace
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 import einops
 import torch
@@ -34,6 +35,9 @@ from rlinf.models.embodiment.openpi.modules import gemma, model, pointnet, sigli
 from rlinf.models.embodiment.openpi.modules.utils import _str_to_dtype
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
+
+ImageFeatures = tuple[tuple[torch.Tensor, torch.Tensor], ...]
+ReplayCache = Literal["observation", "vision", "prefix"]
 
 
 def make_attn_mask(input_mask: torch.Tensor, mask_ar: torch.Tensor) -> torch.Tensor:
@@ -201,20 +205,8 @@ class Pi0(model.BaseModel):
             nn.init.normal_(self.action_time_mlp_out.weight, std=0.02)
             nn.init.zeros_(self.action_time_mlp_out.bias)
 
-    def embed_prefix(
-        self, obs: model.Observation
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed the prefix (images + language + optional point cloud).
-
-        Returns:
-            tokens: (B, S, emb_dim) embedded tokens
-            input_mask: (B, S) mask of valid tokens
-            ar_mask: (S,) autoregressive mask (all False for prefix)
-        """
-        tokens = []
-        input_mask = []
-        ar_mask = []
-
+    def embed_images(self, obs: model.Observation) -> ImageFeatures:
+        """Return the SigLIP tokens and validity mask for each camera in order."""
         # Embed images through SigLIP in IMAGE_KEYS order (not dict iteration
         # order). Official OpenPI preprocess rebuilds cameras this way, then
         # concatenates ``list(observation.images.values())``.
@@ -236,6 +228,7 @@ class Pi0(model.BaseModel):
                     ]
                 ).tolist()
                 current_only_by_camera = dict(zip(history_names, current_only))
+        features = []
         for name in image_names:
             image_mask = obs.image_masks[name]
             if self._config.short_memory:
@@ -248,8 +241,29 @@ class Pi0(model.BaseModel):
                 image_mask = image_mask[:, -1]
             else:
                 image_tokens, _ = self.img(obs.images[name])
-            tokens.append(image_tokens)
+            features.append((image_tokens, image_mask))
+        return tuple(features)
 
+    def embed_prefix(
+        self,
+        obs: model.Observation,
+        *,
+        image_features: ImageFeatures | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Embed the prefix (images + language + optional point cloud).
+
+        Returns:
+            tokens: (B, S, emb_dim) embedded tokens
+            input_mask: (B, S) mask of valid tokens
+            ar_mask: (S,) autoregressive mask (all False for prefix)
+        """
+        tokens = []
+        input_mask = []
+        ar_mask = []
+        if image_features is None:
+            image_features = self.embed_images(obs)
+        for image_tokens, image_mask in image_features:
+            tokens.append(image_tokens)
             # Image tokens use bidirectional attention
             input_mask.append(
                 einops.repeat(image_mask, "b -> b s", s=image_tokens.shape[1])
@@ -450,7 +464,11 @@ class Pi0(model.BaseModel):
         return torch.square(v_t - u_t)
 
     def build_prefix_cache(
-        self, observation: model.Observation
+        self,
+        observation: model.Observation,
+        *,
+        return_prefix: bool = True,
+        image_features: ImageFeatures | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, tuple]:
         """Embed prefix tokens and run one LLM pass to build the KV cache.
 
@@ -464,13 +482,16 @@ class Pi0(model.BaseModel):
             prefix_mask: (B, prefix_len) bool mask of valid prefix positions.
             kv_cache:    per-layer KV cache to feed into subsequent suffix passes.
         """
-        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(
+            observation, image_features=image_features
+        )
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = torch.cumsum(prefix_mask.int(), dim=1) - 1
         outputs, kv_cache = self.llm(
             [prefix_tokens, None],
             positions=positions,
             mask=prefix_attn_mask,
+            return_prefix=return_prefix,
         )
         return outputs[0], prefix_mask, kv_cache
 
@@ -895,6 +916,63 @@ class Pi0(model.BaseModel):
             "rlt_loss": rlt_loss,
         }
 
+    def _vlm_modules(
+        self, *, include_action_expert: bool = False
+    ) -> Iterator[nn.Module]:
+        """Yield the modules owned by the vision and language prefix."""
+        yield self.img
+        llm = self.llm
+        yield llm.embedder
+        expert_ids = (0, 1) if include_action_expert else (0,)
+        for block in llm.layers:
+            for expert_id in expert_ids:
+                yield block.pre_attention_norms[expert_id]
+                yield block.pre_ffw_norms[expert_id]
+                yield block.mlps[expert_id]
+                attn = block.attn
+                for projections in (attn.q_proj, attn.k_proj, attn.v_proj, attn.o_proj):
+                    projection = projections[expert_id]
+                    if projection is not None:
+                        yield projection
+        for expert_id in expert_ids:
+            final_norm = llm.final_norms[expert_id]
+            if final_norm is not None:
+                yield final_norm
+
+    @staticmethod
+    def _has_dropout(module: nn.Module) -> bool:
+        return any(
+            (isinstance(child, nn.Dropout) and child.p > 0)
+            or (isinstance(child, nn.MultiheadAttention) and child.dropout > 0)
+            for child in module.modules()
+        )
+
+    def select_replay_cache(self, cache_prefix: bool) -> ReplayCache:
+        """Select cached replay inputs from the actor's training-time freeze plan."""
+        if not cache_prefix:
+            if any(p.requires_grad for p in self.img.parameters()) or self._has_dropout(
+                self.img
+            ):
+                return "observation"
+            return "vision"
+
+        modules = list(self._vlm_modules())
+        if self.pcd:
+            modules.append(self.pointnet)
+        modules.extend(block.dropout for block in self.llm.layers)
+        for module in modules:
+            if any(p.requires_grad for p in module.parameters()):
+                raise ValueError(
+                    "Prefix KV reuse requires frozen parameters, "
+                    f"got trainable parameters in {type(module).__name__}."
+                )
+            if self._has_dropout(module):
+                raise ValueError(
+                    "Prefix KV reuse requires dropout-free training, "
+                    f"got dropout in {type(module).__name__}."
+                )
+        return "prefix"
+
     def freeze_vlm(self, freeze_action_expert: bool = False) -> int:
         """Freeze PaliGemma (vision + LLM expert-0). Optionally freeze expert-1.
 
@@ -902,42 +980,11 @@ class Pi0(model.BaseModel):
         """
         self.img.eval()
         frozen = 0
-        for p in self.img.parameters():
-            if p.requires_grad:
-                p.requires_grad = False
-                frozen += 1
-        llm = self.llm
-        for p in llm.embedder.parameters():
-            if p.requires_grad:
-                p.requires_grad = False
-                frozen += 1
-        expert_ids = (0, 1) if freeze_action_expert else (0,)
-        for block in llm.layers:
-            for expert_id in expert_ids:
-                for sub in (
-                    block.pre_attention_norms[expert_id],
-                    block.pre_ffw_norms[expert_id],
-                    block.mlps[expert_id],
-                ):
-                    for p in sub.parameters():
-                        if p.requires_grad:
-                            p.requires_grad = False
-                            frozen += 1
-                attn = block.attn
-                for proj_list in (attn.q_proj, attn.k_proj, attn.v_proj, attn.o_proj):
-                    proj = proj_list[expert_id]
-                    if proj is None:
-                        continue
-                    for p in proj.parameters():
-                        if p.requires_grad:
-                            p.requires_grad = False
-                            frozen += 1
-        for expert_id in expert_ids:
-            if llm.final_norms[expert_id] is not None:
-                for p in llm.final_norms[expert_id].parameters():
-                    if p.requires_grad:
-                        p.requires_grad = False
-                        frozen += 1
+        for module in self._vlm_modules(include_action_expert=freeze_action_expert):
+            for p in module.parameters():
+                if p.requires_grad:
+                    p.requires_grad = False
+                    frozen += 1
         if freeze_action_expert:
             for name in (
                 "action_in_proj",

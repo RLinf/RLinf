@@ -1389,6 +1389,7 @@ def test_openpi_prefix_preserves_camera_inputs(siglip_with_history):
     policy = SimpleNamespace(
         img=vision, _config=SimpleNamespace(short_memory=True), pcd=False
     )
+    policy.embed_images = Pi0.embed_images.__get__(policy)
     with torch.no_grad():
         expected = torch.cat(
             [
@@ -1407,8 +1408,13 @@ def test_openpi_prefix_preserves_camera_inputs(siglip_with_history):
             decisions.append(kwargs["current_only"])
 
         handle = vision.register_forward_pre_hook(record_decision, with_kwargs=True)
-        actual, input_mask, _ = Pi0.embed_prefix(policy, observation)
+        features = policy.embed_images(observation)
         handle.remove()
+        observation.images = {}
+        observation.image_masks = {}
+        actual, input_mask, _ = Pi0.embed_prefix(
+            policy, observation, image_features=features
+        )
 
     assert decisions == [False, True, True]
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
@@ -7381,3 +7387,215 @@ def test_prefix_eval_config_validates_without_actor(monkeypatch, config_name):
     del cfg.actor
     validate_embodied_cfg(cfg)
     assert isinstance(get_model(cfg.rollout.model), PrefixPolicy)
+
+
+def _openpi_ppo_cfg(monkeypatch, overrides: dict[str, object] | None = None):
+    from hydra import compose, initialize_config_dir
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        cfg = compose(config_name="libero_object_ppo_openpi")
+    OmegaConf.update(
+        cfg,
+        "algorithm.kl_stop",
+        {"enabled": True, "target_kl": 0.05},
+        merge=False,
+        force_add=True,
+    )
+    for path, value in (overrides or {}).items():
+        OmegaConf.update(cfg, path, value, merge=False, force_add=True)
+    if cfg.runner.only_eval:
+        cfg.rollout.model = copy.deepcopy(cfg.actor.model)
+        cfg.rollout.model.openpi.task = "eval"
+    return cfg
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {},
+        {"algorithm.kl_stop.cache_prefix": True},
+        {"actor.model.openpi.task": "RL"},
+        {"algorithm.loss_type": "actor"},
+        {"runner.only_eval": True, "algorithm.kl_stop": True},
+    ],
+)
+def test_openpi_kl_stop_config_accepts_valid_settings(monkeypatch, overrides):
+    cfg = _openpi_ppo_cfg(monkeypatch, overrides)
+    validate_embodied_cfg(cfg)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "error"),
+    [
+        ({"algorithm.kl_stop": True}, "Expected mapping for algorithm.kl_stop"),
+        (
+            {"algorithm.kl_stop.enabled": "yes"},
+            "Expected boolean algorithm.kl_stop.enabled",
+        ),
+        (
+            {"algorithm.kl_stop.cache_prefix": 1},
+            "Expected boolean algorithm.kl_stop.cache_prefix",
+        ),
+        (
+            {"algorithm.kl_stop.target_kl": None},
+            "Expected a finite positive algorithm.kl_stop.target_kl",
+        ),
+        (
+            {"algorithm.kl_stop.target_kl": True},
+            "Expected a finite positive algorithm.kl_stop.target_kl",
+        ),
+        (
+            {"algorithm.kl_stop.target_kl": 0.0},
+            "Expected a finite positive algorithm.kl_stop.target_kl",
+        ),
+        (
+            {"algorithm.kl_stop.target_kl": float("inf")},
+            "Expected a finite positive algorithm.kl_stop.target_kl",
+        ),
+        (
+            {"algorithm.kl_stop.target_kl": float("nan")},
+            "Expected a finite positive algorithm.kl_stop.target_kl",
+        ),
+        ({"actor.model.openpi.noise_level": 0.0}, "algorithm.kl_stop requires"),
+        ({"actor.model.openpi.noise_level": None}, "algorithm.kl_stop requires"),
+        ({"actor.model.openpi.noise_level": True}, "algorithm.kl_stop requires"),
+        (
+            {"actor.model.openpi.noise_level": float("inf")},
+            "algorithm.kl_stop requires",
+        ),
+        (
+            {"actor.model.openpi.noise_level": float("nan")},
+            "algorithm.kl_stop requires",
+        ),
+        ({"algorithm.update_epoch": 0}, "algorithm.kl_stop requires"),
+        ({"algorithm.update_epoch": None}, "algorithm.kl_stop requires"),
+        ({"algorithm.update_epoch": True}, "algorithm.kl_stop requires"),
+        ({"algorithm.update_epoch": 1.5}, "algorithm.kl_stop requires"),
+        ({"actor.model.model_type": "openvla_oft"}, "algorithm.kl_stop requires"),
+        ({"actor.model.openpi.task": "eval"}, "algorithm.kl_stop requires"),
+        (
+            {"actor.model.openpi.noise_method": "flow_ode"},
+            "algorithm.kl_stop requires",
+        ),
+        ({"actor.model.openpi.joint_logprob": True}, "algorithm.kl_stop requires"),
+        ({"algorithm.logprob_type": "token_level"}, "algorithm.kl_stop requires"),
+        ({"algorithm.reward_type": "action_level"}, "algorithm.kl_stop requires"),
+        ({"algorithm.loss_type": "embodied_nft"}, "algorithm.kl_stop requires"),
+        ({"actor.training_backend": "megatron"}, "algorithm.kl_stop requires"),
+        ({"runner.use_training_pipeline": True}, "algorithm.kl_stop requires"),
+    ],
+)
+def test_openpi_kl_stop_config_rejects_invalid_settings(monkeypatch, overrides, error):
+    cfg = _openpi_ppo_cfg(monkeypatch, overrides)
+    with pytest.raises(ValueError, match=error):
+        validate_embodied_cfg(cfg)
+
+
+def _tiny_pi0_rl(*, joint_logprob: bool = False, train_expert_only: bool = True):
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+    from rlinf.models.embodiment.openpi.tasks.rl import Pi0RL, Pi0RLConfig
+
+    config = Pi0Config(
+        paligemma_variant="dummy",
+        action_expert_variant="dummy",
+        dtype="float32",
+        action_dim=8,
+        action_horizon=4,
+        max_token_len=6,
+    )
+    rl_cfg = Pi0RLConfig(
+        noise_method="flow_sde",
+        noise_level=0.5,
+        joint_logprob=joint_logprob,
+        train_expert_only=train_expert_only,
+    )
+    with patch(
+        "rlinf.models.embodiment.openpi.pi0.siglip.SigLIPViT",
+        lambda **kw: SigLIPViT(
+            variant="mu/32",
+            pool_type="none",
+            num_classes=kw["num_classes"],
+            dtype_mm=kw["dtype_mm"],
+        ),
+    ):
+        return Pi0RL(
+            config,
+            num_steps=3,
+            action_chunk=4,
+            action_env_dim=7,
+            rl_cfg=rl_cfg,
+        )
+
+
+def test_openpi_select_replay_cache_modes_and_rejections():
+    model = _tiny_pi0_rl(train_expert_only=False)
+    assert model.select_replay_cache(False) == "observation"
+    with pytest.raises(ValueError, match="frozen parameters"):
+        model.select_replay_cache(True)
+
+    model.freeze_vlm()
+    assert model.select_replay_cache(False) == "vision"
+    assert model.select_replay_cache(True) == "prefix"
+
+    model.img.encoder.layers[0].dropout1.p = 0.1
+    assert model.select_replay_cache(False) == "observation"
+    with pytest.raises(ValueError, match="dropout-free"):
+        model.select_replay_cache(True)
+
+    model.img.encoder.layers[0].dropout1.p = 0.0
+    next(model.llm.layers[0].mlps[0].parameters()).requires_grad_(True)
+    assert model.select_replay_cache(False) == "vision"
+    with pytest.raises(ValueError, match="frozen parameters"):
+        model.select_replay_cache(True)
+
+
+@pytest.mark.parametrize("replay_cache", ["observation", "vision", "prefix"])
+def test_openpi_replay_cache_capture_score_parity(replay_cache):
+    torch.manual_seed(0)
+    model = _tiny_pi0_rl(train_expert_only=replay_cache != "observation")
+    if replay_cache != "observation":
+        model.freeze_vlm()
+    model.eval()
+
+    batch_size = 2
+    forward_inputs = {
+        **{
+            f"obs_image__{name}": torch.randn(batch_size, 224, 224, 3)
+            for name in IMAGE_KEYS
+        },
+        **{
+            f"obs_image_mask__{name}": torch.ones(batch_size, dtype=torch.bool)
+            for name in IMAGE_KEYS
+        },
+        "obs_state": torch.randn(batch_size, 8),
+        "tokenized_prompt": torch.randint(0, 32, (batch_size, 6)),
+        "tokenized_prompt_mask": torch.ones(batch_size, 6, dtype=torch.bool),
+        "chains": torch.randn(batch_size, 4, 4, 8),
+        "denoise_inds": torch.tensor([[0], [1]], dtype=torch.long),
+    }
+
+    captured = model.default_forward(
+        forward_inputs, denoise_probe="capture", replay_cache=replay_cache
+    )
+    probe = captured["denoise_probe"]
+    scored = model.default_forward(
+        probe["probe_inputs"], denoise_probe="score", replay_cache=replay_cache
+    )
+
+    torch.testing.assert_close(scored["denoise_mean"], probe["denoise_mean"])
+    torch.testing.assert_close(scored["denoise_std"], probe["denoise_std"])
+
+    with torch.no_grad():
+        model.action_out_proj.weight.add_(0.25)
+    rescored = model.default_forward(
+        probe["probe_inputs"], denoise_probe="score", replay_cache=replay_cache
+    )
+    assert not torch.allclose(rescored["denoise_mean"], probe["denoise_mean"])
+
+
+def test_openpi_kl_stop_probe_rejects_joint_logprob():
+    model = _tiny_pi0_rl(joint_logprob=True)
+    with pytest.raises(ValueError, match="joint_logprob=True"):
+        model.default_forward({}, denoise_probe="capture", replay_cache="observation")

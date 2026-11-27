@@ -14,7 +14,9 @@
 
 import math
 from collections import defaultdict
+from contextlib import nullcontext
 from functools import cached_property
+from itertools import chain
 from typing import Any, Callable, Iterator
 
 import numpy as np
@@ -69,6 +71,7 @@ from rlinf.utils.utils import (
     compute_trajectory_loss_mask,
     masked_mean,
 )
+from rlinf.workers.actor.update_kl_probe import UpdateKLProbe
 
 
 def _reshape_recompute_logprob_gap(
@@ -135,6 +138,16 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             // self._world_size
         )
         self.update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+
+        self._update_kl_probe = None
+        kl_stop = self.cfg.algorithm.get("kl_stop") or {}
+        if kl_stop.get("enabled", False):
+            self._update_kl_probe = UpdateKLProbe(
+                self._score_update_kl_probe,
+                target_kl=kl_stop.target_kl,
+                group=torch.distributed.group.WORLD,
+                cache_prefix=kl_stop.get("cache_prefix", False),
+            )
 
         self._sync_weight_comm_options = self.weight_syncer.comm_options
 
@@ -204,6 +217,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             model.load_state_dict(model_dict)
 
+        if self._update_kl_probe is not None:
+            self._update_kl_probe.configure_capture(model.select_replay_cache)
         return model
 
     def get_rollout_state_dict(self) -> dict:
@@ -912,6 +927,16 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
         return loss
 
+    @torch.no_grad()
+    def _score_update_kl_probe(self, forward_inputs: Any) -> dict[str, Any]:
+        with (
+            torch.random.fork_rng(
+                devices=[self.device], device_type=self.torch_device_type
+            ),
+            self.amp_context,
+        ):
+            return self.model(forward_inputs=forward_inputs, denoise_probe="score")
+
     @Worker.timer("run_training")
     def run_training(self) -> None:
         """
@@ -929,38 +954,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.cfg.algorithm.get("recompute_logprobs", False):
             for pool in self.rollout_batches:
                 append_to_dict(metrics, self.recompute_prev_logprobs(pool))
-        update_epoch = self.cfg.algorithm.get("update_epoch", 1)
-        for _ in range(update_epoch):
-            # See PPO paper for details. https://arxiv.org/abs/1707.06347
-            for micro_batches in self._global_batches():
-                global_batch_rows = sum(
-                    batch["prev_logprobs"].shape[0] for batch in micro_batches
-                )
-                self.optimizer.zero_grad()
-                for idx, batch in enumerate(micro_batches):
-                    self.train_micro_batch(
-                        micro_batch=batch,
-                        metrics=metrics,
-                        is_last=(idx + 1) == len(micro_batches),
-                        global_batch_rows=global_batch_rows,
-                    )
-                    # avoid gpu memory leak
-                    micro_batches[idx] = None
-                    del batch
+        try:
+            self._run_policy_updates(metrics)
+        finally:
+            if self._update_kl_probe is not None:
+                self._update_kl_probe.end_round()
 
-                self.torch_platform.empty_cache()
-
-                grad_norm, lr_list = self.optimizer_step()
-                data = {
-                    "actor/grad_norm": grad_norm,
-                    "actor/lr": lr_list[0],
-                }
-                if len(lr_list) > 1:
-                    data["critic/lr"] = lr_list[1]
-                append_to_dict(metrics, data)
-        # put LR scheduler step here
         self.lr_scheduler.step()
-        self.optimizer.zero_grad()
         clear_memory()
         explained_variance_stats = pop_critic_explained_variance_stats(metrics)
         mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
@@ -977,6 +977,51 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return mean_metric_dict
 
+    def _run_policy_updates(self, metrics: dict[str, list[float]]) -> None:
+        kl_probe = self._update_kl_probe
+        if kl_probe is not None:
+            kl_probe.begin_round(self.cfg.actor.global_batch_size // self._world_size)
+
+        updates_used = 0
+        self.optimizer.zero_grad()
+        global_batches = chain.from_iterable(
+            self._global_batches() for _ in range(self.update_epoch)
+        )
+        for micro_batches in global_batches:
+            global_batch_rows = sum(
+                batch["prev_logprobs"].shape[0] for batch in micro_batches
+            )
+            for idx, batch in enumerate(micro_batches):
+                self.train_micro_batch(
+                    micro_batch=batch,
+                    metrics=metrics,
+                    is_last=(idx + 1) == len(micro_batches),
+                    global_batch_rows=global_batch_rows,
+                    kl_probe=kl_probe
+                    if kl_probe is not None and kl_probe.needs_reference
+                    else None,
+                )
+                # Drop device tensors before staging the next microbatch.
+                micro_batches[idx] = None
+                del batch
+
+            if kl_probe is not None and updates_used == 0:
+                with self.worker_timer("update_kl_reference"):
+                    kl_probe.finish_reference()
+
+            self.finish_global_batch(metrics, kl_probe=kl_probe)
+            updates_used += 1
+            if kl_probe is not None and kl_probe.stopped:
+                break
+
+        if kl_probe is not None:
+            append_to_dict(
+                metrics,
+                kl_probe.round_metrics(
+                    updates_used, len(self._global_batch_plan) * self.update_epoch
+                ),
+            )
+
     def train_micro_batch(
         self,
         micro_batch: dict[str, torch.Tensor],
@@ -984,6 +1029,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         *,
         is_last: bool,
         global_batch_rows: int | None = None,
+        kl_probe: UpdateKLProbe | None = None,
     ) -> None:
         """Accumulate the gradient of one micro-batch.
 
@@ -993,6 +1039,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             is_last: Whether this micro-batch ends its global batch.
             global_batch_rows: Rows in the global batch; defaults to
                 ``gradient_accumulation`` micro-batches of this size.
+            kl_probe: Probe capturing the reference statistics for this batch.
         """
         micro_batch_rows = micro_batch["prev_logprobs"].shape[0]
         if global_batch_rows is None:
@@ -1007,7 +1054,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         loss_mask_ratio = micro_batch.get("loss_mask_ratio", None)
         forward_inputs = micro_batch.get("forward_inputs", None)
 
-        kwargs = {}
+        kwargs = kl_probe.capture_kwargs.copy() if kl_probe is not None else {}
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.OPENVLA,
             SupportedModel.OPENVLA_OFT,
@@ -1044,6 +1091,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 use_cache=False,
                 **kwargs,
             )
+
+        if kl_probe is not None:
+            kl_probe.capture_reference(output_dict.pop("denoise_probe"), loss_mask)
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T,
@@ -1155,14 +1205,26 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)
 
-    def finish_global_batch(self, metrics: dict[str, list[float]]) -> None:
+    def finish_global_batch(
+        self,
+        metrics: dict[str, list[float]],
+        *,
+        kl_probe: UpdateKLProbe | None = None,
+    ) -> None:
+        """Apply the optimizer step and optionally check the updated policy."""
         self.torch_platform.empty_cache()
         grad_norm, lr_list = self.optimizer_step()
         self.optimizer.zero_grad()
-        metric_data = {
-            "actor/grad_norm": grad_norm,
-            "actor/lr": lr_list[0],
-        }
-        if len(lr_list) > 1:
-            metric_data["critic/lr"] = lr_list[1]
-        append_to_dict(metrics, metric_data)
+        with (
+            self.worker_timer("update_kl_probe")
+            if kl_probe is not None
+            else nullcontext(),
+            kl_probe.check() if kl_probe is not None else nullcontext(),
+        ):
+            metric_data = {
+                "actor/grad_norm": grad_norm,
+                "actor/lr": lr_list[0],
+            }
+            if len(lr_list) > 1:
+                metric_data["critic/lr"] = lr_list[1]
+            append_to_dict(metrics, metric_data)

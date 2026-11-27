@@ -17,6 +17,7 @@ import importlib.util
 import logging
 import math
 import os
+from collections.abc import Mapping
 from dataclasses import asdict
 from enum import Enum
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional
@@ -1568,6 +1569,57 @@ def validate_embodied_cfg(cfg):
                 "Expected actor.fsdp_config.mixed_precision.cast_forward_inputs="
                 "false for LingBot-VLA V2, which keeps its SDE samples in fp32."
             )
+
+    if not only_eval:
+        raw_kl_stop = algorithm_cfg.get("kl_stop")
+        if raw_kl_stop is not None and not isinstance(raw_kl_stop, Mapping):
+            raise ValueError(
+                f"Expected mapping for algorithm.kl_stop, got {raw_kl_stop!r}."
+            )
+        kl_stop = raw_kl_stop or {}
+        kl_stop_enabled = kl_stop.get("enabled", False)
+        if not isinstance(kl_stop_enabled, bool):
+            raise ValueError(
+                f"Expected boolean algorithm.kl_stop.enabled, got {kl_stop_enabled!r}."
+            )
+        if kl_stop_enabled:
+            cache_prefix = kl_stop.get("cache_prefix", False)
+            if not isinstance(cache_prefix, bool):
+                raise ValueError(
+                    "Expected boolean algorithm.kl_stop.cache_prefix, "
+                    f"got {cache_prefix!r}."
+                )
+            target_kl = kl_stop.get("target_kl")
+            if type(target_kl) not in (int, float) or not 0 < target_kl < float("inf"):
+                raise ValueError(
+                    "Expected a finite positive algorithm.kl_stop.target_kl, "
+                    f"got {target_kl!r}."
+                )
+            openpi_cfg = model_cfg.get("openpi") or {}
+            noise_level = openpi_cfg.get("noise_level", 0)
+            update_epoch = algorithm_cfg.get("update_epoch", 1)
+            task = openpi_cfg.get("task")
+            if not (
+                model_type == SupportedModel.OPENPI
+                and isinstance(task, str)
+                and task.lower() == "rl"
+                and openpi_cfg.get("noise_method") == "flow_sde"
+                and type(noise_level) in (int, float)
+                and 0 < noise_level < float("inf")
+                and not openpi_cfg.get("joint_logprob", False)
+                and algorithm_cfg.get("loss_type") in ("actor", "actor_critic")
+                and algorithm_cfg.get("logprob_type") == "chunk_level"
+                and algorithm_cfg.get("reward_type") == "chunk_level"
+                and type(update_epoch) is int
+                and update_epoch >= 1
+                and not cfg.runner.get("use_training_pipeline", False)
+                and cfg.actor.training_backend == "fsdp"
+            ):
+                raise ValueError(
+                    "algorithm.kl_stop requires synchronous FSDP OpenPI "
+                    "PPO or GRPO with chunk-level rewards and logprobs, at least "
+                    "one update epoch, and single-step flow_sde with positive noise."
+                )
 
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
         # The actor-side recompute reshapes flat logprobs by ``action_dim`` for
