@@ -3,48 +3,48 @@ G1 动作数据准备
 
 为 :doc:`G1 动作跟踪环境 <g1_mimic>` 和 :doc:`SuperMimic <supermimic>` 准备参考动作片段，包括 LAFAN1 离线转换以及自定义 ``clip_*.pt`` 文件格式。
 
-**前置条件：** :doc:`安装 </rst_source/start/installation>` · :doc:`G1 动作跟踪环境 <g1_mimic>` 中的 SuperMimic 环境。
+**前置条件：** :doc:`安装 </rst_source/start/installation>` · 按 :doc:`supermimic` 创建的 ``.venv-supermimic`` 虚拟环境。
 
 安装与运行
 ----------
 
-先激活 :doc:`g1_mimic` 中创建的 SuperMimic 虚拟环境，以下所有命令均在 RLinf 仓库根目录执行。
+激活 ``.venv-supermimic`` 并在 RLinf 仓库根目录执行以下命令。
 
-离线转换 LAFAN1
----------------
+.. tab-set::
 
-训练机器无法访问 Hugging Face 时，可在另一台联网机器上完成下载和转换。转换机器需要 RLinf 代码以及装有 ``torch``、``numpy`` 和 ``omegaconf`` 的 Python 环境。由于转换会校验 mjlab G1 的默认关节姿态，需要先在训练机器上导出默认关节姿态：
+   .. tab-item:: 离线转换 LAFAN1
 
-1. 在训练机器上导出默认关节姿态到 ``g1_q0.pt``：
+      训练机器无法访问 Hugging Face 时，可在另一台联网机器上完成下载和转换。转换机器需要 RLinf 代码以及装有 ``torch``、``numpy`` 和 ``omegaconf`` 的 Python 环境。由于转换会校验 mjlab G1 的默认关节姿态，需要先在训练机器上导出该姿态：
 
-   .. code-block:: bash
+      **1. 在训练机器上导出默认关节姿态**
 
-      python toolkits/supermimic/prepare_lafan1.py --export-q0 g1_q0.pt
+      .. code-block:: bash
 
-2. 将 ``g1_q0.pt`` 复制到转换机器。
-3. 在转换机器上使用这个姿态文件，下载并转换 40 条片段：
+         python toolkits/supermimic/prepare_lafan1.py --export-q0 ./g1_q0.pt
 
-   .. code-block:: bash
+      **2. 将 ``g1_q0.pt`` 复制到联网机器并转换 40 条片段**
 
-      python toolkits/supermimic/prepare_lafan1.py --out /data/lafan1_g1 \
-          --q0-file /path/to/g1_q0.pt --accept-license
+      .. code-block:: bash
 
-4. 将整个 ``/data/lafan1_g1`` 目录（含 ``manifest.json``）复制到训练机器，并将 ``SUPERMIMIC_MOTION_PATH`` 指向这个目录。
+         python toolkits/supermimic/prepare_lafan1.py --out ./data/lafan1_g1 \
+             --q0-file ./g1_q0.pt --accept-license
 
-运行
-----
+      **3. 将 ``./data/lafan1_g1``\ （含 ``manifest.json``）复制回训练机器**
 
-按下方格式写出每条自定义 ``clip_*.pt`` 并放入同一目录（加载器按文件名排序读取），将 ``SUPERMIMIC_MOTION_PATH`` 指向该目录，训练时加 ``env.train.num_clips=null``\ （评测加 ``env.eval.num_clips=null``）即可加载目录下全部片段：
+      将 ``SUPERMIMIC_MOTION_PATH`` 指向 ``./data/lafan1_g1``，然后按 :doc:`supermimic` 启动训练。
 
-.. code-block:: bash
+   .. tab-item:: 自定义动作片段
 
-   export SUPERMIMIC_MOTION_PATH=/data/my_clips
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name supermimic_lafan1_gencoord \
-       env.train.num_clips=null \
-       runner.logger.log_path=/data/runs/supermimic_custom
+      按下方格式写出每条自定义 ``clip_*.pt`` 并放入同一目录（加载器按文件名排序读取），将 ``SUPERMIMIC_MOTION_PATH`` 指向该目录，训练时加 ``env.train.num_clips=null``\ （评测加 ``env.eval.num_clips=null``）即可加载目录下全部片段：
 
-评测超过 40 条片段时的容量配置见 :doc:`../../evaluations/guides/supermimic`。如果目录包含 ``manifest.json``，加载器会校验每条片段的 SHA-256 并拒绝未登记文件；不含 ``manifest.json`` 时仅检查张量形状与数值合法性。
+      .. code-block:: bash
+
+         export MUJOCO_GL=disabled
+         export SUPERMIMIC_MOTION_PATH=./data/my_clips
+         bash examples/embodiment/run_embodiment.sh supermimic_lafan1_gencoord \
+             env.train.num_clips=null
+
+      评测超过 40 条片段时的容量配置见 :doc:`../../evaluations/guides/supermimic`。如果目录包含 ``manifest.json``，加载器会校验每条片段的 SHA-256 并拒绝未登记文件；不含 ``manifest.json`` 时仅检查张量形状与数值合法性。
 
 片段文件格式
 ------------
@@ -94,4 +94,4 @@ G1 动作数据准备
      - 关节角速度
      - rad/s
 
-先用 ``python toolkits/supermimic/prepare_lafan1.py --export-q0 g1_q0.pt`` 导出默认关节姿态 ``g1_q0.pt``，再用 ``torch.save`` 将每条自定义片段字典保存为 ``clip_000.pt`` 等文件。训练与评测启动时，加载器会自动校验字段、关节顺序、``q0`` 一致性、四元数模长和数值有限性。
+先用 ``python toolkits/supermimic/prepare_lafan1.py --export-q0 ./g1_q0.pt`` 导出默认关节姿态，再用 ``torch.save`` 将每条自定义片段字典保存为 ``clip_000.pt`` 等文件。训练与评测启动时，加载器会自动校验字段、关节顺序、``q0`` 一致性、四元数模长和数值有限性。
