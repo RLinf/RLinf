@@ -27,7 +27,7 @@ A ``CollectiveGroup`` is the core abstraction in RLinf for managing point-to-poi
 It determines the local rank (0 or 1) from ``group_info`` and **lazily initializes** communication process groups on first use.
 Internally, separate **send** and **receive** process groups are created for both GPU (NCCL) and CPU (Gloo), forming dedicated one-way channels; in a two-worker setup, a carefully configured broadcast is equivalent to a send/receive.
 
-The first worker opens a TCP listener on a port assigned by the operating system. It publishes the port once the listener is bound and keeps the listener open while the peers connect and initialize their process groups.
+Rank 0 opens a TCP listener on an OS-assigned port, publishes the port once bound, and keeps it open while the other workers connect and initialize their process groups.
 
 Each direction maintains a work queue backed by a dedicated CUDA stream, strictly preserving the order of send/recv operations and preventing message interleaving.
 
