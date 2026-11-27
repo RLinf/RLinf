@@ -159,6 +159,8 @@ The evaluation runner coordinates env workers and rollout workers over channels 
         - PolaRiS tabletop manipulation evaluation configs.
       * - ``evaluations/realworld/``
         - Franka single-arm, Dual Franka RTC, and Dual YAM real-robot evaluation configs.
+      * - ``evaluations/rmbench/``
+        - RMBench bimanual Aloha evaluation configs.
       * - ``evaluations/robocasa365/``
         - RoboCasa365 pretrain task-slice evaluation configs.
       * - ``evaluations/robodojo/``

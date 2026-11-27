@@ -78,7 +78,15 @@ class RMBenchEnv:
             else None,
         }
         self._connection, child = Pipe()
+        sim_python = Path(params.sim_python).expanduser().absolute()
         env = os.environ.copy()
+        env["PATH"] = os.pathsep.join(
+            filter(None, (str(sim_python.parent), env.get("PATH")))
+        )
+        if (sim_python.parent.parent / "pyvenv.cfg").is_file():
+            env["VIRTUAL_ENV"] = str(sim_python.parent.parent)
+        else:
+            env.pop("VIRTUAL_ENV", None)
         repo_path = str(Path(__file__).resolve().parents[4])
         env["PYTHONPATH"] = os.pathsep.join(
             filter(None, (repo_path, env.get("PYTHONPATH")))
@@ -86,7 +94,7 @@ class RMBenchEnv:
         try:
             self._process = subprocess.Popen(
                 [
-                    str(Path(params.sim_python).expanduser().absolute()),
+                    str(sim_python),
                     "-m",
                     "rlinf.envs.sim.rmbench.sim_worker",
                     str(child.fileno()),

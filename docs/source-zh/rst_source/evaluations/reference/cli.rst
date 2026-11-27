@@ -144,6 +144,7 @@ Benchmark 环境变量
 - :doc:`../guides/maniskill_ood`
 - :doc:`../guides/polaris`
 - :doc:`../guides/realworld`
+- :doc:`../guides/rmbench`
 - :doc:`../guides/robolab`
 - :doc:`../guides/robotwin`
 - :doc:`../guides/simple`

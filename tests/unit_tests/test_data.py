@@ -6513,3 +6513,250 @@ def test_dataset_factory_import_does_not_require_gym():
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_write_episode_parquet_batches_and_embeds_images(tmp_path):
+    from io import BytesIO
+
+    import datasets
+    import pyarrow.parquet as pq
+
+    from rlinf.data.storage.lerobot.writer import _write_episode_parquet
+
+    features = datasets.Features(
+        {
+            "index": datasets.Value("int64"),
+            "observation.state": datasets.Sequence(datasets.Value("float32")),
+            "observation.images.cam_high": datasets.Image(),
+        }
+    )
+    num_frames = 20  # Exceeds the 16-row write batch size.
+    png_bytes = []
+    for idx in range(num_frames):
+        buf = BytesIO()
+        Image.new("RGB", (4, 4), color=(idx * 10, 20, 30)).save(buf, format="PNG")
+        png_bytes.append(buf.getvalue())
+
+    out_path = tmp_path / "data" / "chunk-000" / "episode_000000.parquet"
+    _write_episode_parquet(
+        out_path,
+        features,
+        {
+            "index": np.arange(num_frames, dtype=np.int64),
+            "observation.state": np.zeros((num_frames, 4), dtype=np.float32),
+            "observation.images.cam_high": [{"bytes": b} for b in png_bytes],
+        },
+    )
+
+    assert out_path.is_file()
+    assert not out_path.with_suffix(".parquet.tmp").exists()
+    table = pq.read_table(out_path)
+    assert table.num_rows == num_frames
+    decoded = table["observation.images.cam_high"].to_pylist()
+    with Image.open(BytesIO(decoded[-1]["bytes"])) as img:
+        assert img.getpixel((0, 0)) == (190, 20, 30)
+
+
+def test_write_embedded_episode_writes_parquet_and_validates_lengths(
+    tmp_path, monkeypatch
+):
+    from io import BytesIO
+    from types import ModuleType
+
+    import datasets
+    import pyarrow.parquet as pq
+
+    from rlinf.data.storage.lerobot.writer import write_embedded_episode
+
+    if importlib.util.find_spec("lerobot") is None:
+        compute_stats_mod = ModuleType("lerobot.common.datasets.compute_stats")
+        compute_stats_mod.auto_downsample_height_width = lambda arr: arr
+        compute_stats_mod.sample_indices = lambda n: list(range(n))
+
+        def _get_feature_stats(arr, axis, keepdims):
+            return {
+                "min": arr.min(axis=axis, keepdims=keepdims),
+                "max": arr.max(axis=axis, keepdims=keepdims),
+                "mean": arr.mean(axis=axis, keepdims=keepdims),
+                "std": arr.std(axis=axis, keepdims=keepdims),
+                "count": np.array([len(arr)]),
+            }
+
+        def _compute_episode_stats(columns, features):
+            return {
+                key: _get_feature_stats(np.asarray(columns[key]), axis=0, keepdims=True)
+                for key, spec in features.items()
+                if spec["dtype"] != "image"
+            }
+
+        compute_stats_mod.get_feature_stats = _get_feature_stats
+        compute_stats_mod.compute_episode_stats = _compute_episode_stats
+
+        utils_mod = ModuleType("lerobot.common.datasets.utils")
+        utils_mod.get_hf_features_from_features = lambda features: datasets.Features(
+            {
+                "observation.state": datasets.Sequence(datasets.Value("float32")),
+                "observation.images.cam_high": datasets.Image(),
+                "index": datasets.Value("int64"),
+                "frame_index": datasets.Value("int64"),
+                "episode_index": datasets.Value("int64"),
+                "task_index": datasets.Value("int64"),
+                "timestamp": datasets.Value("float32"),
+            }
+        )
+        for mod_name, mod in (
+            ("lerobot", ModuleType("lerobot")),
+            ("lerobot.common", ModuleType("lerobot.common")),
+            ("lerobot.common.datasets", ModuleType("lerobot.common.datasets")),
+            ("lerobot.common.datasets.compute_stats", compute_stats_mod),
+            ("lerobot.common.datasets.utils", utils_mod),
+        ):
+            monkeypatch.setitem(sys.modules, mod_name, mod)
+
+    class _FakeMeta:
+        def __init__(self, root: Path):
+            self.root = root
+            self.fps = 15
+            self.total_episodes = 0
+            self.total_frames = 0
+            self.tasks: dict[str, int] = {}
+            self.saved: list[tuple[int, int, list[str], dict]] = []
+            self.features = {
+                "observation.state": {"dtype": "float32", "shape": (2,), "names": None},
+                "observation.images.cam_high": {
+                    "dtype": "image",
+                    "shape": (4, 4, 3),
+                    "names": ("height", "width", "channel"),
+                },
+                "index": {"dtype": "int64", "shape": (1,), "names": None},
+                "frame_index": {"dtype": "int64", "shape": (1,), "names": None},
+                "episode_index": {"dtype": "int64", "shape": (1,), "names": None},
+                "task_index": {"dtype": "int64", "shape": (1,), "names": None},
+                "timestamp": {"dtype": "float32", "shape": (1,), "names": None},
+            }
+
+        def get_task_index(self, task: str):
+            return self.tasks.get(task)
+
+        def add_task(self, task: str):
+            self.tasks[task] = len(self.tasks)
+
+        def get_data_file_path(self, ep_index: int) -> Path:
+            return Path(f"data/chunk-000/episode_{ep_index:06d}.parquet")
+
+        def save_episode(
+            self, ep_index: int, ep_length: int, ep_tasks: list[str], ep_stats: dict
+        ):
+            self.total_episodes += 1
+            self.total_frames += ep_length
+            self.saved.append((ep_index, ep_length, ep_tasks, ep_stats))
+
+    def _png(color: tuple[int, int, int]) -> bytes:
+        buf = BytesIO()
+        Image.new("RGB", (4, 4), color=color).save(buf, format="PNG")
+        return buf.getvalue()
+
+    meta = _FakeMeta(tmp_path)
+    with pytest.raises(ValueError, match="Expected aligned, nonempty episode columns"):
+        write_embedded_episode(
+            meta,
+            {"observation.state": np.zeros((2, 2), dtype=np.float32)},
+            {"observation.images.cam_high": [_png((255, 0, 0))]},
+            "pick up cup",
+        )
+    with pytest.raises(ValueError, match="Expected aligned, nonempty episode columns"):
+        write_embedded_episode(
+            meta,
+            {"observation.state": np.zeros((0, 2), dtype=np.float32)},
+            {"observation.images.cam_high": []},
+            "pick up cup",
+        )
+
+    write_embedded_episode(
+        meta,
+        {"observation.state": np.arange(6, dtype=np.float32).reshape(3, 2)},
+        {"observation.images.cam_high": [_png((255, 0, 0))] * 3},
+        "pick up cup",
+    )
+    write_embedded_episode(
+        meta,
+        {"observation.state": np.ones((2, 2), dtype=np.float32)},
+        {"observation.images.cam_high": [_png((0, 255, 0))] * 2},
+        "pick up cup",
+    )
+
+    assert meta.tasks == {"pick up cup": 0}
+    assert (meta.total_episodes, meta.total_frames) == (2, 5)
+    ep1_stats = meta.saved[1][3]["observation.images.cam_high"]
+    np.testing.assert_allclose(ep1_stats["min"].reshape(-1), [0.0, 1.0, 0.0])
+    np.testing.assert_allclose(ep1_stats["max"].reshape(-1), [0.0, 1.0, 0.0])
+
+    table1 = pq.read_table(tmp_path / meta.get_data_file_path(1))
+    assert table1["index"].to_pylist() == [3, 4]
+    assert table1["frame_index"].to_pylist() == [0, 1]
+    assert table1["episode_index"].to_pylist() == [1, 1]
+    assert table1["task_index"].to_pylist() == [0, 0]
+    np.testing.assert_allclose(table1["timestamp"].to_pylist(), [0.0, 1.0 / 15.0])
+
+
+def test_rmbench_prepare_data_rgb_image_handles_xpl_rgb1_and_bgr_jpeg():
+    from io import BytesIO
+
+    from toolkits.rmbench.prepare_data import _rgb_image
+
+    # Unmarked JPEG storing BGR values (blue=(0, 0, 255) in RGB space) should swap back to red.
+    bgr_buf = BytesIO()
+    Image.new("RGB", (4, 4), color=(0, 0, 255)).save(
+        bgr_buf, format="JPEG", quality=100
+    )
+    converted = _rgb_image(bgr_buf.getvalue())
+    with Image.open(BytesIO(converted)) as img:
+        assert img.format == "PNG"
+        r, g, b = img.getpixel((0, 0))
+        assert r > 240 and g < 15 and b < 15
+
+    # Marked JPEG with an XPL-RGB1 COM segment (after another COM segment) passes through unchanged.
+    rgb_buf = BytesIO()
+    Image.new("RGB", (4, 4), color=(255, 0, 0)).save(
+        rgb_buf, format="JPEG", quality=100
+    )
+    raw = rgb_buf.getvalue()
+    assert raw[:2] == b"\xff\xd8"
+    other_com = (
+        b"\xff\xfe" + len(b"OTHER\x00").__add__(2).to_bytes(2, "big") + b"OTHER\x00"
+    )
+    xpl_com = b"\xff\xfe" + len(b"XPL-RGB1").__add__(2).to_bytes(2, "big") + b"XPL-RGB1"
+    marked = raw[:2] + other_com + xpl_com + raw[2:]
+    assert _rgb_image(marked) == marked
+
+
+def test_rmbench_prepare_data_update_stats_windows_and_tail_padding():
+    from toolkits.rmbench.prepare_data import _update_stats
+
+    class _Recorder:
+        def __init__(self):
+            self.batches: list[np.ndarray] = []
+
+        def update(self, batch: np.ndarray) -> None:
+            self.batches.append(np.asarray(batch))
+
+    delta_mask = np.array([True] * 6 + [False] + [True] * 6 + [False], dtype=bool)
+
+    def _aloha_delta_transform(item: dict) -> dict:
+        actions = item["actions"].copy()
+        actions[:, delta_mask] -= item["state"][delta_mask]
+        return {"state": item["state"], "actions": actions}
+
+    num_frames = 260  # Crosses the 256-frame batch boundary in _update_stats.
+    states = np.arange(num_frames * 14, dtype=np.float32).reshape(num_frames, 14)
+    actions = states + 10.0
+    stats = {"state": _Recorder(), "actions": _Recorder()}
+
+    _update_stats(stats, _aloha_delta_transform, {}, states, actions, np.arange(4))
+
+    assert [b.shape for b in stats["state"].batches] == [(256, 14), (4, 14)]
+    assert [b.shape for b in stats["actions"].batches] == [(256 * 4, 14), (4 * 4, 14)]
+    last_window = stats["actions"].batches[-1][-4:]
+    # At the final frame (index 259), all 4 horizon offsets clamp to frame 259.
+    np.testing.assert_allclose(last_window[:, 0], 10.0)
+    np.testing.assert_allclose(last_window[:, 6], actions[-1, 6])

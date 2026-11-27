@@ -84,7 +84,7 @@ action chunk. For current-frame evaluation, set
 Results and success semantics are described in
 :doc:`LIBERO Evaluation </rst_source/evaluations/guides/libero>`.
 
-For Aloha data and simulator evaluation, see the :doc:`RMBench recipe <../rmbench>`.
+For Aloha training and simulator evaluation, see the :doc:`RMBench example <../rmbench>`.
 
 .. note::
 

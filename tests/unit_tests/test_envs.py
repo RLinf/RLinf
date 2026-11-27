@@ -14,7 +14,10 @@
 
 """Heterogeneous env modes, and the observations env workers send the policy."""
 
+import os
+import shlex
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -852,3 +855,270 @@ def test_config_needs_grpo_envs_to_stop_trajectories_at_their_first_done():
 
     with pytest.raises(AssertionError, match=r"env.train.envs.maniskill needs"):
         validate_env_training_cfg(cfg, layout, stage_num=1, actor_world_size=2)
+
+
+def _make_fake_rmbench_checkout(root: Path) -> Path:
+    (root / "assets" / "embodiments" / "aloha-agilex").mkdir(parents=True)
+    (root / "assets" / "objects").mkdir(parents=True)
+    scripts_dir = root / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (scripts_dir / "__init__.py").write_text("")
+    (scripts_dir / "eval_policy_xpolicylab.py").write_text(
+        """
+import json
+import os
+import numpy as np
+
+
+class UnStableError(RuntimeError):
+    pass
+
+
+class _FakeTask:
+    step_lim = 4
+
+    def __init__(self):
+        self.eval_success = False
+        self.max_reward = 0.0
+        self.plan_success = True
+        self.take_action_cnt = 0
+        self.instruction = ""
+
+    def setup_demo(self, *, seed, **kwargs):
+        self.take_action_cnt = 0
+        self.eval_success = False
+        self.plan_success = True
+
+    def play_once(self):
+        return {"info": {"seed": 0}}
+
+    def check_success(self):
+        return self.plan_success
+
+    def close_env(self, clear_cache=False):
+        pass
+
+    def set_instruction(self, instruction):
+        self.instruction = instruction
+
+    def get_obs(self):
+        tick = self.take_action_cnt
+        return {
+            "observation": {
+                "head_camera": {"rgb": np.full((4, 4, 3), tick + 1, dtype=np.uint8)},
+                "left_camera": {"rgb": np.full((4, 4, 3), tick + 11, dtype=np.uint8)},
+                "right_camera": {"rgb": np.full((4, 4, 3), tick + 21, dtype=np.uint8)},
+            },
+            "joint_action": {"vector": np.full(14, tick, dtype=np.float32)},
+        }
+
+    def take_action(self, action, action_type):
+        assert action_type == "qpos"
+        self.take_action_cnt += 1
+
+
+def class_decorator(name):
+    return _FakeTask()
+
+
+def load_task_args(args):
+    return {"data_type": {}, "clear_cache_freq": 5}, None
+
+
+def generate_episode_descriptions(name, info, episodes):
+    payload = json.dumps(
+        {
+            "path": os.environ.get("PATH", ""),
+            "virtual_env": os.environ.get("VIRTUAL_ENV"),
+            "cwd": os.getcwd(),
+        }
+    )
+    return [{"seen": [payload]}]
+""".lstrip()
+    )
+    return root
+
+
+def _make_fake_sim_python(venv_dir: Path, *, with_pyvenv_cfg: bool) -> Path:
+    bin_dir = venv_dir / "bin"
+    bin_dir.mkdir(parents=True)
+    if with_pyvenv_cfg:
+        (venv_dir / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    python_path = bin_dir / "python"
+    python_path.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+    python_path.chmod(0o755)
+    return python_path
+
+
+def _rmbench_env_cfg(
+    rmbench_path: Path,
+    sim_python: Path,
+    *,
+    save_video: bool = False,
+    video_dir: Path | None = None,
+):
+    return OmegaConf.create(
+        {
+            "env_type": "rmbench",
+            "rollout_epoch": 1,
+            "max_episode_steps": 4,
+            "auto_reset": False,
+            "ignore_terminations": False,
+            "seed": 0,
+            "init_params": {
+                "rmbench_path": str(rmbench_path),
+                "sim_python": str(sim_python),
+                "task_name": "observe_and_pickup",
+                "instruction_type": "seen",
+            },
+            "short_memory": None,
+            "video_cfg": {
+                "save_video": save_video,
+                "video_base_dir": str(video_dir or rmbench_path / "videos"),
+                "fps": 4,
+            },
+        }
+    )
+
+
+def test_get_env_cls_returns_rmbench_env():
+    from rlinf.envs import get_env_cls
+    from rlinf.envs.sim.rmbench.rmbench_env import RMBenchEnv
+
+    assert get_env_cls("rmbench") is RMBenchEnv
+
+
+def test_rmbench_env_validates_config_and_assets(tmp_path):
+    from rlinf.envs.sim.rmbench.rmbench_env import RMBenchEnv
+
+    rmbench_dir = tmp_path / "RMBench"
+    rmbench_dir.mkdir()
+    sim_python = tmp_path / "python"
+    cfg = _rmbench_env_cfg(rmbench_dir, sim_python)
+
+    with pytest.raises(ValueError, match="one environment and one worker"):
+        RMBenchEnv(
+            cfg, num_envs=2, seed_offset=0, total_num_processes=1, worker_info=None
+        )
+    with pytest.raises(ValueError, match="one environment and one worker"):
+        RMBenchEnv(
+            cfg, num_envs=1, seed_offset=0, total_num_processes=2, worker_info=None
+        )
+
+    bad_reset = OmegaConf.merge(cfg, {"auto_reset": True})
+    with pytest.raises(
+        ValueError, match="auto_reset=false and ignore_terminations=false"
+    ):
+        RMBenchEnv(
+            bad_reset,
+            num_envs=1,
+            seed_offset=0,
+            total_num_processes=1,
+            worker_info=None,
+        )
+
+    with pytest.raises(FileNotFoundError, match="Missing RMBench assets"):
+        RMBenchEnv(
+            cfg, num_envs=1, seed_offset=0, total_num_processes=1, worker_info=None
+        )
+
+    (rmbench_dir / "assets" / "embodiments" / "aloha-agilex").mkdir(parents=True)
+    with pytest.raises(FileNotFoundError, match="Missing RMBench assets"):
+        RMBenchEnv(
+            cfg, num_envs=1, seed_offset=0, total_num_processes=1, worker_info=None
+        )
+
+
+@pytest.mark.parametrize("has_pyvenv", [True, False])
+def test_rmbench_env_sanitizes_sim_env_and_runs_pipe_ipc(
+    tmp_path, monkeypatch, has_pyvenv
+):
+    import json
+
+    from rlinf.envs.sim.rmbench.rmbench_env import RMBenchEnv
+
+    rmbench_dir = _make_fake_rmbench_checkout(tmp_path / "RMBench")
+    sim_venv = tmp_path / "sim_venv"
+    sim_python = _make_fake_sim_python(sim_venv, with_pyvenv_cfg=has_pyvenv)
+
+    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "openpi_venv"))
+    monkeypatch.setenv(
+        "PATH",
+        os.pathsep.join(
+            [str(tmp_path / "openpi_venv" / "bin"), os.environ.get("PATH", "")]
+        ),
+    )
+
+    env = RMBenchEnv(
+        _rmbench_env_cfg(rmbench_dir, sim_python),
+        num_envs=1,
+        seed_offset=0,
+        total_num_processes=1,
+        worker_info=None,
+    )
+    try:
+        obs, info = env.reset()
+        assert info == {}
+        assert isinstance(obs["main_images"], torch.Tensor)
+        assert obs["main_images"].shape == (1, 4, 4, 3)
+        assert obs["wrist_images"].shape == (1, 2, 4, 4, 3)
+        assert obs["states"].shape == (1, 14)
+
+        child_env = json.loads(obs["task_descriptions"][0])
+        assert child_env["path"].split(os.pathsep)[0] == str(sim_python.parent)
+        assert Path(child_env["cwd"]) == rmbench_dir.resolve()
+        if has_pyvenv:
+            assert child_env["virtual_env"] == str(sim_venv)
+        else:
+            assert child_env["virtual_env"] is None
+
+        step_obs, reward, terminated, truncated, step_info = env.step(
+            np.zeros((1, 14), dtype=np.float32)
+        )
+        assert step_obs["states"].shape == (1, 14)
+        assert torch.equal(reward, torch.zeros(1))
+        assert not terminated.item()
+        assert not truncated.item()
+        assert step_info == {}
+
+        obs_list, rewards, terminations, truncations, infos = env.chunk_step(
+            np.zeros((1, 3, 14), dtype=np.float32)
+        )
+        assert len(obs_list) == 1
+        assert rewards.shape == (1, 3)
+        assert not terminations.any()
+        assert truncations.tolist() == [[False, False, True]]
+        assert infos[-1]["episode"]["episode_len"].item() == 4
+        assert not infos[-1]["episode"]["success_once"].item()
+    finally:
+        env.close()
+
+    assert env._process is None
+    env.close()
+
+
+def test_rmbench_env_works_with_record_video(tmp_path):
+    from rlinf.envs.sim.rmbench.rmbench_env import RMBenchEnv
+    from rlinf.envs.wrappers.record_video import RecordVideo
+
+    rmbench_dir = _make_fake_rmbench_checkout(tmp_path / "RMBench")
+    sim_python = _make_fake_sim_python(tmp_path / "sim_venv", with_pyvenv_cfg=True)
+    video_dir = tmp_path / "videos"
+    cfg = _rmbench_env_cfg(
+        rmbench_dir, sim_python, save_video=True, video_dir=video_dir
+    )
+    env = RecordVideo(
+        RMBenchEnv(
+            cfg, num_envs=1, seed_offset=0, total_num_processes=1, worker_info=None
+        ),
+        cfg.video_cfg,
+    )
+    try:
+        env.reset()
+        env.chunk_step(np.zeros((1, 4, 14), dtype=np.float32))
+        env.flush_video()
+    finally:
+        env.close()
+
+    mp4_path = video_dir / "seed_0" / "0.mp4"
+    assert mp4_path.is_file() and mp4_path.stat().st_size > 0

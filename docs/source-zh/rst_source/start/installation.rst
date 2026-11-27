@@ -100,7 +100,7 @@
    * - ``--model``\ （:doc:`WAM / VLM / 生成 <../examples/vla_wam_index>`）
      - ``cosmos3``、``diffusion``、``dreamzero``、``fastwam``、``qwen3_vl``、``sglang``
    * - ``--env``\ （:doc:`仿真器 <../examples/simulators_index>`）
-     - ``behavior``、``calvin``、``d4rl``、``embodichain``、``frankasim``、``genesis``、``geniesim``、``habitat``、``isaaclab``、``libero``、``liberoplus``、``liberopro``、``maniskill_libero``、``metaworld``、``mujoco_warp``、``polaris``、``robocasa``、``robocasa365``、``robodojo``、``robolab``、``robotwin``、``roboverse``、``simple``、``supermimic``
+     - ``behavior``、``calvin``、``d4rl``、``embodichain``、``frankasim``、``genesis``、``geniesim``、``habitat``、``isaaclab``、``libero``、``liberoplus``、``liberopro``、``maniskill_libero``、``metaworld``、``mujoco_warp``、``polaris``、``rmbench``、``robocasa``、``robocasa365``、``robodojo``、``robolab``、``robotwin``、``roboverse``、``simple``、``supermimic``
    * - ``--env``\ （:doc:`世界模型 <../examples/world_model_index>`）
      - ``opensora``、``wan``
    * - ``--env``\ （:doc:`真机 <../examples/real_world_index>`）

@@ -437,6 +437,9 @@ FROM embodied-common-image AS embodied-rmbench-image
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env rmbench && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv rmbench-sim --env rmbench
 
+RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
+RUN link_assets
+
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 

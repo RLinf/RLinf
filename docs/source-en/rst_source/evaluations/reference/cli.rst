@@ -144,6 +144,7 @@ Full launch examples per benchmark:
 - :doc:`../guides/maniskill_ood`
 - :doc:`../guides/polaris`
 - :doc:`../guides/realworld`
+- :doc:`../guides/rmbench`
 - :doc:`../guides/robolab`
 - :doc:`../guides/robotwin`
 - :doc:`../guides/simple`

@@ -14,23 +14,20 @@
 
 """Convert RMBench demonstrations to LeRobot v2.1."""
 
+from __future__ import annotations
+
 import json
 from io import BytesIO
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import datasets
-import h5py
 import numpy as np
-import tqdm
-import tyro
-from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from openpi import transforms
-from openpi.shared import normalize
 from PIL import Image
 
-from rlinf.data.storage.lerobot.writer import write_embedded_episode
-from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 from rlinf.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    import h5py
 
 logger = get_logger()
 FPS = 15
@@ -88,6 +85,16 @@ def _rgb_image(data: bytes) -> bytes:
 
 def prepare_data(dataset_root: Path, output_dir: Path) -> None:
     """Write train/val LeRobot datasets and training-only OpenPI normalization."""
+    import datasets
+    import h5py
+    import tqdm
+    from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
+    from openpi import transforms
+    from openpi.shared import normalize
+
+    from rlinf.data.storage.lerobot.writer import write_embedded_episode
+    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
     tasks = sorted(dataset_root.glob("*/aloha_agilex/data"))
     if not tasks:
         raise ValueError(
@@ -183,4 +190,6 @@ def _update_stats(stats, transform, images, states, actions, action_offsets) -> 
 
 
 if __name__ == "__main__":
+    import tyro
+
     tyro.cli(prepare_data)

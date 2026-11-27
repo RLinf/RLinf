@@ -159,6 +159,8 @@ SGLang 服务评测指南
         - PolaRiS 桌面操作评测配置。
       * - ``evaluations/realworld/``
         - Franka 单臂、Dual Franka RTC 与 Dual YAM 真机评测配置。
+      * - ``evaluations/rmbench/``
+        - RMBench 双臂 Aloha 评测配置。
       * - ``evaluations/robocasa365/``
         - RoboCasa365 pretrain 任务切片评测配置。
       * - ``evaluations/robodojo/``
