@@ -1,5 +1,5 @@
-Training and Evaluation on RoboLab
-==================================
+RoboLab Training and Evaluation
+===============================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
    :align: center
@@ -74,20 +74,64 @@ Observation and Action
    * - Prompt
      - Natural-language instruction from the task metadata.
 
-Run It
-------
+Setup and Run
+-------------
 
-Follow the :doc:`evaluation guide <../../evaluations/guides/robolab>` to install the environment, download the ``RLinf-Pi05-RoboLab-droid-jointpos`` checkpoint, inspect tasks, and run evaluation.
+.. include:: _setup_common.rst
 
-For PPO training on ``BananaInBowlTask``, set ``actor.model.model_path`` in ``examples/embodiment/config/robolab_banana_in_bowl_ppo_openpi_pi05.yaml`` to your local checkpoint directory and launch from the RLinf repository root:
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: OpenPI π₀.₅
 
-   bash examples/embodiment/run_embodiment.sh robolab_banana_in_bowl_ppo_openpi_pi05
+      **1. Install**
 
-Logs and TensorBoard events are written to ``logs/<timestamp>-robolab_banana_in_bowl_ppo_openpi_pi05/``.
+      .. code-block:: bash
 
-Training uses per-environment auto-reset.
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robolab && source .venv/bin/activate
+
+      **2. Download**
+
+      Download the converted PyTorch checkpoint for RoboLab DROID joint-position tasks:
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos --local-dir ./RLinf-Pi05-RoboLab-droid-jointpos
+
+      **3. Launch**
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 46 30
+
+         * - Recipe
+           - Config
+           - Command suffix
+         * - OpenPI π₀.₅ (PPO)
+           - ``examples/embodiment/config/robolab_banana_in_bowl_ppo_openpi_pi05.yaml``
+           - ``robolab_banana_in_bowl_ppo_openpi_pi05``
+         * - OpenPI π₀.₅ (eval)
+           - ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml``
+           - ``robolab_pi05_droid_jointpos``
+
+      Launch PPO training on ``BananaInBowlTask`` (with per-environment auto-reset):
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh \
+           robolab_banana_in_bowl_ppo_openpi_pi05 \
+           actor.model.model_path=./RLinf-Pi05-RoboLab-droid-jointpos
+
+      Or run standalone evaluation on the default task (``BowlStackingLeftOnRightTask``, 10 episodes):
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
+           rollout.model.model_path=./RLinf-Pi05-RoboLab-droid-jointpos
+
+      Logs and TensorBoard events are written to ``logs/<timestamp>-<config_name>/``.
+
+Follow the :doc:`evaluation guide <../../evaluations/guides/robolab>` to export all 120 task definitions, configure task step limits, and run the full benchmark.
 
 .. warning::
 
@@ -96,7 +140,7 @@ Training uses per-environment auto-reset.
 Visualization and Results
 -------------------------
 
-Watch ``env/success_once`` and ``env/return`` during PPO training, and ``eval/success_once`` and ``eval/score`` during validation and evaluation, in the terminal or TensorBoard (``tensorboard --logdir <log_path>``). See :doc:`Training metrics <../../reference/metrics>` for training metric definitions. The following benchmark evaluation runs use the same 120 tasks and ten episodes per task; see the :doc:`evaluation guide <../../evaluations/guides/robolab>` for evaluation metrics and logs.
+Watch ``env/success_once`` and ``env/return`` during PPO training, and ``eval/success_once`` and ``eval/score`` during validation and evaluation, in the terminal or TensorBoard (``tensorboard --logdir ./logs --port 6006``). See :doc:`Training metrics <../../reference/metrics>` for training metric definitions. The following benchmark evaluation runs use the same 120 tasks and ten episodes per task; see the :doc:`evaluation guide <../../evaluations/guides/robolab>` for evaluation metrics and logs.
 
 
 .. list-table::

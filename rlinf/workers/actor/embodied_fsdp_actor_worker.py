@@ -91,6 +91,13 @@ def _reshape_recompute_logprob_gap(
 
 
 class EmbodiedFSDPActor(FSDPModelManager, Worker):
+    """FSDP-backed actor worker for embodied RL policy training.
+
+    Owns the sharded embodied policy model, optimizer, and weight syncer.
+    Receives trajectory batches over channels, computes advantages and policy
+    updates, and broadcasts updated parameters to rollout workers.
+    """
+
     # Class-level default for unit tests built with ``object.__new__``.
     _pool_env_names: list[str | None] = []
 

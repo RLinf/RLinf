@@ -51,6 +51,14 @@ from rlinf.utils.placement import HybridComponentPlacement
 
 
 class EnvWorker(Worker):
+    """Distributed environment worker for embodied training and evaluation.
+
+    Owns one or more simulator or real-world environment instances per rank.
+    Steps environments with actions from rollout workers, applies optional
+    reward models or wrappers, and streams observations and transitions over
+    channels.
+    """
+
     @classmethod
     def python_interpreter_for_rank(
         cls, rank: int, world_size: int, cfg: DictConfig, *args, **kwargs
@@ -1494,3 +1502,14 @@ class EnvWorker(Worker):
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
         return {**eval_metrics, **self.eval_assignment.scoped(eval_metrics)}
+
+    def finalize_eval_results(
+        self, env_results: list[dict | None], step: int | None = None
+    ) -> tuple[dict[str, float], str | None] | None:
+        """Summarize and optionally export eval results when the env provides a hook."""
+        if not getattr(self, "eval_env_list", None):
+            return None
+        finalize_fn = get_env_attr(self.eval_env_list[0], "finalize_eval_results")
+        if not callable(finalize_fn):
+            return None
+        return finalize_fn(self.cfg, env_results, step=step)

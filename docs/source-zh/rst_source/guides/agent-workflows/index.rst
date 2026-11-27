@@ -1,3 +1,5 @@
+:orphan:
+
 智能体工作流
 ============
 
@@ -11,11 +13,3 @@
      - 内容
    * - :doc:`智能体指南 <../agentic>`
      - 智能体任务的操作流程。
-   * - :doc:`Session Server <../session_server>`
-     - 在 rollout 节点上收集 agent 轨迹，支持 SGLang router 路由和 OpenAI chat completions 接口。
-
-.. toctree::
-   :hidden:
-
-   智能体指南 <../agentic>
-   Session Server <../session_server>

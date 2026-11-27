@@ -1,5 +1,5 @@
-异构环境
-========
+多 Env 混合训练
+===============
 
 在一次运行中，让同一个 policy 在多个不同的环境配置上联合训练或评估，例如 ManiSkill 与 LIBERO 联合训练、多个 LIBERO 任务集组合，或仿真与真机混合训练。
 
@@ -161,14 +161,12 @@ OpenVLA-OFT GRPO（ManiSkill 与 LIBERO）
 
    .. code-block:: bash
 
-      bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-      source .venv/bin/activate
+      bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-2. 下载权重：
+2. 下载权重（中国大陆用户可先设置 ``HF_ENDPOINT=https://hf-mirror.com``）：
 
    .. code-block:: bash
 
-      # 在中国大陆可设置 HF_ENDPOINT=https://hf-mirror.com。
       hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Main
       hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
@@ -186,8 +184,8 @@ OpenVLA-OFT GRPO（ManiSkill 与 LIBERO）
 
 5. 在终端指标表或 TensorBoard（目录位于 ``logs/<timestamp>-maniskill_libero_grpo_openvlaoft/`` ）中确认同时出现 ``env/libero_10/success_once`` （初始约 0.2）、 ``env/maniskill/success_once`` （初始约 0.09）和汇总的 ``env/success_once`` 。eval 和 rollout 指标采用同样的 ``<group>/<name>/<metric>`` 命名，视频保存在 ``<video_base_dir>/seed_<n>/<name>/`` 。如需查看各环境耗时，可设置 ``runner.per_worker_log: True`` 并查看 ``time/env/interact`` 。
 
-OpenPI PPO（LIBERO、RoboDojo 与 RoboLab）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+OpenPI 三仿真器 PPO
+~~~~~~~~~~~~~~~~~
 
 ``libero_robodojo_robolab_ppo_openpi_pi05`` 配置用 PPO 同时在三个仿真器上训练同一个共享的 OpenPI π₀.₅ policy。三个环境分别使用各自的相机布局、状态维度、动作维度（7、14、8）和独立 Python 环境。
 
@@ -214,7 +212,8 @@ OpenPI PPO（LIBERO、RoboDojo 与 RoboLab）
 3. 默认预设面向快速验证；正式训练前按以下方式调整训练与 rollout 配置：
 
    - 调大 ``runner.max_epochs`` 、 ``runner.val_check_interval`` 、 ``runner.save_interval`` 和 ``actor.model.num_steps`` 。
-   - 调大各环境的 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch`` 。每个环境的 ``max_steps_per_rollout_epoch`` 须为 ``actor.model.num_action_chunks`` 的整数倍，且所有环境的 chunk transition 总数（各环境 ``total_num_envs * rollout_epoch * (max_steps_per_rollout_epoch / num_action_chunks)`` 之和）须能被 ``actor.global_batch_size`` 整除。例如在 ``total_num_envs: 2`` 、 ``rollout_epoch: 1`` 、 ``num_action_chunks: 10`` 下，将三个环境的 rollout 步数设为 ``160`` / ``160`` / ``80`` ，总样本数为 ``32 + 32 + 16 = 80`` ，可被 ``actor.global_batch_size: 5`` 整除。
+   - 调大各环境的 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch`` ，每个 rollout 步数保持为 ``actor.model.num_action_chunks`` 的整数倍。
+   - 确保所有环境的 chunk transition 总数（各环境 ``total_num_envs * rollout_epoch * (max_steps_per_rollout_epoch / num_action_chunks)`` 之和）能被 ``actor.global_batch_size`` 整除。例如每个仿真器 2 个环境、rollout epoch 为 1、动作块长度为 10 时，160 / 160 / 80 的 rollout 步数产生 32 + 32 + 16 = 80 个样本，可被 5 整除。
    - 关闭各环境的 ``video_cfg.save_video`` 以加快长程训练速度。
 
 4. 激活任意一个 OpenPI 虚拟环境（例如 ``source .venv-libero/bin/activate`` ），在仓库根目录启动训练：

@@ -1,7 +1,7 @@
 Observation Compression
 =======================
 
-Image observations are the dominant payload on the Env :math:`\rightarrow`
+Image observations are the dominant payload on the Env →
 Rollout channel in embodied tasks. In bandwidth-constrained or multi-node
 setups, transferring these frames can throttle rollout throughput. RLinf can
 optionally compress them **losslessly** before transfer and reconstruct them on

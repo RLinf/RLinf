@@ -1,4 +1,4 @@
-Heterogeneous Envs
+Multi-Env Training
 ==================
 
 Train or evaluate one policy on multiple environment configurations in a single run, such as ManiSkill and LIBERO together, two LIBERO suites, or a simulator alongside a real robot.
@@ -163,14 +163,12 @@ Prerequisites:
 
    .. code-block:: bash
 
-      bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-      source .venv/bin/activate
+      bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-2. Download the checkpoints:
+2. Download the checkpoints (set ``HF_ENDPOINT=https://hf-mirror.com`` in mainland China):
 
    .. code-block:: bash
 
-      # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
       hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Main
       hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
@@ -216,7 +214,8 @@ Prerequisites:
 3. The preset is sized for a quick check. Before a full training run, adjust the schedule and rollout settings:
 
    - Raise ``runner.max_epochs``, ``runner.val_check_interval``, ``runner.save_interval``, and ``actor.model.num_steps``.
-   - Raise per-env ``max_episode_steps`` and ``max_steps_per_rollout_epoch``. Each ``max_steps_per_rollout_epoch`` must be a multiple of ``actor.model.num_action_chunks``, and the total chunk transitions across all environments — summing ``total_num_envs * rollout_epoch * (max_steps_per_rollout_epoch / num_action_chunks)`` — must be divisible by ``actor.global_batch_size``. For example, with ``total_num_envs: 2``, ``rollout_epoch: 1``, and ``num_action_chunks: 10``, rollout horizons of ``160`` / ``160`` / ``80`` produce ``32 + 32 + 16 = 80`` transitions, which divides evenly by ``actor.global_batch_size: 5``.
+   - Raise per-env ``max_episode_steps`` and ``max_steps_per_rollout_epoch``, keeping each rollout horizon a multiple of ``actor.model.num_action_chunks``.
+   - Keep total chunk transitions across all environments — summing ``total_num_envs * rollout_epoch * (max_steps_per_rollout_epoch / num_action_chunks)`` — divisible by ``actor.global_batch_size``. For example, with 2 envs per simulator, 1 rollout epoch, and 10 action chunks, rollout horizons of 160 / 160 / 80 yield 32 + 32 + 16 = 80 transitions, divisible by a global batch size of 5.
    - Disable ``video_cfg.save_video`` on each environment to speed up long runs.
 
 4. Activate one of the OpenPI environments (for example ``source .venv-libero/bin/activate``) and launch training from the repository root:

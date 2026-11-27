@@ -194,3 +194,85 @@ def test_libero_import_limits_fallbacks(monkeypatch, variant, packages):
     with pytest.raises(ImportError, match="Cannot import LIBERO envs"):
         utils.import_libero_module("envs")
     assert attempted == [f"{package}.envs" for package in packages]
+
+
+@pytest.mark.parametrize("num_trials", [2, 3, 4])
+def test_libero_eval_keeps_exhausted_slots_reset_without_recounting(
+    monkeypatch, num_trials
+):
+    gym = pytest.importorskip("gym")
+    from rlinf.envs.sim.libero.libero_env import LiberoEnv
+    from rlinf.envs.venv.venv import DummyVectorEnv
+
+    raw_obs = {
+        "agentview_image": np.zeros((2, 2, 3), dtype=np.uint8),
+        "robot0_eye_in_hand_image": np.zeros((2, 2, 3), dtype=np.uint8),
+        "robot0_eef_pos": np.zeros(3),
+        "robot0_eef_quat": np.array([0.0, 0.0, 0.0, 1.0]),
+        "robot0_gripper_qpos": np.zeros(2),
+    }
+
+    class Simulator(gym.Env):
+        def seed(self, seed):
+            return [seed]
+
+        def reset(self):
+            self.timestep = 0
+            return raw_obs
+
+        def set_init_state(self, state):
+            self.trial = int(state[0])
+            return raw_obs
+
+        def step(self, action):
+            if self.timestep >= 8:
+                raise ValueError("executing action in terminated episode")
+            self.timestep += 1
+            success = self.trial % 2 == 0 and self.timestep >= 3
+            return raw_obs, float(success), success, {}
+
+    monkeypatch.setenv("LIBERO_TYPE", "standard")
+    env = LiberoEnv.__new__(LiberoEnv)
+    env.cfg = OmegaConf.create(
+        {
+            "num_steps_wait": 1,
+            "reset_gripper_open": True,
+            "max_episode_steps": 2,
+            "reward_coef": 1,
+        }
+    )
+    env.num_envs = 2
+    env.seed = env.start_idx = 0
+    env.is_eval = env.auto_reset = env.ignore_terminations = True
+    env.is_start = env.is_libero_mem = env.use_rel_reward = env.use_step_penalty = False
+    env.skip_intermediate_renders = False
+    env.short_memory = env.specific_reset_id = env.current_raw_obs = None
+    env._eval_reset_pool = np.arange(2, num_trials)
+    env.reset_state_ids = np.array([0, 1])
+    env.trial_ids = env.reset_state_ids.copy()
+    env.cumsum_trial_id_bins = np.array([num_trials])
+    env.task_ids = np.array([0, 0])
+    env.task_descriptions = ["task", "task"]
+    env.task_suite = Mock()
+    env.task_suite.get_task_init_states.return_value = np.arange(num_trials)[:, None]
+    env.prev_step_reward = np.zeros(2)
+    env._elapsed_steps = np.zeros(2, dtype=np.int32)
+    env._init_metrics()
+    env.env = DummyVectorEnv([Simulator, Simulator])
+
+    counts = []
+    try:
+        env.reset(reset_state_ids=env.reset_state_ids)
+        for _ in range(6):
+            _, _, terminations, truncations, infos = env.chunk_step(np.zeros((2, 2, 7)))
+            counted = (terminations | truncations).any(dim=1)
+            counts.append(int(counted.sum()))
+            np.testing.assert_array_equal(infos[-1]["_final_info"], counted.numpy())
+    finally:
+        env.env.close()
+
+    assert counts == [2, num_trials - 2, 0, 0, 0, 0]
+    assert env._eval_seen_trials == {(0, trial) for trial in range(num_trials)}
+    assert env._task_success_stats == {
+        0: {"total": num_trials, "success": (num_trials + 1) // 2}
+    }

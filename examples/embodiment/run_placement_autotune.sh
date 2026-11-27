@@ -11,13 +11,15 @@ export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 export EMBODIED_PATH="${REPO_PATH}/examples/embodiment"
 ##
 
-if [ -z "$1" ]; then
+if [ -z "$1" ] || [[ "$1" == *=* ]] || [[ "$1" == +* ]] || [[ "$1" == ~* ]] || [[ "$1" == -* ]]; then
     CONFIG_NAME="maniskill_ppo_openvla_quickstart"
 else
     CONFIG_NAME=$1
+    shift
 fi
 
 
-python ${REPO_PATH}/toolkits/auto_placement/auto_placement_worker.py \
-    --config-path ${EMBODIED_PATH}/config \
-    --config-name $CONFIG_NAME \
+python "${REPO_PATH}/toolkits/auto_placement/auto_placement_worker.py" \
+    --config-path "${EMBODIED_PATH}/config" \
+    --config-name "$CONFIG_NAME" \
+    "$@"

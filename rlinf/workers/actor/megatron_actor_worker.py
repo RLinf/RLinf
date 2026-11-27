@@ -52,6 +52,13 @@ except ImportError:
 
 
 class MegatronActor(MegatronWorker):
+    """Megatron-backed actor worker for distributed policy training.
+
+    Owns the Megatron policy model, optimizer, and optional reference weights.
+    Computes logprobs, advantages, and policy updates for reasoning and agentic
+    RL runs, and reshard-syncs updated weights to rollout workers.
+    """
+
     def __init__(
         self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role="actor"
     ):
