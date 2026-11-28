@@ -51,6 +51,26 @@ Env workers are assigned in listing order in proportion to ``total_num_envs``:
 
 Each env configuration must fill whole env workers, and its GRPO groups must divide evenly across actor workers. Use ``cluster.component_placement.env`` to place workers on specific GPUs or robot nodes (see :doc:`hetero`). Reordering ``envs`` or changing env counts shifts worker assignments, so recheck placement after either change.
 
+Workers on one node can host different simulators in separate Python environments. With three environments and two workers each, give ``env`` six ranks (for example ``env: 1-6``) and set ``num_workers`` and ``python_interpreter_path`` on every environment:
+
+.. code-block:: yaml
+
+   env:
+     train:
+       envs:
+         libero:
+           total_num_envs: 2
+           num_workers: 2
+           python_interpreter_path: /opt/venv/libero/bin/python
+
+Either every environment sets ``num_workers`` or none do. When set, their sum equals the ``env`` placement, ``total_num_envs`` is divisible by ``num_workers``, and every worker hosts the same number of environments.
+
+Interpreter overrides are all-or-none within each active layout: set ``python_interpreter_path`` on every environment under ``env.train.envs``, or omit it on all of them to use the node's default Python. The same rule applies to ``env.eval.envs`` when validation or evaluation is enabled. Because train and eval on the same env rank share one process, both must set the same ``python_interpreter_path`` (or neither sets one). Each interpreter must be able to import ``rlinf``, Ray, and its simulator.
+
+On its workers, an env configuration behaves as if it ran alone: seeds and reset
+states are split among its own workers, and an ``override_cfgs`` list has one
+item per worker of that env configuration.
+
 Align Observations and Action Statistics
 ----------------------------------------
 
@@ -80,6 +100,27 @@ For OpenVLA-OFT, set per-env ``unnorm_key`` under both ``env.train.envs`` and ``
          maniskill:
            unnorm_key: bridge_orig
 
+When environments differ in camera layout, state width, normalization statistics, or action width, configure per-env model I/O under ``actor.model.envs.<name>`` (matching the environment names under ``env.train.envs`` and ``env.eval.envs``). Standalone evaluation (``runner.only_eval: true``) reads these profiles from ``rollout.model.envs.<name>``. Rollout and actor workers isolate batches per configured environment and route each batch to its own transform profile on the shared policy network. For example, OpenPI configures each environment's transform preset and action width:
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_type: openpi
+       action_dim: 14
+       envs:
+         libero:
+           config_name: pi05_libero
+           action_dim: 7
+           norm_stats_path: /path/to/libero/norm_stats.json
+         robodojo:
+           config_name: pi05_aloha_robotwin
+           action_dim: 14
+           adapt_to_pi: false
+         robolab:
+           config_name: pi05_droid_robolab
+           action_dim: 8
+
 Balance Training
 ----------------
 
@@ -104,8 +145,11 @@ Each step collects ``total_num_envs * rollout_epoch`` trajectories per environme
 
 For Async PPO, ``algorithm.rollout_store_size_per_rank`` is measured in received trajectory shards per actor rank and must divide into integer quotas across environments (for example, set it to ``2`` for two environments with equal shard shares instead of the default ``1``). Off-policy replay (SAC, DAgger, RLT) allocates samples by ``total_num_envs * rollout_epoch * chunk_steps * loss_weight`` (``env_weighting`` does not change that ratio), and requires ``policy_obs`` when ``actor.mix_envs: True`` so all environments store one observation format.
 
-Run the Example
----------------
+Run the Examples
+----------------
+
+OpenVLA-OFT GRPO on ManiSkill and LIBERO
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ``maniskill_libero_grpo_openvlaoft`` config co-trains one OpenVLA-OFT policy with GRPO on LIBERO-10 and ManiSkill.
 
@@ -142,10 +186,51 @@ Prerequisites:
 
 5. Verify both environments in the terminal table or TensorBoard (under ``logs/<timestamp>-maniskill_libero_grpo_openvlaoft/``): look for ``env/libero_10/success_once`` (starting around 0.2) and ``env/maniskill/success_once`` (starting around 0.09) alongside the pooled ``env/success_once``. Eval and rollout metrics use the same ``<group>/<name>/<metric>`` naming, and videos save to ``<video_base_dir>/seed_<n>/<name>/``. To check per-env step latency, set ``runner.per_worker_log: True`` and read ``time/env/interact``.
 
+OpenPI PPO on LIBERO, RoboDojo, and RoboLab
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``libero_robodojo_robolab_ppo_openpi_pi05`` config trains one shared OpenPI π₀.₅ policy with PPO across three simulators with different camera layouts, state widths, action widths (7, 14, and 8), and Python environments.
+
+Prerequisites:
+
+- **Hardware**: 4 GPUs (GPUs 0–2 host the LIBERO, RoboDojo, and RoboLab env workers; GPU 3 hosts actor and rollout).
+- **Assets and checkpoint**: RoboDojo scene assets (see :doc:`../examples/embodied/robodojo`), one shared OpenPI π₀.₅ checkpoint (for example ``RLinf/RLinf-Pi05-LIBERO-SFT``), and each simulator's ``norm_stats.json``.
+
+1. Install the three simulator environments into separate venvs (see :doc:`../examples/embodied/robodojo` and :doc:`../examples/embodied/robolab` for simulator-specific prerequisites):
+
+   .. code-block:: bash
+
+      bash requirements/install.sh embodied --model openpi --env libero --venv .venv-libero
+      bash requirements/install.sh embodied --model openpi --env robodojo --venv .venv-robodojo
+      bash requirements/install.sh embodied --model openpi --env robolab --venv .venv-robolab
+
+2. Edit ``examples/embodiment/config/libero_robodojo_robolab_ppo_openpi_pi05.yaml`` to set your local paths:
+
+   - ``env.train.envs.<name>.python_interpreter_path``: Python binaries for ``libero``, ``robodojo``, and ``robolab`` (set ``env.eval.envs.<name>.python_interpreter_path`` to the same paths when validation is enabled).
+   - ``env.train.envs.robodojo.assets_path``: parent directory of RoboDojo's ``Assets/`` (set ``env.eval.envs.robodojo.assets_path`` too when validation is enabled).
+   - ``actor.model.model_path``: path to the shared OpenPI π₀.₅ checkpoint (``rollout.model.model_path`` inherits it).
+   - ``actor.model.envs.<name>.norm_stats_path``: normalization stats for ``libero``, ``robodojo``, and ``robolab``. Point RoboDojo and RoboLab at their own ``norm_stats.json`` before a full training run so their states and actions use the right scale.
+
+3. The preset is sized for a quick check. Before a full training run, adjust the schedule and rollout settings:
+
+   - Raise ``runner.max_epochs``, ``runner.val_check_interval``, ``runner.save_interval``, and ``actor.model.num_steps``.
+   - Raise per-env ``max_episode_steps`` and ``max_steps_per_rollout_epoch``, keeping each rollout horizon a multiple of ``actor.model.num_action_chunks``.
+   - Keep total chunk transitions across all environments — summing ``total_num_envs * rollout_epoch * (max_steps_per_rollout_epoch / num_action_chunks)`` — divisible by ``actor.global_batch_size``. For example, with 2 envs per simulator, 1 rollout epoch, and 10 action chunks, rollout horizons of 160 / 160 / 80 yield 32 + 32 + 16 = 80 transitions, divisible by a global batch size of 5.
+   - Disable ``video_cfg.save_video`` on each environment to speed up long runs.
+
+4. Activate one of the OpenPI environments (for example ``source .venv-libero/bin/activate``) and launch training from the repository root:
+
+   .. code-block:: bash
+
+      bash examples/embodiment/run_embodiment.sh libero_robodojo_robolab_ppo_openpi_pi05
+
+5. Check ``env/libero/success_once``, ``env/robodojo/success_once``, and ``env/robolab/success_once`` in the terminal table or TensorBoard under ``logs/<timestamp>-libero_robodojo_robolab_ppo_openpi_pi05/``.
+
 Supported Scope
 ---------------
 
 - Rollout backend: ``rollout.rollout_backend: huggingface``.
 - Per-env ``unnorm_key``: OpenVLA-OFT only.
-- NFT: requires ``policy_obs`` and ``algorithm.env_weighting: sample``, without per-env ``loss_weight``.
+- Per-env ``actor.model.envs`` / ``rollout.model.envs``: OpenPI only.
+- NFT: requires ``policy_obs`` and ``algorithm.env_weighting: sample``, without per-env ``loss_weight`` or multi-env ``actor.model.envs``.
 - Single-env only features: ``runner.use_training_pipeline``, online LeRobot collection for DAgger, DiffusionART, ``reward.use_reward_model``, ``smooth_intervene``, and ``runner.rtc``. RLT simulator replay requires all train environments to be ``maniskill_rlt``.

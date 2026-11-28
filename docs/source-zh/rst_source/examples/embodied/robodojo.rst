@@ -1,7 +1,7 @@
-RoboDojo 评测
-=============
+RoboDojo 训练与评测
+===================
 
-`RoboDojo <https://robodojo-benchmark.github.io/>`__ 是基于 Isaac Sim 的双臂操作基准，面向 ARX-X5 等机器人提供桌面整理、抓取、放置和工具使用任务。RLinf 将 RoboDojo 接入为 Gym 环境，用于 VLA 策略的 rollout 与评估，暂不支持 RL 训练。
+`RoboDojo <https://robodojo-benchmark.github.io/>`__ 是基于 Isaac Sim 的双臂操作基准，面向 ARX-X5 等机器人提供桌面整理、抓取、放置和工具使用任务。RLinf 将 RoboDojo 接入为 Gym 环境，用于 VLA policy 的 PPO 训练与评估。
 
 概览
 ----------------------------------------
@@ -19,7 +19,7 @@ RoboDojo 评测
    .. grid-item-card:: 算法
       :text-align: center
 
-      评估（π₀.₅）
+      PPO 与评估（π₀.₅）
 
    .. grid-item-card:: 任务
       :text-align: center
@@ -31,7 +31,7 @@ RoboDojo 评测
 
       1 节点 · 1+ GPU
 
-| **你将完成：** 安装环境 → 下载场景资产和 Pi_05 检查点 → 转换检查点 → 运行评估。
+| **你将完成：** 安装环境 → 下载场景资产和 Pi_05 检查点 → 转换检查点 → 运行训练或评估。
 | **前置条件：** :doc:`基础安装 </rst_source/start/installation>` · NVIDIA CUDA GPU · 至少 120 GB 可用磁盘空间。
 
 任务
@@ -77,7 +77,7 @@ RoboDojo 支持 Linux x86_64 与 NVIDIA CUDA GPU（暂不支持纯 CPU、macOS �
 
 .. tab-set::
 
-   .. tab-item:: OpenPI 评测
+   .. tab-item:: OpenPI π₀.₅
       :sync: openpi
 
       **1. 安装环境**
@@ -112,9 +112,32 @@ RoboDojo 支持 Linux x86_64 与 NVIDIA CUDA GPU（暂不支持纯 CPU、macOS �
 
       ``ROBODOJO_ASSETS_ROOT`` 必须指向包含 ``Assets/`` 的父目录，不能指向 ``Assets/`` 本身。务必保留 ``--include`` 过滤且只下载单个 run：完整仓库包含数 TB 数据，三次 ``Pi_05`` run（``joint-0``/``1``/``2``）合计约 70 GB。``ckpt/RoboDojo/Pi_0/`` 下为对应的 π₀ 检查点。
 
-      **3. 启动评测**
+      **3. 启动训练或评测**
 
-      ``evaluations/robodojo/robodojo_put_bottles_into_dustbin_pi05_eval.yaml`` 复用 ``examples/embodiment/config/env/robodojo_put_bottles_into_dustbin.yaml``\ （14 维动作 ``[6, 6, 1, 1]``、``state_action_order: aloha``），并自动从 ``rollout.model.model_path`` 推导 ``norm_stats_path``。启动评估：
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 46 30
+
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - OpenPI π₀.₅（PPO）
+           - ``examples/embodiment/config/robodojo_put_bottles_into_dustbin_ppo_openpi_pi05.yaml``
+           - ``robodojo_put_bottles_into_dustbin_ppo_openpi_pi05``
+         * - OpenPI π₀.₅（评测）
+           - ``evaluations/robodojo/robodojo_put_bottles_into_dustbin_pi05_eval.yaml``
+           - ``robodojo_put_bottles_into_dustbin_pi05_eval``
+
+      两份配置均复用 ``examples/embodiment/config/env/robodojo_put_bottles_into_dustbin.yaml``，使用 14 维 ALOHA 动作顺序并自动从 ``model_path`` 推导 ``norm_stats_path``。PPO 配置在训练环境启用随机布局与按环境自动重置，并用固定布局验证。启动 PPO 训练：
+
+      .. code-block:: bash
+
+         export ROBODOJO_ASSETS_ROOT=$PWD/data/robodojo
+         bash examples/embodiment/run_embodiment.sh \
+           robodojo_put_bottles_into_dustbin_ppo_openpi_pi05 \
+           actor.model.model_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5"
+
+      或启动独立评测：
 
       .. code-block:: bash
 
@@ -123,7 +146,11 @@ RoboDojo 支持 Linux x86_64 与 NVIDIA CUDA GPU（暂不支持纯 CPU、macOS �
            robodojo_put_bottles_into_dustbin_pi05_eval \
            rollout.model.model_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5"
 
-      日志写入 ``logs/<时间戳>-<配置名>/``，结果保存在 ``runner.logger.log_path``。
+      日志与 TensorBoard 事件写入 ``logs/<timestamp>-<config_name>/`` 。
+
+      .. warning::
+
+         保持 ``env.train.enable_offload: false`` 。RoboDojo 不支持在 rollout 与训练之间挂起并恢复运行中的仿真器。
 
    .. tab-item:: 仅安装环境
       :sync: env-only
@@ -204,7 +231,7 @@ RoboDojo 支持 Linux x86_64 与 NVIDIA CUDA GPU（暂不支持纯 CPU、macOS �
 可视化与结果
 ----------------------------------------
 
-执行 ``tensorboard --logdir ./logs --port 6006`` 启动 TensorBoard，关注任务成功率指标 ``eval/success_once``。传入 ``env.eval.video_cfg.save_video=True`` 可保存评估视频，完整指标定义见 :doc:`训练指标 <../../reference/metrics>`。
+执行 ``tensorboard --logdir ./logs --port 6006`` 启动 TensorBoard，查看 ``env/success_once``\ （PPO 训练）和 ``eval/success_once``\ （验证与评估）。传入 ``env.eval.video_cfg.save_video=True`` 可保存评估视频，完整指标定义见 :doc:`训练指标 <../../reference/metrics>` 。
 
 .. dropdown:: 常见问题
 

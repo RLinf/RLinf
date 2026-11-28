@@ -1,11 +1,10 @@
-RoboDojo Evaluation
-===================
+RoboDojo Training and Evaluation
+================================
 
 `RoboDojo <https://robodojo-benchmark.github.io/>`__ is an Isaac Sim-based
 benchmark for dual-arm manipulation. It includes tabletop rearrangement,
 pick-and-place, and tool-use tasks for robots such as ARX-X5. RLinf exposes
-RoboDojo as a Gym environment for evaluating VLA policies; RL training is not
-supported yet.
+RoboDojo as a Gym environment for PPO training and VLA policy evaluation.
 
 Overview
 --------
@@ -24,7 +23,7 @@ environment interface.
    .. grid-item-card:: Algorithms
       :text-align: center
 
-      Evaluation (π₀.₅)
+      PPO and evaluation (π₀.₅)
 
    .. grid-item-card:: Tasks
       :text-align: center
@@ -37,7 +36,7 @@ environment interface.
       1 node · 1+ GPU
 
 | **You'll do:** install → download scene assets and the Pi_05 checkpoint →
-  convert the checkpoint → run the evaluation.
+  convert the checkpoint → run training or evaluation.
 | **Prerequisites:** :doc:`Base installation </rst_source/start/installation>` ·
   an NVIDIA CUDA GPU · at least 120 GB of free disk space.
 
@@ -89,7 +88,7 @@ RoboDojo supports Linux x86_64 with an NVIDIA CUDA GPU (CPU-only, macOS, and AMD
 
 .. tab-set::
 
-   .. tab-item:: OpenPI Evaluation
+   .. tab-item:: OpenPI π₀.₅
       :sync: openpi
 
       **1. Install**
@@ -126,7 +125,30 @@ RoboDojo supports Linux x86_64 with an NVIDIA CUDA GPU (CPU-only, macOS, and AMD
 
       **3. Launch**
 
-      ``evaluations/robodojo/robodojo_put_bottles_into_dustbin_pi05_eval.yaml`` extends ``examples/embodiment/config/env/robodojo_put_bottles_into_dustbin.yaml`` (14-dim actions ``[6, 6, 1, 1]``, ``state_action_order: aloha``) and derives ``norm_stats_path`` from ``rollout.model.model_path`` automatically. Launch evaluation:
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 46 30
+
+         * - Recipe
+           - Config
+           - Command suffix
+         * - OpenPI π₀.₅ (PPO)
+           - ``examples/embodiment/config/robodojo_put_bottles_into_dustbin_ppo_openpi_pi05.yaml``
+           - ``robodojo_put_bottles_into_dustbin_ppo_openpi_pi05``
+         * - OpenPI π₀.₅ (eval)
+           - ``evaluations/robodojo/robodojo_put_bottles_into_dustbin_pi05_eval.yaml``
+           - ``robodojo_put_bottles_into_dustbin_pi05_eval``
+
+      Both recipes extend ``examples/embodiment/config/env/robodojo_put_bottles_into_dustbin.yaml`` with 14-dim ALOHA-order actions and derive ``norm_stats_path`` from ``model_path`` automatically. The PPO recipe uses random training layouts with per-environment auto-reset and fixed saved layouts for validation. Launch PPO training:
+
+      .. code-block:: bash
+
+         export ROBODOJO_ASSETS_ROOT=$PWD/data/robodojo
+         bash examples/embodiment/run_embodiment.sh \
+           robodojo_put_bottles_into_dustbin_ppo_openpi_pi05 \
+           actor.model.model_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5"
+
+      Or launch standalone evaluation:
 
       .. code-block:: bash
 
@@ -135,7 +157,11 @@ RoboDojo supports Linux x86_64 with an NVIDIA CUDA GPU (CPU-only, macOS, and AMD
            robodojo_put_bottles_into_dustbin_pi05_eval \
            rollout.model.model_path="$ROBODOJO_ASSETS_ROOT/ckpt/RoboDojo/Pi_05_robodojo_arx_x5"
 
-      Logs go to ``logs/<timestamp>-<config_name>/`` and results to ``runner.logger.log_path``.
+      Logs and TensorBoard events are written to ``logs/<timestamp>-<config_name>/``.
+
+      .. warning::
+
+         Keep ``env.train.enable_offload: false``. RoboDojo does not support suspending and resuming a live simulator between rollout and training.
 
    .. tab-item:: Environment Only
       :sync: env-only
@@ -216,7 +242,7 @@ RoboDojo supports Linux x86_64 with an NVIDIA CUDA GPU (CPU-only, macOS, and AMD
 Visualization and Results
 -------------------------
 
-Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` and watch ``eval/success_once``. Pass ``env.eval.video_cfg.save_video=True`` to save evaluation videos; see :doc:`Training metrics <../../reference/metrics>` for metric definitions.
+Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` and watch ``env/success_once`` (PPO training) and ``eval/success_once`` (validation and evaluation). Pass ``env.eval.video_cfg.save_video=True`` to save evaluation videos; see :doc:`Training metrics <../../reference/metrics>` for metric definitions.
 
 .. dropdown:: Troubleshooting
 

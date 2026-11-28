@@ -146,21 +146,21 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
 
       Train π₀ with PPO on the RoboCasa365 benchmark suite.
 
-   .. grid-item-card:: RoboDojo (Eval Only)
+   .. grid-item-card:: RoboDojo
       :img-top: https://media.luminis-sim.com/media/home/teaser.png
       :img-alt: RoboDojo benchmark
       :link: embodied/robodojo
       :link-type: doc
 
-      Evaluate π₀.₅ checkpoints on the RoboDojo manipulation benchmark.
+      Train and evaluate π₀.₅ with PPO on the RoboDojo dual-arm manipulation benchmark.
 
-   .. grid-item-card:: RoboLab (Eval Only)
+   .. grid-item-card:: RoboLab
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
       :img-alt: RoboLab manipulation benchmark
       :link: embodied/robolab
       :link-type: doc
 
-      Evaluate π₀.₅ across 120 DROID manipulation tasks on RoboLab.
+      Train and evaluate π₀.₅ with PPO across 120 DROID manipulation tasks on RoboLab.
 
    .. grid-item-card:: RoboTwin
       :img-top: https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif
@@ -200,7 +200,7 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
    Real-World Simulator <embodied/real_simulator>
    RoboCasa <embodied/robocasa>
    RoboCasa365 <embodied/robocasa365>
-   RoboDojo (Eval Only) <embodied/robodojo>
-   RoboLab (Eval Only) <embodied/robolab>
+   RoboDojo <embodied/robodojo>
+   RoboLab <embodied/robolab>
    RoboTwin <embodied/robotwin>
    RoboVerse <embodied/roboverse>

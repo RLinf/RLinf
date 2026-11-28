@@ -1367,7 +1367,17 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/evaluations/run.sh robodojo_put_bottles_into_dustbin_pi05_eval
 
+      - name: RoboDojo OpenPI Pi05 PPO smoke test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBODOJO_ASSETS_ROOT=/workspace/dataset/robodojo
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh robodojo_ppo_openpi_pi05
+
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
           rm -rf /tmp/tmp*
@@ -1860,6 +1870,15 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/evaluations/run.sh robolab_openpi_truncation_eval
+
+      - name: RoboLab OpenPI Pi05 PPO smoke test
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh robolab_ppo_openpi_pi05
 
       - name: Clean up
         if: always()

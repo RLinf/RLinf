@@ -227,10 +227,12 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         assert not self.is_weight_offloaded, (
             "Weight offloading is not supported when recomputing proximal logprobs."
         )
-        for batch in self.env_batches.values():
-            self._compute_proximal_logprobs(batch)
+        for name, batch in self.env_batches.items():
+            self._compute_proximal_logprobs(batch, env_name=self._model_env_name(name))
 
-    def _compute_proximal_logprobs(self, batch: dict[str, Any]) -> None:
+    def _compute_proximal_logprobs(
+        self, batch: dict[str, Any], *, env_name: str | None = None
+    ) -> None:
         t_dim = batch["prev_logprobs"].shape[0]
         b_dim = batch["prev_logprobs"].shape[1]
 
@@ -253,7 +255,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                     "This usually means batch splitting dropped nested dict fields."
                 )
 
-            model_kwargs = {}
+            model_kwargs: dict[str, Any] = {}
+            if env_name is not None:
+                model_kwargs["env_name"] = env_name
             if SupportedModel(self.cfg.actor.model.model_type) in [
                 SupportedModel.OPENVLA,
                 SupportedModel.OPENVLA_OFT,
@@ -331,13 +335,13 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         update_epoch = int(self.cfg.algorithm.get("update_epoch", 1))
 
         for _ in range(update_epoch):
-            for micro_batch_iter in self._global_batches():
+            for micro_batch_iter in self._global_batch_entries():
                 global_batch_rows = sum(
-                    batch["prev_logprobs"].shape[0] for batch in micro_batch_iter
+                    batch["prev_logprobs"].shape[0] for _, batch in micro_batch_iter
                 )
                 self.optimizer.zero_grad()
 
-                for mb_idx, data in enumerate(micro_batch_iter):
+                for mb_idx, (env_name, data) in enumerate(micro_batch_iter):
                     micro_batch_rows = data["prev_logprobs"].shape[0]
                     data = put_tensor_device(
                         data,
@@ -367,7 +371,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                             "This usually means batch splitting dropped nested dict fields."
                         )
 
-                    model_kwargs = {}
+                    model_kwargs: dict[str, Any] = {}
+                    if env_name is not None:
+                        model_kwargs["env_name"] = env_name
                     if SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.OPENVLA,
                         SupportedModel.OPENVLA_OFT,

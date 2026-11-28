@@ -41,6 +41,8 @@ from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
     """Embodied FSDP policy worker for NFT with off-policy support."""
 
+    _nft_env_name: str | None = None
+
     # =======================================================================
     # Initialization & Rollout Model Management
     # =======================================================================
@@ -212,11 +214,13 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
         self.model.train()
         self._order_training_batch()
         assert len(self.rollout_batches) == 1, (
-            "NFT training expects every env to send the policy the same "
-            f"observation format, got {len(self.rollout_batches)} formats; set "
-            "env.train.policy_obs to match them."
+            "NFT training expects every env to share one observation format "
+            f"and model I/O pool, got {len(self.rollout_batches)} pools; align "
+            "observations with env.train.policy_obs and do not split training "
+            "envs across multiple actor.model.envs profiles."
         )
         self.rollout_batch = self.rollout_batches[0]
+        self._nft_env_name = self._pool_env_names[0] if self._pool_env_names else None
         with torch.no_grad():
             self._precompute_nft_training_inputs()
 
@@ -389,6 +393,9 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
             ref_model.to(self.device)
             cleanup_rollout_model = True
 
+        env_kwargs = (
+            {"env_name": self._nft_env_name} if self._nft_env_name is not None else {}
+        )
         with torch.no_grad():
             for start in range(0, xcur.shape[0], micro_bs):
                 end = min(start + micro_bs, xcur.shape[0])
@@ -404,6 +411,7 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
                         "timesteps": t[start:end].to(device=self.device),
                     },
                     compute_values=False,
+                    **env_kwargs,
                 )
                 v_old_buffer.append(out["v_theta"].detach().cpu())
 
@@ -432,12 +440,16 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
             x_t.dtype,
             num_steps=self.model.config.num_steps,
         )
+        env_kwargs = (
+            {"env_name": self._nft_env_name} if self._nft_env_name is not None else {}
+        )
         with self.amp_context:
             output = self.model(
                 forward_type=ForwardType.NFT,
                 forward_inputs=forward_inputs,
                 nft_inputs={"x_t": x_t, "timesteps": timesteps},
                 compute_values=False,
+                **env_kwargs,
             )
         loss, metrics = compute_nft_loss(
             output["v_theta"],

@@ -1367,6 +1367,69 @@ def resolve_env_mode_cfg(mode_cfg: DictConfig, path: str, env_world_size: int) -
         )
 
 
+def validate_model_envs(cfg: DictConfig, model_cfg: DictConfig) -> None:
+    """Validate per-env model I/O entries under ``model.envs``.
+
+    Each entry under ``model.envs.<name>`` configures how one shared policy
+    handles observations and actions for the heterogeneous env ``<name>``.
+    Model-specific fields inside each entry are checked by the model's
+    registered ``validate_env_cfg`` hook.
+    """
+    model_envs = model_cfg.get("envs", None)
+    if model_envs is None:
+        return
+    assert isinstance(model_envs, DictConfig) and len(model_envs) > 0, (
+        f"model.envs must map env names to per-env model configs, got {model_envs!r}."
+    )
+    env_names: list[str] = []
+    for mode in ("train", "eval"):
+        mode_cfg = OmegaConf.select(cfg, f"env.{mode}", default=None)
+        if mode_cfg is not None and EnvLayout.is_heterogeneous(mode_cfg):
+            for name in mode_cfg[EnvLayout.ENVS_KEY]:
+                name_str = str(name)
+                if name_str not in env_names:
+                    env_names.append(name_str)
+    assert env_names, (
+        "model.envs requires heterogeneous env configs under env.train.envs or "
+        "env.eval.envs."
+    )
+
+    from rlinf.models import validate_model_env_cfg
+
+    for name, env_model_cfg in model_envs.items():
+        name_str = str(name)
+        assert name_str in env_names, (
+            f"model.envs.{name_str} must name an env under env.train.envs or "
+            f"env.eval.envs ({env_names}), got {name_str!r}."
+        )
+        assert isinstance(env_model_cfg, DictConfig), (
+            f"model.envs.{name_str} must be a mapping, got {env_model_cfg!r}."
+        )
+        validate_model_env_cfg(model_cfg, name_str, env_model_cfg)
+
+    only_eval = bool(
+        OmegaConf.select(cfg, "runner.only_eval", default=False)
+        or OmegaConf.select(cfg, "runner.task_type", default=None) == "embodied_eval"
+    )
+    if (
+        not only_eval
+        and OmegaConf.select(cfg, "algorithm.loss_type", default=None) == "embodied_nft"
+    ):
+        train_cfg = OmegaConf.select(cfg, "env.train", default=None)
+        if train_cfg is not None and EnvLayout.is_heterogeneous(train_cfg):
+            model_env_names = {str(name) for name in model_envs}
+            pool_profiles = {
+                str(name) if str(name) in model_env_names else None
+                for name in train_cfg[EnvLayout.ENVS_KEY]
+            }
+            assert len(pool_profiles) == 1, (
+                "NFT training requires every training env to share one model "
+                "I/O pool, so heterogeneous NFT cannot split training envs "
+                f"across model.envs profiles; got {sorted(model_env_names)} "
+                f"for env.train.envs {list(train_cfg[EnvLayout.ENVS_KEY])}."
+            )
+
+
 def validate_env_policy_fields(cfg: DictConfig, model_cfg: DictConfig) -> None:
     """Check that the policy reads every ``EnvSpec.POLICY_FIELDS`` an env config sets."""
     model_type = SupportedModel(model_cfg.model_type)
@@ -1579,6 +1642,7 @@ def validate_embodied_cfg(cfg):
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
     validate_env_policy_fields(cfg, model_cfg)
+    validate_model_envs(cfg, model_cfg)
     for index, adapter in enumerate(model_cfg.get("merged_loras", None) or []):
         assert adapter.get("path"), (
             f"Expected merged_loras[{index}] of the model config to set path, "
@@ -2220,6 +2284,17 @@ def validate_embodied_cfg(cfg):
             env_cfg.get("enable_offload", False) for env_cfg in train_env_cfgs.values()
         )
         eval_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("eval", None), "env.eval")
+        terminal_offload_envs = {
+            SupportedEnvType.ROBODOJO,
+            SupportedEnvType.ROBOLAB,
+        }
+        for env_path, env_cfg in {**train_env_cfgs, **eval_env_cfgs}.items():
+            env_type = SupportedEnvType(env_cfg.env_type)
+            if env_type in terminal_offload_envs:
+                assert not env_cfg.get("enable_offload", False), (
+                    f"{env_path}.enable_offload must be false for {env_type.value}; "
+                    "its Isaac simulator lifecycle does not support suspend/resume."
+                )
         for env_cfg in eval_env_cfgs.values():
             if SupportedEnvType(env_cfg.env_type) == SupportedEnvType.MANISKILL:
                 with open_dict(env_cfg):

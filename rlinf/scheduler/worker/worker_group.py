@@ -272,6 +272,12 @@ class WorkerGroup(Generic[WorkerClsType]):
                 )
             )
 
+            interpreter = self._worker_cls.python_interpreter_for_rank(
+                placement.rank,
+                len(placements),
+                *self._worker_cls_args,
+                **self._worker_cls_kwargs,
+            )
             worker = self._cluster.allocate(
                 cls=self._worker_cls,
                 worker_name=worker_name,
@@ -283,6 +289,7 @@ class WorkerGroup(Generic[WorkerClsType]):
                 disable_distributed_log=self._disable_distributed_log,
                 cls_args=self._worker_cls_args,
                 cls_kwargs=self._worker_cls_kwargs,
+                python_interpreter_path=interpreter,
             )
 
             self._workers.append(
@@ -292,8 +299,12 @@ class WorkerGroup(Generic[WorkerClsType]):
             node_group = self._cluster.get_node_group(placement.node_group_label)
             node = self._cluster.get_node_info(placement.cluster_node_rank)
             cfg_env_vars = node_group.get_node_env_vars(placement.cluster_node_rank)
+            node_python = (
+                node_group.get_node_python_interpreter_path(placement.cluster_node_rank)
+                or node.python_interpreter_path
+            )
             Worker.logger.debug(
-                f"Worker rank {placement.rank} in group {self.worker_group_name} launched with cfg env vars: {cfg_env_vars}, env vars: {env_vars}, python interpreter {node_group.get_node_python_interpreter_path(placement.cluster_node_rank) or node.python_interpreter_path}."
+                f"Worker rank {placement.rank} in group {self.worker_group_name} launched with cfg env vars: {cfg_env_vars}, env vars: {env_vars}, python interpreter {interpreter or node_python}."
             )
 
     def _attach_cls_func(self):

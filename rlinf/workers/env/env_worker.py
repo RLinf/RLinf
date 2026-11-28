@@ -36,7 +36,7 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.envs import SupportedEnvType, get_env_cls
 from rlinf.envs.action_utils import prepare_actions
-from rlinf.envs.layout import EnvAssignment, EnvLayout
+from rlinf.envs.layout import EnvAssignment, EnvLayout, resolve_env_worker_interpreter
 from rlinf.envs.policy_obs import PolicyObsSpec
 from rlinf.envs.utils import get_env_attr, get_rollout_info_receiver
 from rlinf.envs.wrappers import InsertDelay, RecordVideo
@@ -58,6 +58,14 @@ class EnvWorker(Worker):
     reward models or wrappers, and streams observations and transitions over
     channels.
     """
+
+    @classmethod
+    def python_interpreter_for_rank(
+        cls, rank: int, world_size: int, cfg: DictConfig, *args, **kwargs
+    ) -> str | None:
+        """Start this rank in the interpreter of the simulator it hosts."""
+        del args, kwargs
+        return resolve_env_worker_interpreter(cfg, rank, world_size)
 
     # Class-level default so the observation send path is safe even when the
     # instance is built without running ``__init__`` (e.g. ``object.__new__`` in
@@ -436,6 +444,14 @@ class EnvWorker(Worker):
             return
         await env.wait_delay()
 
+    def _env_action_dim(self, env_name: str | None) -> int:
+        model_envs = self.model_cfg.get("envs", None)
+        if env_name is not None and model_envs and env_name in model_envs:
+            env_action_dim = model_envs[env_name].get("action_dim")
+            if env_action_dim is not None:
+                return int(env_action_dim)
+        return int(self.model_cfg.action_dim)
+
     @Worker.timer("env_interact_step")
     def env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
@@ -452,7 +468,7 @@ class EnvWorker(Worker):
             env_type=self.train_assignment.cfg.env_type,
             model_type=self.model_cfg.model_type,
             num_action_chunks=self.model_cfg.num_action_chunks,
-            action_dim=self.model_cfg.action_dim,
+            action_dim=self._env_action_dim(self.train_assignment.name),
             policy=self.model_cfg.get("policy_setup", None),
             wm_env_type=self.train_assignment.cfg.get("wm_env_type", None),
             env_cfg=self.train_assignment.cfg,
@@ -553,7 +569,7 @@ class EnvWorker(Worker):
             env_type=self.eval_assignment.cfg.env_type,
             model_type=self.model_cfg.model_type,
             num_action_chunks=self.model_cfg.num_action_chunks,
-            action_dim=self.model_cfg.action_dim,
+            action_dim=self._env_action_dim(self.eval_assignment.name),
             policy=self.model_cfg.get("policy_setup", None),
             wm_env_type=self.eval_assignment.cfg.get("wm_env_type", None),
             env_cfg=self.eval_assignment.cfg,

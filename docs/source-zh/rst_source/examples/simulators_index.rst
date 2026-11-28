@@ -146,21 +146,21 @@
 
       在 RoboCasa365 基准套件上用 PPO 训练 π₀。
 
-   .. grid-item-card:: RoboDojo（仅评测）
+   .. grid-item-card:: RoboDojo
       :img-top: https://media.luminis-sim.com/media/home/teaser.png
       :img-alt: RoboDojo 基准
       :link: embodied/robodojo
       :link-type: doc
 
-      在 RoboDojo 操作基准上评测 π₀.₅ checkpoint。
+      在 RoboDojo 双臂操作基准上用 PPO 训练并评测 π₀.₅。
 
-   .. grid-item-card:: RoboLab（仅评测）
+   .. grid-item-card:: RoboLab
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
       :img-alt: RoboLab 操作基准
       :link: embodied/robolab
       :link-type: doc
 
-      在 RoboLab 的 120 个 DROID 操作任务上评测 π₀.₅。
+      在 RoboLab 的 120 个 DROID 操作任务上用 PPO 训练并评测 π₀.₅。
 
    .. grid-item-card:: RoboTwin
       :img-top: https://raw.githubusercontent.com/RoboTwin-Platform/RoboTwin/main/assets/files/50_tasks.gif
@@ -200,7 +200,7 @@
    真机仿真器 <embodied/real_simulator>
    RoboCasa <embodied/robocasa>
    RoboCasa365 <embodied/robocasa365>
-   RoboDojo（仅评测） <embodied/robodojo>
-   RoboLab（仅评测） <embodied/robolab>
+   RoboDojo <embodied/robodojo>
+   RoboLab <embodied/robolab>
    RoboTwin <embodied/robotwin>
    RoboVerse <embodied/roboverse>

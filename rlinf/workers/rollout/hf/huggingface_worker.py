@@ -68,6 +68,9 @@ class MultiStepRolloutWorker(Worker):
     updated weights from the actor and emits trajectory segments for training.
     """
 
+    # Class-level default for unit tests built with ``object.__new__``.
+    _model_env_names: frozenset[str] = frozenset()
+
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
 
@@ -77,6 +80,7 @@ class MultiStepRolloutWorker(Worker):
         self.only_eval = cfg.runner.get("only_eval", False)
         self.algorithm_cfg = cfg.get("algorithm", {})
         self.model_cfg = cfg.rollout.model if self.only_eval else cfg.actor.model
+        self._model_env_names = frozenset(self.model_cfg.get("envs") or ())
         self.actor_group_name = (
             cfg.actor.get("group_name", None)
             if cfg.get("actor", None) is not None
@@ -1094,6 +1098,125 @@ class MultiStepRolloutWorker(Worker):
             peer_ranks=peer_ranks,
         )
 
+    @staticmethod
+    def _action_trailing_shape(
+        item: torch.Tensor | ActionPayload,
+    ) -> tuple[int, ...]:
+        tensor = item.actions if isinstance(item, ActionPayload) else item
+        return tuple(int(dim) for dim in tensor.shape[1:])
+
+    def _send_decoupled_grouped_actions(
+        self,
+        output_channel: Channel,
+        actions_list: list[torch.Tensor | ActionPayload],
+        *,
+        tag: str,
+        split_sizes: list[int],
+        split_fn: Callable[[Any, list[int]], list[Any]] | None = None,
+    ) -> None:
+        """Send decoupled replies, bucketing by trailing shape when widths differ."""
+        shapes = [self._action_trailing_shape(item) for item in actions_list]
+
+        def _merge(items: list[torch.Tensor | ActionPayload]):
+            merged = merge_batch_values(items)
+            if isinstance(merged, torch.Tensor):
+                merged = merged.detach().cpu().contiguous()
+            return merged
+
+        if len(set(shapes)) == 1:
+            payload = _merge(actions_list)
+            self.send_to_recorded_batch_routes(
+                group_name=self.cfg.env.group_name,
+                channel=output_channel,
+                data=payload,
+                tag=tag,
+                split_fn=(
+                    self._split_action_payload
+                    if isinstance(payload, ActionPayload)
+                    else split_fn
+                ),
+                split_sizes=split_sizes,
+            )
+            return
+        routes = list(self.batch_router[tag])
+        if len(routes) != len(actions_list) or len(split_sizes) != len(actions_list):
+            raise ValueError(
+                f"Expected {len(actions_list)} recorded routes and split sizes "
+                f"for tag={tag!r}, got {len(routes)} routes and "
+                f"{len(split_sizes)} split sizes."
+            )
+        self.batch_router[tag] = []
+        buckets: dict[tuple[int, ...], list[int]] = {}
+        for position, shape in enumerate(shapes):
+            buckets.setdefault(shape, []).append(position)
+        for positions in buckets.values():
+            self.batch_router[tag] = [routes[position] for position in positions]
+            payload = _merge([actions_list[position] for position in positions])
+            self.send_to_recorded_batch_routes(
+                group_name=self.cfg.env.group_name,
+                channel=output_channel,
+                data=payload,
+                tag=tag,
+                split_fn=(
+                    self._split_action_payload
+                    if isinstance(payload, ActionPayload)
+                    else split_fn
+                ),
+                split_sizes=[split_sizes[position] for position in positions],
+            )
+
+    def _send_grouped_actions(
+        self,
+        output_channel: Channel,
+        actions_list: list[torch.Tensor | ActionPayload],
+        stage_id: int,
+        split_sizes: list[int] | None,
+        peer_ranks: list[int] | None,
+    ) -> None:
+        """Send per-request actions back, bucketing by trailing shape when they differ."""
+        if self.env_decoupled_mode:
+            if split_sizes is None:
+                raise ValueError("Decoupled policy output requires recorded routes.")
+            self._send_decoupled_grouped_actions(
+                output_channel,
+                actions_list,
+                tag="policy",
+                split_sizes=split_sizes,
+                split_fn=self._split_actions,
+            )
+            return
+        shapes = [self._action_trailing_shape(item) for item in actions_list]
+        per_request_peers = peer_ranks is not None and len(peer_ranks) == len(
+            actions_list
+        )
+        if len(set(shapes)) == 1:
+            self._send_actions(
+                output_channel,
+                merge_batch_values(actions_list),
+                stage_id,
+                split_sizes,
+                peer_ranks=peer_ranks,
+            )
+            return
+        if not per_request_peers:
+            raise RuntimeError(
+                "Policy replies have different action widths "
+                f"{sorted(set(shapes))}, so each reply needs its own destination rank."
+            )
+        buckets: dict[tuple[int, ...], list[int]] = {}
+        for position, shape in enumerate(shapes):
+            buckets.setdefault(shape, []).append(position)
+        for positions in buckets.values():
+            self._send_actions(
+                output_channel,
+                merge_batch_values([actions_list[position] for position in positions]),
+                stage_id,
+                None
+                if split_sizes is None
+                else [split_sizes[position] for position in positions],
+                peer_ranks=[peer_ranks[position] for position in positions],
+            )
+
     def _build_action_payload(
         self,
         actions: torch.Tensor,
@@ -1154,6 +1277,7 @@ class MultiStepRolloutWorker(Worker):
             None if single_reply_group else [None] * len(requests)
         )
         direct_actions: torch.Tensor | ActionPayload | None = None
+        published = []
         for (_, _, policy_fields, dagger_beta), indices in groups.items():
             policy_input = (
                 requests[indices[0]]
@@ -1188,6 +1312,47 @@ class MultiStepRolloutWorker(Worker):
                 ]
                 for index, shard in zip(indices, split_batch_value(payload, sizes)):
                     request_actions[index] = shard
+            published.append(
+                (policy_input, actions, forward_inputs, policy_output, policy_fields)
+            )
+
+        if len(replied) < len(requests):
+            if split_sizes is not None:
+                split_sizes = [split_sizes[index] for index in replied]
+            if peer_ranks is not None:
+                peer_ranks = [peer_ranks[index] for index in replied]
+            if (
+                self.env_decoupled_mode
+                and "policy" in self.batch_router
+                and len(self.batch_router["policy"]) == len(requests)
+            ):
+                self.batch_router["policy"] = [
+                    self.batch_router["policy"][index] for index in replied
+                ]
+        if replied:
+            if single_reply_group:
+                self._send_actions(
+                    output_channel,
+                    direct_actions,
+                    stage_id,
+                    split_sizes,
+                    peer_ranks=peer_ranks,
+                )
+            else:
+                self._send_grouped_actions(
+                    output_channel,
+                    [request_actions[index] for index in replied],
+                    stage_id,
+                    split_sizes,
+                    peer_ranks,
+                )
+        for (
+            policy_input,
+            actions,
+            forward_inputs,
+            policy_output,
+            policy_fields,
+        ) in published:
             # Omit raw observations when the collector does not consume them.
             transition_obs = policy_input.obs if self.collect_raw_transition_obs else {}
             if not policy_input.requires_inference:
@@ -1208,25 +1373,6 @@ class MultiStepRolloutWorker(Worker):
             # Attached parts close previously executed chunks.
             self._publish_env_parts(
                 policy_input, forward_inputs, actor_channel, dict(policy_fields)
-            )
-
-        if len(replied) < len(requests):
-            if split_sizes is not None:
-                split_sizes = [split_sizes[index] for index in replied]
-            if peer_ranks is not None:
-                peer_ranks = [peer_ranks[index] for index in replied]
-        if replied:
-            actions_to_send = (
-                direct_actions
-                if single_reply_group
-                else merge_batch_values([request_actions[index] for index in replied])
-            )
-            self._send_actions(
-                output_channel,
-                actions_to_send,
-                stage_id,
-                split_sizes,
-                peer_ranks=peer_ranks,
             )
 
     def _publish_final_inputs(
@@ -1332,9 +1478,8 @@ class MultiStepRolloutWorker(Worker):
             for stage_id in range(self.num_pipeline_stages)
         }
 
-    @staticmethod
     def _env_policy_fields(
-        layout: EnvLayout, env_ranks: Iterable[int]
+        self, layout: EnvLayout, env_ranks: Iterable[int]
     ) -> tuple[tuple[str, Any], ...]:
         """Return the policy fields shared by the envs of ``env_ranks``.
 
@@ -1343,16 +1488,20 @@ class MultiStepRolloutWorker(Worker):
             env_ranks: Env worker ranks whose observations form one batch.
 
         Returns:
-            The envs' :attr:`EnvSpec.policy_kwargs` as sorted items, which a
+            The envs' :attr:`EnvSpec.policy_kwargs` (plus ``env_name`` when
+            that env has an entry in ``model.envs``) as sorted items, which a
             batch can be grouped by.
 
         Raises:
             ValueError: If the envs set different policy fields.
         """
-        fields = {
-            tuple(sorted(layout.spec_of_rank(rank).policy_kwargs.items()))
-            for rank in env_ranks
-        }
+        fields = set()
+        for rank in env_ranks:
+            spec = layout.spec_of_rank(rank)
+            kwargs = dict(spec.policy_kwargs)
+            if spec.name is not None and spec.name in self._model_env_names:
+                kwargs["env_name"] = spec.name
+            fields.add(tuple(sorted(kwargs.items())))
         if len(fields) > 1:
             raise ValueError(
                 "Expected the envs of one batch to set the same policy fields, "
@@ -1360,9 +1509,8 @@ class MultiStepRolloutWorker(Worker):
             )
         return next(iter(fields), ())
 
-    @classmethod
     def _forward_key(
-        cls, layout: EnvLayout, env_ranks: Iterable[int], obs: Any
+        self, layout: EnvLayout, env_ranks: Iterable[int], obs: Any
     ) -> tuple[Any, tuple[tuple[str, Any], ...]]:
         """Return what observations must share to run in one forward pass.
 
@@ -1377,7 +1525,7 @@ class MultiStepRolloutWorker(Worker):
         Returns:
             ``(observation format, policy fields)``.
         """
-        return batch_format(obs), cls._env_policy_fields(layout, env_ranks)
+        return batch_format(obs), self._env_policy_fields(layout, env_ranks)
 
     @staticmethod
     def _decoupled_share(requests: int, world_size: int, rank: int) -> int:
@@ -1539,18 +1687,12 @@ class MultiStepRolloutWorker(Worker):
                     sizes = [split_sizes[index] for index in indices]
                     for index, shard in zip(indices, split_batch_value(actions, sizes)):
                         shard_actions[index] = shard
-                payload = merge_batch_values(shard_actions)
-                self.send_to_recorded_batch_routes(
-                    group_name=self.cfg.env.group_name,
-                    channel=output_channel,
-                    data=payload,
+                self._send_decoupled_grouped_actions(
+                    output_channel,
+                    shard_actions,
                     tag="rollout_results",
                     split_sizes=split_sizes,
-                    split_fn=(
-                        self._split_action_payload
-                        if isinstance(payload, ActionPayload)
-                        else self._split_actions
-                    ),
+                    split_fn=self._split_actions,
                 )
         else:
             requests_left = self._source_budgets(

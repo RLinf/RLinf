@@ -345,6 +345,9 @@ def preprocess_loss_inputs(
             returns = returns.flatten()
 
     bsz = logprobs.shape[0]
+    # A 3D logprobs tensor [bsz, num_action_chunks, action_dim] already carries
+    # this batch's action width, which can vary across heterogeneous envs.
+    action_dim = int(logprobs.shape[-1]) if logprobs.ndim == 3 else single_action_dim
     proximal_logprobs = kwargs.get("proximal_logprobs", None)
     rollout_logprobs = kwargs.get("rollout_logprobs", None)
     if logprob_type == "sequence_token_level":
@@ -370,14 +373,14 @@ def preprocess_loss_inputs(
 
     elif logprob_type == "token_level":
         # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks, action_dim]
-        logprobs = logprobs.reshape(bsz, -1, single_action_dim)
-        old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim)
+        logprobs = logprobs.reshape(bsz, -1, action_dim)
+        old_logprobs = old_logprobs.reshape(bsz, -1, action_dim)
         if proximal_logprobs is not None:
-            proximal_logprobs = proximal_logprobs.reshape(bsz, -1, single_action_dim)
+            proximal_logprobs = proximal_logprobs.reshape(bsz, -1, action_dim)
         if rollout_logprobs is not None:
-            rollout_logprobs = rollout_logprobs.reshape(bsz, -1, single_action_dim)
+            rollout_logprobs = rollout_logprobs.reshape(bsz, -1, action_dim)
         if versions is not None:
-            versions = versions.reshape(bsz, -1, single_action_dim)
+            versions = versions.reshape(bsz, -1, action_dim)
         if kwargs.get("loss_type") == "opd":
             assert advantages.shape == logprobs.shape, (
                 f"OPD advantages shape {advantages.shape} must match "
@@ -392,33 +395,31 @@ def preprocess_loss_inputs(
 
     elif logprob_type == "action_level":
         # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks]
-        logprobs = logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
-        old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).sum(dim=-1)
+        logprobs = logprobs.reshape(bsz, -1, action_dim).sum(dim=-1)
+        old_logprobs = old_logprobs.reshape(bsz, -1, action_dim).sum(dim=-1)
         if proximal_logprobs is not None:
-            proximal_logprobs = proximal_logprobs.reshape(
-                bsz, -1, single_action_dim
-            ).sum(dim=-1)
-        if rollout_logprobs is not None:
-            rollout_logprobs = rollout_logprobs.reshape(bsz, -1, single_action_dim).sum(
+            proximal_logprobs = proximal_logprobs.reshape(bsz, -1, action_dim).sum(
                 dim=-1
             )
+        if rollout_logprobs is not None:
+            rollout_logprobs = rollout_logprobs.reshape(bsz, -1, action_dim).sum(dim=-1)
         if versions is not None:
-            versions = versions.reshape(bsz, -1, single_action_dim)[..., 0]
+            versions = versions.reshape(bsz, -1, action_dim)[..., 0]
 
     elif logprob_type == "chunk_level":
         # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz]
-        logprobs = logprobs.reshape(bsz, -1, single_action_dim).sum(dim=[1, 2])
-        old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim).sum(dim=[1, 2])
+        logprobs = logprobs.reshape(bsz, -1, action_dim).sum(dim=[1, 2])
+        old_logprobs = old_logprobs.reshape(bsz, -1, action_dim).sum(dim=[1, 2])
         if proximal_logprobs is not None:
-            proximal_logprobs = proximal_logprobs.reshape(
-                bsz, -1, single_action_dim
-            ).sum(dim=[1, 2])
+            proximal_logprobs = proximal_logprobs.reshape(bsz, -1, action_dim).sum(
+                dim=[1, 2]
+            )
         if rollout_logprobs is not None:
-            rollout_logprobs = rollout_logprobs.reshape(bsz, -1, single_action_dim).sum(
+            rollout_logprobs = rollout_logprobs.reshape(bsz, -1, action_dim).sum(
                 dim=[1, 2]
             )
         if versions is not None:
-            versions = versions.reshape(bsz, -1, single_action_dim)[:, 0, 0]
+            versions = versions.reshape(bsz, -1, action_dim)[:, 0, 0]
 
     target_shape = logprobs.shape
     advantages = expand_to_target_dim(advantages, target_shape)
@@ -470,7 +471,13 @@ def safe_normalize(array, loss_mask):
     valid_array = array[loss_mask]
     if len(valid_array) > 0:
         mean = valid_array.mean()
-        std = valid_array.std()
+        # Sample std is NaN for a single element, which happens when one env
+        # contributes only one chunk. That sample is already at the mean.
+        std = (
+            valid_array.std()
+            if valid_array.numel() > 1
+            else torch.zeros((), device=valid_array.device, dtype=valid_array.dtype)
+        )
         array = (array - mean) / (std + 1e-5)
 
     return array
@@ -497,7 +504,10 @@ def reshape_entropy(
     """
     if entropy is not None:
         if entropy_type == "action_level":
-            entropy = entropy.reshape(batch_size, -1, action_dim).sum(dim=-1)
+            if entropy.ndim == 3:
+                entropy = entropy.sum(dim=-1)
+            else:
+                entropy = entropy.reshape(batch_size, -1, action_dim).sum(dim=-1)
         elif entropy_type == "chunk_level":
             entropy = entropy.sum(dim=-1)
     return entropy

@@ -91,7 +91,12 @@ class Pi0RL(EnvIO, Pi0):
             hidden = (1024, 512, 256) if rl_cfg.value_after_vlm else (512, 256, 128)
             if any(
                 name in rl_cfg.config_name
-                for name in ("pi05_maniskill", "pi05_libero", "pi05_droid_polaris")
+                for name in (
+                    "pi05_maniskill",
+                    "pi05_libero",
+                    "pi05_droid_polaris",
+                    "pi05_droid_robolab",
+                )
             ):
                 hidden = (1024, 512, 256)
             if rl_cfg.value_head_hidden_sizes is not None:
@@ -158,21 +163,32 @@ class Pi0RL(EnvIO, Pi0):
         *,
         noise: torch.Tensor | None = None,
         rng: torch.Generator | None = None,
+        env_name: str | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         del kwargs
+        io_spec = self._env_io(env_name)
+        repack_name = self.config_name if io_spec is None else io_spec.config_name
+        action_env_dim = None if io_spec is None else io_spec.action_env_dim
         repacked = repack_env_obs(
-            self.config_name,
+            repack_name,
             env_obs,
             select_state=self._select_configured_state,
         )
         observation = self._observation_dict_to_device(
-            self.input_transform(repacked, transpose=False)
+            self.input_transform(repacked, transpose=False, env_name=env_name)
         )
         if mode == "eval":
-            return self._predict_eval(observation, noise=noise, rng=rng)
+            return self._predict_eval(
+                observation, noise=noise, rng=rng, env_name=env_name
+            )
         actions, result = self._predict_train(
-            observation, noise=noise, rng=rng, compute_values=compute_values
+            observation,
+            noise=noise,
+            rng=rng,
+            compute_values=compute_values,
+            env_name=env_name,
+            action_env_dim=action_env_dim,
         )
         # Match OpenPI: stash raw env obs so the actor can re-transform.
         result["forward_inputs"].update(_clone_replay_obs(repacked))
@@ -185,9 +201,12 @@ class Pi0RL(EnvIO, Pi0):
         noise: torch.Tensor | None,
         rng: torch.Generator | None,
         compute_values: bool,
+        env_name: str | None = None,
+        action_env_dim: int | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         rl_cfg = self.rl_cfg
         device = self.device
+        env_dim = self.action_env_dim if action_env_dim is None else action_env_dim
         observation = preprocess_observation(observation, train=False)
         B = observation.state.shape[0]
         num_steps = self.num_steps
@@ -282,9 +301,7 @@ class Pi0RL(EnvIO, Pi0):
         x_0 = x_t
         chains_tensor = torch.stack(chains, dim=1).contiguous()
         log_probs_stacked = torch.stack(log_probs, dim=1)
-        log_probs_stacked = log_probs_stacked[
-            :, :, : self.action_chunk, : self.action_env_dim
-        ]
+        log_probs_stacked = log_probs_stacked[:, :, : self.action_chunk, :env_dim]
         if rl_cfg.joint_logprob:
             log_probs_picked = log_probs_stacked.mean(dim=1)
         else:
@@ -300,7 +317,7 @@ class Pi0RL(EnvIO, Pi0):
         else:
             prev_values = torch.zeros((B, 1), device=device, dtype=torch.float32)
 
-        actions = self.decode_actions(x_0, observation.state)
+        actions = self.decode_actions(x_0, observation.state, env_name=env_name)
 
         forward_inputs: dict[str, torch.Tensor] = {
             "chains": chains_tensor,
@@ -372,7 +389,10 @@ class Pi0RL(EnvIO, Pi0):
         )
 
     def _observation_from_forward_inputs(
-        self, forward_inputs: dict[str, torch.Tensor]
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        *,
+        env_name: str | None = None,
     ) -> Observation:
         """Rebuild the rollout observation so actor logprobs match sampling.
 
@@ -383,7 +403,9 @@ class Pi0RL(EnvIO, Pi0):
         """
         has_raw_obs = any(key.startswith("observation/") for key in forward_inputs)
         if has_raw_obs:
-            processed = self.input_transform(forward_inputs, transpose=False)
+            processed = self.input_transform(
+                forward_inputs, transpose=False, env_name=env_name
+            )
             observation = self._observation_dict_to_device(processed)
         else:
             images: dict[str, torch.Tensor] = {}
@@ -422,7 +444,13 @@ class Pi0RL(EnvIO, Pi0):
             f"{type(self).__name__} does not support forward_type={forward_type!r}."
         )
 
-    def default_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
+    def default_forward(
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        *,
+        env_name: str | None = None,
+        **kwargs,
+    ):
         """PPO/GRPO recompute of logprobs and values from the stored chain."""
         rl_cfg = self.rl_cfg
         compute_values = kwargs.get("compute_values", True)
@@ -430,7 +458,11 @@ class Pi0RL(EnvIO, Pi0):
         denoise_inds = forward_inputs["denoise_inds"]
         B = chains.shape[0]
         device = chains.device
-        observation = self._observation_from_forward_inputs(forward_inputs)
+        io_spec = self._env_io(env_name)
+        env_dim = self.action_env_dim if io_spec is None else io_spec.action_env_dim
+        observation = self._observation_from_forward_inputs(
+            forward_inputs, env_name=env_name
+        )
 
         prefix_out, prefix_mask, kv_cache = self._build_prefix_cache_for_actor(
             observation
@@ -496,7 +528,7 @@ class Pi0RL(EnvIO, Pi0):
                 )
 
         log_probs = torch.stack(step_logprobs, dim=1)
-        log_probs = log_probs[:, :, : self.action_chunk, : self.action_env_dim].float()
+        log_probs = log_probs[:, :, : self.action_chunk, :env_dim].float()
         if rl_cfg.joint_logprob:
             log_probs = log_probs.mean(dim=1)
         else:
@@ -512,7 +544,7 @@ class Pi0RL(EnvIO, Pi0):
             values = torch.zeros(B, device=device, dtype=torch.float32)
 
         entropy = torch.stack(step_entropy, dim=1)
-        entropy = entropy[:, :, : self.action_chunk, : self.action_env_dim]
+        entropy = entropy[:, :, : self.action_chunk, :env_dim]
         if rl_cfg.noise_method == "flow_noise":
             entropy = entropy.mean(dim=[1, 2, 3], keepdim=False)[:, None]
         else:
@@ -523,10 +555,18 @@ class Pi0RL(EnvIO, Pi0):
             "entropy": entropy.float(),
         }
 
-    def nft_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
+    def nft_forward(
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        *,
+        env_name: str | None = None,
+        **kwargs,
+    ):
         """Compute velocity v_theta at explicit (x_t, timesteps) for NFT loss."""
         nft_inputs = kwargs["nft_inputs"]
-        observation = self._observation_from_forward_inputs(forward_inputs)
+        observation = self._observation_from_forward_inputs(
+            forward_inputs, env_name=env_name
+        )
         device = self.device
         x_t = nft_inputs["x_t"].to(device)
         t = nft_inputs["timesteps"].to(device)

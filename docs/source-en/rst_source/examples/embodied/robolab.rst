@@ -1,5 +1,5 @@
-RoboLab Evaluation
-==================
+RoboLab Training and Evaluation
+===============================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
    :align: center
@@ -8,12 +8,12 @@ RoboLab Evaluation
 
    RoboLab (`NVlabs/RoboLab <https://github.com/NVlabs/RoboLab>`__).
 
-RoboLab is a manipulation benchmark built on Isaac Sim, with 120 tasks covering procedural, relational, and visual capabilities across three difficulty levels. RLinf supports evaluating the OpenPI π₀.₅ policy on its DROID joint-position tasks.
+RoboLab is a manipulation benchmark built on Isaac Sim, with 120 tasks covering procedural, relational, and visual capabilities across three difficulty levels. RLinf supports PPO training and evaluation of the OpenPI π₀.₅ policy on its DROID joint-position tasks.
 
 Overview
 --------
 
-Evaluate from two RGB views, robot state, and a natural-language instruction.
+Train or evaluate a policy from two RGB views, robot state, and a natural-language instruction.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -26,7 +26,7 @@ Evaluate from two RGB views, robot state, and a natural-language instruction.
    .. grid-item-card:: Algorithms
       :text-align: center
 
-      Evaluation only
+      PPO and evaluation
 
    .. grid-item-card:: Tasks
       :text-align: center
@@ -102,28 +102,45 @@ Setup and Run
 
       .. list-table::
          :header-rows: 1
-         :widths: 28 46 26
+         :widths: 24 46 30
 
          * - Recipe
            - Config
            - Command suffix
+         * - OpenPI π₀.₅ (PPO)
+           - ``examples/embodiment/config/robolab_banana_in_bowl_ppo_openpi_pi05.yaml``
+           - ``robolab_banana_in_bowl_ppo_openpi_pi05``
          * - OpenPI π₀.₅ (eval)
            - ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml``
            - ``robolab_pi05_droid_jointpos``
 
-      Run the default task (``BowlStackingLeftOnRightTask``, 10 episodes):
+      Launch PPO training on ``BananaInBowlTask`` (with per-environment auto-reset):
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh \
+           robolab_banana_in_bowl_ppo_openpi_pi05 \
+           actor.model.model_path=./RLinf-Pi05-RoboLab-droid-jointpos
+
+      Or run standalone evaluation on the default task (``BowlStackingLeftOnRightTask``, 10 episodes):
 
       .. code-block:: bash
 
          bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
            rollout.model.model_path=./RLinf-Pi05-RoboLab-droid-jointpos
 
-This integration is evaluation only. Follow the :doc:`evaluation guide <../../evaluations/guides/robolab>` to export all 120 task definitions, configure task step limits, and run the full benchmark.
+      Logs and TensorBoard events are written to ``logs/<timestamp>-<config_name>/``.
+
+Follow the :doc:`evaluation guide <../../evaluations/guides/robolab>` to export all 120 task definitions, configure task step limits, and run the full benchmark.
+
+.. warning::
+
+   Keep ``env.train.enable_offload: false``. RoboLab does not support suspending and resuming a live Isaac Sim environment between rollout and training.
 
 Visualization and Results
 -------------------------
 
-Watch ``eval/success_once`` and ``eval/score`` in the terminal and TensorBoard. The following runs use the same 120 tasks and ten episodes per task; see the :doc:`evaluation guide <../../evaluations/guides/robolab>` for metrics and logs.
+Watch ``env/success_once`` and ``env/return`` during PPO training, and ``eval/success_once`` and ``eval/score`` during validation and evaluation, in the terminal or TensorBoard (``tensorboard --logdir ./logs --port 6006``). See :doc:`Training metrics <../../reference/metrics>` for training metric definitions. The following benchmark evaluation runs use the same 120 tasks and ten episodes per task; see the :doc:`evaluation guide <../../evaluations/guides/robolab>` for evaluation metrics and logs.
 
 
 .. list-table::

@@ -1237,6 +1237,7 @@ def _embodied_actor(mode_cfg, *, mix_envs=True, rank=0, world_size=1, actor_cls=
                 "seed": 3,
                 "global_batch_size": 4 * world_size,
                 "micro_batch_size": 2,
+                "model": {},
             },
             "algorithm": {"loss_type": "actor_critic", "reward_type": "action_level"},
             "env": {"train": mode_cfg},
@@ -1649,6 +1650,62 @@ def test_envs_with_different_policy_inputs_train_in_separate_micro_batches():
         for batch in micro_batches:
             views = batch["forward_inputs"]["pixel_values"].shape[1]
             assert views == batch["advantages"].unique().item()
+
+
+def test_envs_with_model_env_profiles_stay_in_separate_pools_even_with_same_shape():
+    actor = _embodied_actor(
+        OmegaConf.create(
+            {"envs": {"env_a": _embodied_env(2), "env_b": _embodied_env(2)}}
+        )
+    )
+    actor.cfg.actor.model = OmegaConf.create(
+        {
+            "model_type": "openpi",
+            "envs": {
+                "env_a": {"config_name": "pi05_libero", "action_dim": 7},
+                "env_b": {"config_name": "pi05_droid_robolab", "action_dim": 8},
+            },
+        }
+    )
+    # Identical tensor keys and shapes on purpose: model.envs profiles alone
+    # must keep them in separate pools and pass env_name to each micro-batch.
+    batch_a = _embodied_batch(2, 2, marker=1.0)
+    batch_a["forward_inputs"] = {"state": torch.zeros(2, 2, 8)}
+    batch_b = _embodied_batch(2, 2, marker=2.0)
+    batch_b["forward_inputs"] = {"state": torch.zeros(2, 2, 8)}
+    actor.env_batches = {"env_a": batch_a, "env_b": batch_b}
+
+    actor.rollout_batches = actor._merge_env_batches()
+    actor._order_training_batch()
+    entries = list(actor._global_batch_entries())
+
+    assert len(actor.rollout_batches) == 2
+    assert actor._pool_env_names == ["env_a", "env_b"]
+    for global_entries in entries:
+        seen = {
+            env_name: batch["advantages"].unique().item()
+            for env_name, batch in global_entries
+        }
+        assert seen == {"env_a": 1.0, "env_b": 2.0}
+
+
+def test_preprocess_loss_inputs_reads_trailing_action_dim_for_3d_logprobs():
+    from rlinf.algorithms.utils import preprocess_loss_inputs
+
+    for env_action_dim in (7, 8, 14):
+        logprobs = torch.randn(2, 5, env_action_dim)
+        old_logprobs = torch.randn(2, 5, env_action_dim)
+        advantages = torch.randn(2, 1)
+        out = preprocess_loss_inputs(
+            logprobs=logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            logprob_type="chunk_level",
+            reward_type="chunk_level",
+            single_action_dim=14,
+        )
+        assert out["logprobs"].shape == (2,)
+        torch.testing.assert_close(out["logprobs"], logprobs.sum(dim=(1, 2)))
 
 
 @pytest.mark.parametrize("all_inactive", [False, True])

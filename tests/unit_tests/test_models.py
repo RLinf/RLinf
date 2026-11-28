@@ -1648,6 +1648,126 @@ def test_openpi_env_io_reads_history():
     )
 
 
+def test_openpi_env_io_dispatches_per_env_pipelines_by_env_name():
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.env_io import EnvIO
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    adapter = EnvIO()
+    adapter._config = Pi0Config()
+    adapter.config_name = "pi05_libero"
+    adapter.action_chunk = 4
+    adapter.state_indices = ()
+    adapter.device = torch.device("cpu")
+
+    class _ScaleInput:
+        def __init__(self, scale: float):
+            self.scale = scale
+
+        def __call__(self, sample):
+            return {
+                **sample,
+                "state": np.asarray(sample["observation/state"]) * self.scale,
+            }
+
+    class _SliceOutput:
+        def __init__(self, width: int):
+            self.width = width
+
+        def __call__(self, outputs):
+            return {
+                **outputs,
+                "actions": np.asarray(outputs["actions"])[..., : self.width],
+            }
+
+    adapter.setup_transforms([_ScaleInput(1.0)], [_SliceOutput(7)])
+    adapter.register_env_io(
+        "libero",
+        config_name="pi05_libero",
+        action_env_dim=7,
+        transforms=[_ScaleInput(2.0)],
+        output_transforms=[_SliceOutput(7)],
+    )
+    adapter.register_env_io(
+        "robodojo",
+        config_name="pi05_aloha_robotwin",
+        action_env_dim=14,
+        transforms=[_ScaleInput(3.0)],
+        output_transforms=[_SliceOutput(14)],
+    )
+
+    state = torch.ones(2, 8)
+    model_actions = torch.zeros(2, 4, 32)
+    sample = {"observation/state": state, "prompt": ["a", "b"]}
+    assert adapter.input_transform(sample, env_name="libero")["state"].eq(2.0).all()
+    assert adapter.input_transform(sample, env_name="robodojo")["state"].eq(3.0).all()
+    assert adapter.decode_actions(model_actions, state, env_name="libero").shape == (
+        2,
+        4,
+        7,
+    )
+    assert adapter.decode_actions(model_actions, state, env_name="robodojo").shape == (
+        2,
+        4,
+        14,
+    )
+    assert adapter._env_io("libero").action_env_dim == 7
+    assert adapter._env_io("robodojo").action_env_dim == 14
+    with pytest.raises(KeyError, match="unknown"):
+        adapter._env_io("unknown")
+
+
+def test_openpi_shared_network_slices_each_env_action():
+    pi0_config = pytest.importorskip("openpi.models.pi0_config")
+    transforms = pytest.importorskip("openpi.transforms")
+    from rlinf.models.embodiment.openpi.transforms.pipeline import (
+        build_openpi_transforms,
+    )
+
+    shared = pi0_config.Pi0Config(
+        pi05=True,
+        action_dim=32,
+        action_horizon=10,
+        discrete_state_input=True,
+    )
+    envs = (
+        ("libero", "pi05_libero", 8, 7, None),
+        ("robodojo", "pi05_aloha_robotwin", 14, 14, {"adapt_to_pi": False}),
+        ("robolab", "pi05_droid_robolab", 8, 8, None),
+    )
+    image = np.zeros((224, 224, 3), dtype=np.uint8)
+    for _name, config_name, state_dim, action_dim, data_kwargs in envs:
+        inputs, outputs = build_openpi_transforms(
+            "",
+            config_name,
+            data_kwargs=data_kwargs,
+            model_config=shared,
+            use_model_path_assets=False,
+        )
+        state = np.zeros(state_dim, dtype=np.float32)
+        wrist = (
+            np.zeros((2, 224, 224, 3), dtype=np.uint8)
+            if config_name == "pi05_aloha_robotwin"
+            else image
+        )
+        encoded = transforms.compose(inputs)(
+            {
+                "observation/image": image,
+                "observation/wrist_image": wrist,
+                "observation/state": state,
+                "prompt": "pick up the object",
+            }
+        )
+        assert "tokenized_prompt" in encoded
+        decoded = transforms.compose(outputs)(
+            {
+                "actions": np.zeros((shared.action_horizon, shared.action_dim)),
+                "state": state,
+            }
+        )
+        assert decoded["actions"].shape == (shared.action_horizon, action_dim)
+
+
 def _make_model(*, prefix_seq_len: int = 5) -> RLTTokenTransformer:
     torch.manual_seed(0)
     return RLTTokenTransformer(

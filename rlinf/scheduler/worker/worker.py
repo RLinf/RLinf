@@ -560,6 +560,19 @@ class Worker(metaclass=WorkerMeta):
 
         return WorkerGroup(cls, args, kwargs)
 
+    @classmethod
+    def python_interpreter_for_rank(
+        cls, rank: int, world_size: int, *args, **kwargs
+    ) -> str | None:
+        """Return the interpreter for one worker, or ``None`` for the node's.
+
+        Env workers override this so each rank can start in the virtualenv of
+        the simulator it hosts. The value becomes that Ray actor's
+        ``py_executable``.
+        """
+        del rank, world_size, args, kwargs
+        return None
+
     def send(
         self,
         object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
