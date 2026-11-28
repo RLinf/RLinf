@@ -91,7 +91,7 @@ rollout:
     action_dim: 7  # env action dim (libero: 3 trans + 3 axis-angle + 1 gripper)
     model_path: /workspace/dataset/Cosmos3-Nano
     # https://github.com/NVIDIA/cosmos-framework/blob/main/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
-    action_stats_path: ${oc.env:REPO_PATH}/.venv/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+    action_stats_path: /workspace/dataset/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
     action_normalization: "quantile_rot"
     embodiment_tag: "libero_sim"
     is_lora: False
