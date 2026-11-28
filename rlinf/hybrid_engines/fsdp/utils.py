@@ -574,6 +574,26 @@ def install_fp32_residual_stream(
                     )
                     norm_mod._rlinf_fp32_residual_norm_hooked = True
 
+        # Cast the final language-model norm output back to compute_dtype so
+        # lm_head and Fp32HeadLogProbs receive bf16 matching lm_head.weight.
+        lm_parents = [inner]
+        for attr in ("model", "language_model"):
+            child = getattr(inner, attr, None)
+            if isinstance(child, torch.nn.Module):
+                lm_parents.append(child)
+                grandchild = getattr(child, "language_model", None)
+                if isinstance(grandchild, torch.nn.Module):
+                    lm_parents.append(grandchild)
+        for parent in lm_parents:
+            final_norm = getattr(parent, "norm", None)
+            if isinstance(final_norm, torch.nn.Module) and not getattr(
+                final_norm, "_rlinf_fp32_residual_norm_hooked", False
+            ):
+                final_norm.register_forward_hook(
+                    lambda _m, _args, out, dt=compute_dtype: _cast_output_dtype(out, dt)
+                )
+                final_norm._rlinf_fp32_residual_norm_hooked = True
+
     candidate_modules = {type(inner).__module__}
     for attr in ("model", "language_model"):
         child = getattr(inner, attr, None)

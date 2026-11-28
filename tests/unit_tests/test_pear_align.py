@@ -894,6 +894,7 @@ def test_install_fp32_residual_stream_keeps_residual_fp32_and_norms_bf16():
             self.embed = torch.nn.Embedding(16, 8).to(torch.bfloat16)
             self.layer = _Block(8)
             self.norm = torch.nn.RMSNorm(8)
+            self.lm_head = torch.nn.Linear(8, 16, bias=False).to(torch.bfloat16)
 
         def get_input_embeddings(self):
             return self.embed
@@ -901,12 +902,16 @@ def test_install_fp32_residual_stream_keeps_residual_fp32_and_norms_bf16():
         def forward(self, ids: torch.Tensor) -> torch.Tensor:
             h = self.embed(ids)
             assert h.dtype == torch.float32
-            return self.norm(self.layer(h))
+            h_out = self.layer(h)
+            assert h_out.dtype == torch.float32
+            normed = self.norm(h_out)
+            assert normed.dtype == torch.bfloat16
+            return self.lm_head(normed)
 
     model = _MiniModel()
     install_fp32_residual_stream(model, compute_dtype=torch.bfloat16)
-    out = model(torch.tensor([[1, 2, 3]]))
-    assert out.dtype == torch.float32
+    logits = model(torch.tensor([[1, 2, 3]]))
+    assert logits.dtype == torch.bfloat16
 
 
 def test_streamed_adamw_updates_bf16_and_fp32_params_in_fp32():
