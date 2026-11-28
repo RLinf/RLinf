@@ -15,7 +15,10 @@
 """Read and write the image inputs shared by rollout and learner workers."""
 
 import hashlib
+import shutil
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 from tempfile import NamedTemporaryFile
 
 import torch
@@ -68,3 +71,61 @@ def replay_pixels(entry: dict) -> torch.Tensor:
             raise ValueError("Captured image tensor checksum mismatch")
         images.append(load(data)["pixels"].to(torch.bfloat16))
     return torch.cat(images)
+
+
+def collect_replay_dirs(entries: Iterable[dict | None] | None) -> set[Path]:
+    """Collect unique `training_images` directories referenced by `pixel_refs`."""
+    dirs: set[Path] = set()
+    if not entries:
+        return dirs
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        for ref in entry.get("pixel_refs") or ():
+            path = ref.get("path") if isinstance(ref, dict) else None
+            if not path:
+                continue
+            parent = Path(path).parent
+            if parent.name == "training_images":
+                dirs.add(parent)
+    return dirs
+
+
+def collect_result_replay_dirs(results: Iterable[Any] | None) -> set[Path]:
+    """Collect unique `training_images` directories from rollout result objects."""
+    dirs: set[Path] = set()
+    if not results:
+        return dirs
+    for result in results:
+        if result is None:
+            continue
+        mm = getattr(result, "multi_modal_inputs", None)
+        if mm:
+            dirs.update(collect_replay_dirs(mm))
+    return dirs
+
+
+def cleanup_replay_dirs(dirs: Iterable[Path | str] | None) -> int:
+    """Safely remove `training_images` directories and prune empty episode parents."""
+    if not dirs:
+        return 0
+    removed = 0
+    seen: set[Path] = set()
+    for raw in dirs:
+        if not raw:
+            continue
+        target = Path(raw)
+        if target.name != "training_images" or target in seen:
+            continue
+        seen.add(target)
+        try:
+            if target.exists():
+                shutil.rmtree(target, ignore_errors=True)
+                removed += 1
+            try:
+                target.parent.rmdir()
+            except OSError:
+                pass
+        except OSError:
+            pass
+    return removed

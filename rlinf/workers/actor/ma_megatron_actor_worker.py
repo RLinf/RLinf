@@ -48,6 +48,10 @@ from rlinf.hybrid_engines.megatron.utils import (
     supports_fp32_output,
 )
 from rlinf.scheduler import Channel
+from rlinf.utils.image_replay import (
+    cleanup_replay_dirs,
+    collect_replay_dirs,
+)
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
 )
@@ -111,6 +115,17 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             f"placement, got {self.placement_mode}"
         )
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
+        if (
+            "turn_level" in loss_scales
+            and self.cfg.algorithm.get("use_valid_token_scale", False)
+        ):
+            raise ValueError(
+                "Combining `turn_level` in algorithm.loss_scales with "
+                "algorithm.use_valid_token_scale=True double-weights per-row "
+                "token counts and down-weights multi-chain trajectories. "
+                "Use `loss_scales: []` with `use_valid_token_scale: true` "
+                "(DAPO token-mean) or set `use_valid_token_scale: false`."
+            )
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
 
@@ -582,6 +597,17 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
 
         # Gather weights if overlap_param_gather before the next weight sync
         self._gather_weights_among_dp()
+
+        mm_cfg = self.role_cfg.get("multimodal") or {}
+        if mm_cfg.get("cleanup_after_step", True):
+            replay_dirs = (
+                collect_replay_dirs(batch["multi_modal_inputs"])
+                if "multi_modal_inputs" in batch
+                else set()
+            )
+            torch.distributed.barrier()
+            if self.is_data_io_rank and replay_dirs:
+                cleanup_replay_dirs(replay_dirs)
 
         if fixed_ppo_targets:
             clear_memory()

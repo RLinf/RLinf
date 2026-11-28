@@ -51,10 +51,7 @@ algorithm:
   shuffle_rollout: false
   loss_type: actor
   loss_agg_func: token-mean
-  loss_scales:
-    - group_level
-    - agent_level
-    - turn_level
+  loss_scales: []
   use_valid_token_scale: true
   kl_beta: 0.0
   kl_penalty_type: low_var_kl
@@ -292,6 +289,7 @@ actor:
   multimodal:
     prefetch_batches: 2
     prefetch_bytes: 4294967296
+    cleanup_after_step: true
   expect_multi_modal_inputs: true
   trim_right_padding: true
   env_vars:

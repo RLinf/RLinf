@@ -1072,3 +1072,70 @@ def test_store_pixels_saves_bfloat16_and_prefetches_identically(tmp_path) -> Non
         assert s.keys() == a.keys()
         for k in s:
             assert torch.equal(s[k], a[k])
+
+
+def test_cleanup_replay_dirs_whitelists_training_images_and_preserves_artifacts(
+    tmp_path,
+) -> None:
+    from types import SimpleNamespace
+
+    import torch
+
+    from rlinf.utils.image_replay import (
+        REPLAY_FORMAT,
+        cleanup_replay_dirs,
+        collect_replay_dirs,
+        collect_result_replay_dirs,
+        store_pixels,
+    )
+
+    ep_clean = tmp_path / "ep_clean" / "training_images"
+    ep_artifact = tmp_path / "ep_artifact" / "training_images"
+    other_dir = tmp_path / "keep_me"
+    other_dir.mkdir(parents=True)
+    (other_dir / "file.txt").write_text("keep")
+    (ep_artifact.parent).mkdir(parents=True)
+    (ep_artifact.parent / "video.mp4").write_bytes(b"artifact")
+
+    def _entry(target: Path) -> dict:
+        e = {
+            "format": REPLAY_FORMAT,
+            "pixel_values": torch.randn(16, 1536, dtype=torch.float32),
+            "image_grid_thw": torch.tensor([[1, 4, 4]], dtype=torch.long),
+        }
+        store_pixels(e, target)
+        return e
+
+    e1 = _entry(ep_clean)
+    e2 = _entry(ep_artifact)
+    dirs = collect_replay_dirs([e1, None, e2])
+    assert dirs == {ep_clean.resolve(), ep_artifact.resolve()}
+
+    res = SimpleNamespace(multi_modal_inputs=[e1, e2])
+    assert collect_result_replay_dirs([res, None]) == dirs
+
+    removed = cleanup_replay_dirs([*dirs, other_dir])
+    assert removed == 2
+    assert not ep_clean.exists()
+    assert not ep_clean.parent.exists()  # empty episode parent pruned
+    assert not ep_artifact.exists()
+    assert (ep_artifact.parent / "video.mp4").exists()  # artifact preserved
+    assert (other_dir / "file.txt").exists()  # non-training_images ignored
+
+
+def test_rpent_configs_use_dapo_token_mean_and_cleanup_after_step() -> None:
+    from omegaconf import OmegaConf
+
+    cfg_dir = (
+        Path(__file__).resolve().parents[2] / "examples/agent/rpent/config"
+    )
+    for name in (
+        "train_qwen3.5_4b_rpent_grpo.yaml",
+        "train_qwen3.5_4b_rpent_grpo_48gpu.yaml",
+        "train_qwen3.5_4b_rpent_grpo_a100_libero_sync.yaml",
+    ):
+        cfg = OmegaConf.load(cfg_dir / name)
+        assert list(cfg.algorithm.loss_scales) == []
+        assert cfg.algorithm.use_valid_token_scale is True
+        assert cfg.actor.multimodal.prefetch_batches == 2
+        assert cfg.actor.multimodal.cleanup_after_step is True

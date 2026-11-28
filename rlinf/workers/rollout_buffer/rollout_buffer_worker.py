@@ -31,6 +31,10 @@ from rlinf.data.schema.reasoning_results import (
 )
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.down_sampling import rewards_all_equal
+from rlinf.utils.image_replay import (
+    cleanup_replay_dirs,
+    collect_result_replay_dirs,
+)
 from rlinf.utils.runner_utils import local_mkdir_safe
 from rlinf.workers.rollout.session_server.payload import payload_channel_for
 
@@ -537,6 +541,14 @@ class RolloutBufferWorker(Worker):
             for task in (admission, receive):
                 task.cancel()
             await asyncio.gather(admission, receive, return_exceptions=True)
+            remaining = [
+                buffered_result
+                for task in self.buffer.tasks.values()
+                for _meta, buffered_result in task["buffer"].values()
+                if buffered_result is not None
+            ]
+            if remaining:
+                cleanup_replay_dirs(collect_result_replay_dirs(remaining))
 
     async def _next_batch(self) -> Any:
         """Pull the next dataloader batch without blocking the event loop.
@@ -623,6 +635,8 @@ class RolloutBufferWorker(Worker):
                 metadata = result.group_metadata()
             if self.reject_equal_reward and rewards_all_equal(metadata.rewards):
                 await self._release_payload(metadata)
+                if result is not None:
+                    cleanup_replay_dirs(collect_result_replay_dirs([result]))
                 self.buffer.drop_group(
                     metadata.group_id,
                     "equal_reward",
@@ -642,6 +656,8 @@ class RolloutBufferWorker(Worker):
                 # training batch actually runs under, which is the
                 # authoritative one.
                 await self._release_payload(metadata)
+                if result is not None:
+                    cleanup_replay_dirs(collect_result_replay_dirs([result]))
                 self.buffer.drop_group(
                     metadata.group_id,
                     "stale",
@@ -671,8 +687,12 @@ class RolloutBufferWorker(Worker):
                 ):
                     # Read the entry before drop_group pops it: the
                     # payload ref is what tells where to release.
-                    metadata = task["buffer"][group_id][0]
+                    metadata, dropped_result = task["buffer"][group_id]
                     await self._release_payload(metadata)
+                    if dropped_result is not None:
+                        cleanup_replay_dirs(
+                            collect_result_replay_dirs([dropped_result])
+                        )
                     self.buffer.drop_group(
                         group_id,
                         "stale",

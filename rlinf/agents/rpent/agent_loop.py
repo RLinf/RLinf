@@ -41,6 +41,10 @@ from rlinf.config import release_image_replay_enabled
 from rlinf.data.schema.reasoning_requests import RolloutRequest
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.scheduler import Channel
+from rlinf.utils.image_replay import (
+    cleanup_replay_dirs,
+    collect_result_replay_dirs,
+)
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.agent_loop import (
     AgentLoopOutput,
@@ -416,8 +420,26 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
 
         return None, [], {}, "context_length_exceeded", weight_version
 
+    def _episode_store_dir(self, episode_id: str) -> Path | None:
+        if self.cfg.tools.rpent.get("store_images_on_disk", False) and self.cfg.tools.rpent.get(
+            "output_dir"
+        ):
+            return Path(self.cfg.tools.rpent.output_dir) / episode_id / "training_images"
+        return None
+
     async def _run_episode(self, task: dict[str, Any]) -> MultiAgentLoopOutput:
         episode_id = uuid4().hex
+        episode_store_dir = self._episode_store_dir(episode_id)
+        try:
+            return await self._run_episode_body(episode_id, task)
+        except BaseException:
+            if episode_store_dir is not None:
+                cleanup_replay_dirs([episode_store_dir])
+            raise
+
+    async def _run_episode_body(
+        self, episode_id: str, task: dict[str, Any]
+    ) -> MultiAgentLoopOutput:
         started = time.monotonic()
         endpoint = self._endpoint_for(task)
         client = self._client()
@@ -744,6 +766,13 @@ class RPentAgentLoopWorker(MultiAgentLoopWorker):
             await output_channel.put(result, async_op=True).async_wait()
             admitted_ids.append(cid)
             raw_metrics.append(self.get_rollout_metrics(result))
+        unselected = [
+            result
+            for cid, result in state["results"].items()
+            if cid not in selected and result is not None
+        ]
+        if unselected:
+            cleanup_replay_dirs(collect_result_replay_dirs(unselected))
         return {"admitted_ids": admitted_ids, "metrics": raw_metrics}
 
     # ------------------------------------------------------------------
