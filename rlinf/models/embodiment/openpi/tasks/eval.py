@@ -213,13 +213,14 @@ class Pi0Eval(OpenPiPrefixMixin, EnvIO, Pi0):
                 generator=rng,
             )
 
+        attention = self.prepare_suffix_attention(prefix_mask, noise.shape[1])
         x_t = noise
         dt = -1.0 / self.num_steps
         t = 1.0
         while t >= -dt / 2:
             t_tensor = torch.full((batch_size,), t, device=device, dtype=torch.float32)
             suffix_out = self.run_suffix(
-                observation, x_t, t_tensor, kv_cache, prefix_mask
+                observation, x_t, t_tensor, kv_cache, prefix_mask, attention=attention
             )
             v_t = self.velocity_from_suffix(suffix_out)
             x_t = x_t + dt * v_t

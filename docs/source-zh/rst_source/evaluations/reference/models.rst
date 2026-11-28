@@ -59,7 +59,7 @@
    * - 后端
      - 说明
    * - ``huggingface``
-     - 默认进程内 PyTorch 推理，适用于大多数具身评测配置。
+     - 默认进程内 PyTorch 推理，适用于大多数具身评测配置。OpenPI π₀.₅ 可设置 ``rollout.model.openpi.attention_backend`` 启用 FlashAttention（见 :ref:`π₀.₅ 的 FlashAttention 配置 <openpi-pi05-flashattention>`）。
    * - ``sglang``
      - 独立 SGLang 具身服务组，适用于 Cosmos3（:doc:`../guides/cosmos3_sglang`）与 DreamZero（:doc:`../guides/dreamzero_sglang`）等世界动作模型。
    * - ``apxinf``

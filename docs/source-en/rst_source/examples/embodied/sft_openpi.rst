@@ -362,6 +362,21 @@ Setup and Run
             reduce_dtype: fp32
             buffer_dtype: fp32
 
+.. _openpi-pi05-flashattention:
+
+.. dropdown:: π₀.₅ FlashAttention
+
+   π₀.₅ uses ``eager`` attention by default. When backbone activations use FP16 or BF16 (``openpi.embed_dtype``) and ``openpi.pytorch_numerics`` remains ``false``, you can switch to FlashAttention-2 or FlashAttention-3.
+
+   Set ``actor.model.openpi.attention_backend`` (for SFT or RL) or ``rollout.model.openpi.attention_backend`` (for standalone evaluation) to ``flash_attention_2`` or ``flash_attention_3``. On NVIDIA GPUs, ``eager`` computes attention scores in FP32, so FlashAttention outputs can differ slightly.
+
+   - **FlashAttention-2** (``flash_attention_2``): Most ``install.sh embodied --model openpi`` setups include ``flash-attn`` 2.x. In environments that omit it (such as ``polaris`` or ``robolab``), install a 2.x build matching your PyTorch and CUDA versions in the active OpenPI environment.
+   - **FlashAttention-3** (``flash_attention_3``, Hopper GPUs with CUDA Toolkit 12.3 or later): Requires ``nvcc`` 12.3+ and build tools. Before enabling ``flash_attention_3``, build and install it from source in the active OpenPI environment:
+
+     .. code-block:: bash
+
+        uv pip install --no-build-isolation 'git+https://github.com/Dao-AILab/flash-attention.git@bd26bc8e10e7c8f10dce6e17276156accecd2994#subdirectory=hopper'
+
 .. dropdown:: Supported datasets & custom LeRobot config
 
    Select the data format with ``actor.model.openpi.config_name``:

@@ -107,6 +107,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         "paligemma_variant": str(model_cfg.paligemma_variant),
         "action_expert_variant": str(model_cfg.action_expert_variant),
         "dtype": _pi0_dtype_name(embed_dtype),
+        "attention_backend": str(
+            OmegaConf.select(model_cfg, "attention_backend", default="eager")
+        ),
         "pcd": False,
         "pytorch_numerics": bool(
             OmegaConf.select(model_cfg, "pytorch_numerics", default=False)

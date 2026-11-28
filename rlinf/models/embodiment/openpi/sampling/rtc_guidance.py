@@ -113,6 +113,7 @@ def sample_actions_with_rtc_guidance(
 
     prefix_out, prefix_mask, kv_cache = pi0_model.build_prefix_cache(observation)
     del prefix_out
+    attention = pi0_model.prepare_suffix_attention(prefix_mask, noise.shape[1])
 
     prev_remaining = (
         rtc_context.get_prev_remaining() if rtc_context is not None else None
@@ -135,7 +136,7 @@ def sample_actions_with_rtc_guidance(
         t_val = float(rl_sampler.get_timesteps(num_steps, device)[idx].item())
         t_tensor = torch.full((B,), t_val, device=device, dtype=torch.float32)
         suffix_act = pi0_model.run_suffix(
-            observation, x_t, t_tensor, kv_cache, prefix_mask
+            observation, x_t, t_tensor, kv_cache, prefix_mask, attention=attention
         )
         v_t = pi0_model.velocity_from_suffix(suffix_act).to(torch.float32)
         idx_step.fill_(idx)

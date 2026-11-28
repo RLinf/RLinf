@@ -35,6 +35,10 @@ import torch.nn.functional as F
 import torch.utils.checkpoint
 
 from . import lora
+from .flash_attention import (
+    FlashAttentionMetadata,
+    flash_attention,
+)
 from .lora import FeedForward as LoRAFeedForward
 from .utils import (
     _str_to_dtype,
@@ -208,7 +212,6 @@ class Embedder(nn.Module):
         return F.linear(x, self.embedding.weight)
 
 
-# TODO: try use sdpa_attn
 class Attention(nn.Module):
     """Multi-expert Grouped Query Attention with RoPE and LoRA."""
 
@@ -290,8 +293,10 @@ class Attention(nn.Module):
         self,
         xs: list[torch.Tensor | None],
         positions: torch.Tensor,
-        attn_mask: torch.Tensor,
+        attn_mask: torch.Tensor | None,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
+        *,
+        flash_attention_metadata: FlashAttentionMetadata | None = None,
     ) -> tuple[list[torch.Tensor | None], tuple[torch.Tensor, torch.Tensor]]:
         """Multi-expert attention forward.
 
@@ -301,7 +306,8 @@ class Attention(nn.Module):
         Args:
             xs: list of inputs, one per expert (or None)
             positions: (B, T) positional indices covering full concatenated sequence
-            attn_mask: (B, 1, T, S) attention mask
+            attn_mask: Dense ``(B, 1, T, S)`` visibility mask for eager attention.
+            flash_attention_metadata: Packed sequence layout for fused attention.
             kv_cache: optional (k, v) cache tuple
 
         Returns:
@@ -349,14 +355,16 @@ class Attention(nn.Module):
 
         new_kv_cache = (k, v)
 
-        # Apply mask: shape (B, 1, T, S) -> broadcast over heads
-        if attn_mask.dim() == 4:
-            attn_mask = attn_mask[:, 0:1, :, :]  # (B, 1, T, S)
+        if flash_attention_metadata is None and attn_mask.dim() == 4:
+            attn_mask = attn_mask[:, 0:1, :, :]
 
         K = self.num_kv_heads
         G = self.num_heads // K
 
-        if self.pytorch_numerics:
+        if flash_attention_metadata is not None:
+            q_s = q * (self.head_dim**-0.5)
+            encoded = flash_attention(q_s, k, v, flash_attention_metadata)
+        elif self.pytorch_numerics:
             query = q.transpose(1, 2)
             key = k.transpose(1, 2).repeat_interleave(self.num_query_groups, dim=1)
             value = v.transpose(1, 2).repeat_interleave(self.num_query_groups, dim=1)
@@ -401,9 +409,9 @@ class Attention(nn.Module):
             )
             probs = F.softmax(masked_logits, dim=-1).to(dtype)
             encoded = torch.einsum("BKGTS,BSKH->BTKGH", probs, v_r.to(dtype))
-            encoded = encoded.reshape(
-                encoded.shape[0], encoded.shape[1], K * G, self.head_dim
-            )
+        encoded = encoded.reshape(
+            encoded.shape[0], encoded.shape[1], self.num_heads, self.head_dim
+        )
         # encoded: (B, T_total, num_heads, head_dim)
 
         # Split back to per-expert outputs
@@ -505,10 +513,11 @@ class Block(nn.Module):
         xs: list[torch.Tensor | None],
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None,
         positions: torch.Tensor,
-        attn_mask: torch.Tensor,
+        attn_mask: torch.Tensor | None,
         adarms_cond: list[torch.Tensor | None],
         skip_prefix_ffn: bool = False,
         prefix_requires_grad: bool = True,
+        flash_attention_metadata: FlashAttentionMetadata | None = None,
     ) -> tuple[list[torch.Tensor | None], tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass.
 
@@ -537,7 +546,13 @@ class Block(nn.Module):
                 gates.append(None)
 
         # Attention
-        post_attn, kv_cache = self.attn(pre_attn, positions, attn_mask, kv_cache)
+        post_attn, kv_cache = self.attn(
+            pre_attn,
+            positions,
+            attn_mask,
+            kv_cache,
+            flash_attention_metadata=flash_attention_metadata,
+        )
         post_attn = [self.dropout(p) if p is not None else None for p in post_attn]
 
         # Gated residual for attention
@@ -630,19 +645,21 @@ class Module(nn.Module):
         self,
         embedded: Sequence[torch.Tensor | None],
         positions: torch.Tensor,
-        mask: torch.Tensor,
+        mask: torch.Tensor | None,
         adarms_cond: Sequence[torch.Tensor | None] | None = None,
         *,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
         return_prefix: bool = True,
         prefix_requires_grad: bool = True,
+        flash_attention_metadata: FlashAttentionMetadata | None = None,
     ) -> tuple[list[torch.Tensor | None], tuple[torch.Tensor, torch.Tensor]]:
         """Full transformer forward pass.
 
         Args:
             embedded: list of embedded tokens, one per expert (or None)
             positions: (B, T) position indices
-            mask: (B, T, S) attention mask (bool)
+            mask: Dense ``(B, T, S)`` visibility mask for eager attention.
+            flash_attention_metadata: Packed sequence layout shared across layers.
             adarms_cond: per-expert adaptive conditioning (or None)
             kv_cache: optional KV cache for inference
             return_prefix: Compute expert-0 outputs through the final FFN and norm.
@@ -654,8 +671,12 @@ class Module(nn.Module):
         if adarms_cond is None:
             adarms_cond = [None] * len(self.configs)
 
-        # Expand mask: (B, T, S) -> (B, 1, T, S)
-        mask = mask.unsqueeze(1)
+        if (mask is None) == (flash_attention_metadata is None):
+            raise ValueError(
+                "Provide either a visibility mask or FlashAttention metadata"
+            )
+        if mask is not None:
+            mask = mask.unsqueeze(1)
 
         xs = list(embedded)
 
@@ -690,6 +711,7 @@ class Module(nn.Module):
                     adarms_cond,
                     skip_prefix_ffn,
                     layer_prefix_grad,
+                    flash_attention_metadata,
                     use_reentrant=self.gradient_checkpointing_use_reentrant,
                 )
             else:
@@ -701,6 +723,7 @@ class Module(nn.Module):
                     adarms_cond,
                     skip_prefix_ffn,
                     layer_prefix_grad,
+                    flash_attention_metadata,
                 )
             new_layer_kv_caches.append(new_kv)
 

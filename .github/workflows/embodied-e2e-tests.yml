@@ -1041,6 +1041,15 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
+      # FA3 numerical coverage needs a Hopper runner and its separate build.
+      - name: OpenPI FlashAttention-2 numerical tests
+        timeout-minutes: 10
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          export RLINF_REQUIRED_FLASH_ATTENTION=flash_attention_2
+          source .venv/bin/activate
+          pytest tests/unit_tests/test_models.py -k 'openpi_flash_attention_outputs_and_gradients and flash_attention_2'
+
       - name: ManiSkill PPO OpenPI Pi05 training pipeline test
         timeout-minutes: 20
         run: |

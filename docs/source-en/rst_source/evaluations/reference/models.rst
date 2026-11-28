@@ -59,7 +59,7 @@ Evaluation supports four rollout backends selected by ``rollout.rollout_backend`
    * - Backend
      - Usage
    * - ``huggingface``
-     - Default in-process PyTorch rollout used by most embodied evaluation configs.
+     - Default in-process PyTorch rollout used by most embodied evaluation configs. For OpenPI π₀.₅, set ``rollout.model.openpi.attention_backend`` to enable FlashAttention (see :ref:`π₀.₅ FlashAttention <openpi-pi05-flashattention>`).
    * - ``sglang``
      - Standalone SGLang embodied server group for world-action models such as Cosmos3 (:doc:`../guides/cosmos3_sglang`) and DreamZero (:doc:`../guides/dreamzero_sglang`).
    * - ``apxinf``
