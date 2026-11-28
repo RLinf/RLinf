@@ -9,6 +9,8 @@ LingbotVLA 2.0 强化学习
 
 用 PPO 在 RoboTwin 2.0 上微调 `LingbotVLA 2.0 <https://huggingface.co/robbyant/lingbot-vla-v2-6b-robotwin>`__ 的动作专家。RLinf **原生**\ 加载官方发布的 RoboTwin checkpoint，并以它作为训练起点。LingbotVLA 2.0 是基于 Qwen3-VL 底座的视觉-语言-动作模型：它的混合专家（MoE）动作专家通过 flow matching 在 55 维的 latent 动作空间中生成 50 步动作块，再由机器人配置映射为 RoboTwin 的 14 维关节指令。PPO 只更新动作专家，Qwen3-VL 底座和动作专家的 MoE 路由器保持冻结。
 
+从 Foundation checkpoint 开始监督微调，请参阅 :doc:`LingbotVLA 2.0 SFT <sft_lingbotvlav2>`。V2 各路径统一使用 ``flex_cached`` attention。
+
 概览
 ----------------------------------------
 
@@ -120,7 +122,7 @@ LingbotVLA 1.0 与 2.0 安装的 Python 包都叫 ``lingbotvla``，需要各自�
          * - 模型默认配置（与评测共用）
            - ``examples/embodiment/config/model/lingbotvlav2.yaml``
 
-      在 ``examples/embodiment/config/model/lingbotvlav2.yaml`` 中填写空白的路径字段（训练与独立评测共用，任何路径留空时启动会报错并提示字段名）：
+      在 ``examples/embodiment/config/model/lingbotvlav2.yaml`` 中填写 checkpoint 和源码路径，PPO 与独立评测共用这些路径：
 
       .. code-block:: yaml
 

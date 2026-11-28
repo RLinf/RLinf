@@ -39,12 +39,102 @@ from rlinf.hybrid_engines.fsdp.mixed_precision import (
     get_mixed_precision_wrap_policy,
 )
 from rlinf.hybrid_engines.fsdp.utils import (
+    _resolve_fsdp2_module_precision_policy,
     apply_fsdp2_to_model,
     clip_grad_by_total_norm_,
     create_device_mesh,
 )
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import Cluster
+from rlinf.utils.fsdp_config import (
+    validate_fsdp2_mixed_precision_config,
+    validate_fsdp2_rule_matches,
+)
+
+
+@pytest.mark.parametrize(
+    "module_name,expected_dtype",
+    [
+        ("model.qwenvl_with_expert.qwen_expert.model.layers.0", torch.float32),
+        ("model.visual.blocks.0", torch.bfloat16),
+    ],
+)
+def test_fsdp2_module_precision_rule(module_name, expected_dtype):
+    default = MixedPrecisionPolicy(
+        param_dtype=torch.bfloat16, reduce_dtype=torch.float32
+    )
+    config = {
+        "fsdp2_mixed_precision_policies": {
+            "expert": {
+                "param_dtype": "fp32",
+                "reduce_dtype": "fp32",
+                "output_dtype": "fp32",
+            }
+        },
+        "fsdp2_mixed_precision_rules": {
+            "expert": {
+                "policy": "expert",
+                "module_names": ["*qwen_expert.model.layers.*"],
+            }
+        },
+    }
+    policy = _resolve_fsdp2_module_precision_policy(module_name, config, default)
+    assert policy.param_dtype == expected_dtype
+    assert policy.reduce_dtype == torch.float32
+    if expected_dtype == torch.float32:
+        assert policy.output_dtype == torch.float32
+    else:
+        assert policy is default
+    assert _resolve_fsdp2_module_precision_policy(module_name, {}, default) is default
+
+
+def test_fsdp2_policy_defaults_optional_output_dtype_and_empty_rules():
+    config = OmegaConf.create(
+        {
+            "strategy": "fsdp2",
+            "fsdp2_mixed_precision_policies": {
+                "expert": {"param_dtype": "fp32", "reduce_dtype": "fp32"}
+            },
+            "fsdp2_mixed_precision_rules": {
+                "expert": {
+                    "policy": "expert",
+                    "module_names": ["*expert*"],
+                }
+            },
+        }
+    )
+    validate_fsdp2_mixed_precision_config(config)
+    default = MixedPrecisionPolicy(
+        param_dtype=torch.bfloat16, reduce_dtype=torch.float32
+    )
+    policy = _resolve_fsdp2_module_precision_policy(
+        "model.expert.layers.0", config, default
+    )
+    assert policy.output_dtype is None
+    config.fsdp2_mixed_precision_rules = None
+    validate_fsdp2_mixed_precision_config(config)
+    assert (
+        _resolve_fsdp2_module_precision_policy("model.expert.layers.0", config, default)
+        is default
+    )
+
+
+def test_fsdp2_rules_require_policy_fields_and_sharded_module_matches():
+    invalid = OmegaConf.create(
+        {
+            "strategy": "fsdp2",
+            "fsdp2_mixed_precision_policies": {"expert": {"param_dtype": "fp32"}},
+            "fsdp2_mixed_precision_rules": {},
+        }
+    )
+    with pytest.raises(ValueError, match="missing dtype fields"):
+        validate_fsdp2_mixed_precision_config(invalid)
+
+    rules = {"expert": {"module_names": ["*qwen_expert.layers.*"]}}
+    validate_fsdp2_rule_matches(rules, ["model.qwen_expert.layers.0"])
+    with pytest.raises(ValueError, match="matched no sharded module"):
+        validate_fsdp2_rule_matches(rules, ["model.visual.blocks.0"])
+
 
 # The timeout a bare init_process_group() installs is backend-specific -- 30
 # minutes for NCCL and Gloo, 3636 seconds for HCCL on Ascend -- so no test here

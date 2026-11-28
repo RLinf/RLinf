@@ -17,6 +17,8 @@ latent action space, which the robot configuration maps to RoboTwin's 14 joint
 commands. PPO updates only the action expert; the Qwen3-VL backbone and the
 action expert's MoE routers stay frozen.
 
+For supervised fine-tuning from the Foundation checkpoint, follow :doc:`LingbotVLA 2.0 SFT <sft_lingbotvlav2>`. All V2 paths use ``flex_cached`` attention.
+
 Overview
 --------
 
@@ -128,7 +130,7 @@ LingbotVLA 1.0 and 2.0 both install a Python package named ``lingbotvla``, so ea
          * - Model defaults (shared with eval)
            - ``examples/embodiment/config/model/lingbotvlav2.yaml``
 
-      Fill in the empty paths in ``examples/embodiment/config/model/lingbotvlav2.yaml`` (shared by training and standalone evaluation; startup reports any path left empty):
+      Set the checkpoint and source paths in ``examples/embodiment/config/model/lingbotvlav2.yaml``, shared by PPO and standalone evaluation:
 
       .. code-block:: yaml
 

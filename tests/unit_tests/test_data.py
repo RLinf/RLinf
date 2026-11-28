@@ -19,6 +19,7 @@ import copy
 import importlib.util
 import inspect
 import json
+import os
 import pickle
 import random
 import shutil
@@ -3072,6 +3073,105 @@ def test_lerobot_frame_owns_observation_and_image_conversion():
     assert {"wrist_image-0", "wrist_image-1"} <= output.keys()
     assert output["task"] == "pick"
     assert output["segment_id"].item() == 3
+
+
+def test_robotwin_converter_writes_rgb_frames(monkeypatch):
+    cv2 = pytest.importorskip("cv2")
+    pytest.importorskip("h5py")
+    pytest.importorskip("lerobot")
+
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "toolkits/lerobot/convert_robotwin_to_lerobot.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "robotwin_lerobot_converter_test", script
+    )
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+
+    red_bgr = np.zeros((4, 4, 3), dtype=np.uint8)
+    red_bgr[..., 2] = 255
+    encoded_ok, encoded = cv2.imencode(".png", red_bgr)
+    assert encoded_ok, "OpenCV failed to encode the synthetic RGB frame"
+
+    image = module.decode_frame(encoded.tobytes())
+
+    assert tuple(image[0, 0]) == (255, 0, 0)
+
+
+def test_robotwin_converter_cli_writes_hwc_lerobot_dataset(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    h5py = pytest.importorskip("h5py")
+    pytest.importorskip("lerobot")
+
+    root = Path(__file__).resolve().parents[2]
+    script = root / "toolkits/lerobot/convert_robotwin_to_lerobot.py"
+    raw_root = tmp_path / "raw"
+    (raw_root / "data").mkdir(parents=True)
+    (raw_root / "instructions").mkdir()
+    (raw_root / "instructions/episode0.json").write_text(
+        json.dumps({"seen": ["pick up the object"]}), encoding="utf-8"
+    )
+
+    red_bgr = np.zeros((8, 8, 3), dtype=np.uint8)
+    red_bgr[..., 2] = 255
+    encoded_ok, encoded = cv2.imencode(".png", red_bgr)
+    assert encoded_ok, "OpenCV failed to encode the HDF5 fixture frame"
+    encoded_frame = np.frombuffer(encoded.tobytes(), dtype=np.uint8)
+
+    with h5py.File(raw_root / "data/episode0.hdf5", "w") as handle:
+        joints = handle.create_group("joint_action")
+        joints.create_dataset("left_arm", data=np.zeros((2, 6), dtype=np.float32))
+        joints.create_dataset("left_gripper", data=np.zeros(2, dtype=np.float32))
+        joints.create_dataset("right_arm", data=np.zeros((2, 6), dtype=np.float32))
+        joints.create_dataset("right_gripper", data=np.zeros(2, dtype=np.float32))
+        observations = handle.create_group("observation")
+        for camera in ("head_camera", "left_camera", "right_camera"):
+            rgb = observations.create_group(camera).create_dataset(
+                "rgb", shape=(2,), dtype=h5py.vlen_dtype(np.dtype("uint8"))
+            )
+            rgb[0] = encoded_frame
+            rgb[1] = encoded_frame
+
+    output_root = tmp_path / "lerobot"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, [str(root), env.get("PYTHONPATH")])
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--raw-root",
+            str(raw_root),
+            "--output-root",
+            str(output_root),
+        ],
+        cwd=root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    info = json.loads((output_root / "meta/info.json").read_text(encoding="utf-8"))
+    feature = info["features"]["observation.images.cam_high"]
+    assert feature["shape"] == [480, 640, 3]
+    assert feature["names"] == ["height", "width", "channels"]
+    try:
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    except ModuleNotFoundError:
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
+    dataset = LeRobotDataset(repo_id=output_root.name, root=output_root)
+    assert len(dataset) == 1
+    image = dataset[0]["observation.images.cam_high"]
+    assert tuple(image.shape) == (3, 480, 640)
+    assert image[0, 240, 320] > 0.8
+    assert image[1:, 240, 320].max() < 0.2
 
 
 def test_offline_lerobot_export_reuses_canonical_frame_conversion():

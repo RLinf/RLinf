@@ -38,6 +38,14 @@ Pick this section to cold-start a VLA, WAM, or VLM checkpoint with supervised fi
 
       Evaluate FastWAM on LIBERO and run full-parameter FSDP SFT.
 
+   .. grid-item-card:: LingbotVLA 2.0 SFT
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/9f22f0d7c6ed5e4b27c0212b3da848831d1a3c2a/pic/lingbotvlav2_foundation_action_loss_ma25.png
+      :img-alt: LingbotVLA 2.0 SFT
+      :link: embodied/sft_lingbotvlav2
+      :link-type: doc
+
+      Train the action expert on RoboTwin from the Foundation Base.
+
    .. grid-item-card:: OpenPI SFT
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
       :img-alt: OpenPI supervised fine-tuning
@@ -62,5 +70,6 @@ Pick this section to cold-start a VLA, WAM, or VLM checkpoint with supervised fi
    DAgger <embodied/dagger>
    DreamZero <embodied/sft_dreamzero>
    FastWAM <embodied/sft_fastwam>
+   LingbotVLA 2.0 <embodied/sft_lingbotvlav2>
    OpenPI <embodied/sft_openpi>
    Qwen-VL <embodied/sft_vlm>

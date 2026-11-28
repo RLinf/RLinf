@@ -14,6 +14,7 @@
 
 """LingBot-VLA 2.0 flow-SDE PPO with an explicit latent trajectory likelihood."""
 
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -21,10 +22,8 @@ from typing import Any
 import torch
 import torch.nn as nn
 import yaml
-from lingbotvla.checkpoint_metadata import (
-    build_checkpoint_config,
-    read_checkpoint_config,
-)
+from accelerate import init_empty_weights
+from lingbotvla.checkpoint_metadata import build_checkpoint_config
 from lingbotvla.data.vla_data.utils import FeatureTransform
 from lingbotvla.distributed.parallel_state import (
     get_parallel_state,
@@ -41,18 +40,22 @@ from lingbotvla.models.vla.lingbot_vla.qwen3vl_in_vla import (
     apply_lingbot_qwen3_vl_patch,
 )
 from omegaconf import DictConfig, OmegaConf
-from safetensors.torch import load_model
-from transformers.modeling_utils import load_sharded_checkpoint
+from torch.utils._pytree import tree_map
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.lingbotvlav2.utils import (
     is_rl_trainable,
+    mask_padded_actions,
+    read_checkpoint_values,
+    resolve_image_size,
     sample_with_one_sde_step,
     score_sde_step,
 )
 from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.scheduler import Worker
 from rlinf.utils.logging import get_logger
+
+from .checkpoint_allowlist import load_vla_checkpoint
 
 # Rollout and actor both compute in bf16. ``torch_dtype`` only sets how the
 # trainable weights are stored: fp32 in the FSDP actor, so small optimizer steps
@@ -66,6 +69,11 @@ _REQUIRED_PATHS = (
     "lingbotvlav2.robot_config_path",
     "lingbotvlav2.stats_path",
 )
+
+
+def _build_alignment_policy(config: Any) -> nn.Module:
+    with init_empty_weights():
+        return LingbotVlaV2Policy(config, eval=True)
 
 
 class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
@@ -139,8 +147,19 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
 
         weights = Path(config.model_path).expanduser()
         model_config = build_checkpoint_config(
-            read_checkpoint_config(weights), config.tokenizer_path
+            read_checkpoint_values(
+                weights,
+                config.lingbotvlav2.training_config_path,
+                int(config.num_action_chunks),
+            ),
+            config.tokenizer_path,
         )
+        self.enable_alignment_heads = bool(
+            OmegaConf.select(config, "enable_alignment_heads", default=True)
+        )
+        alignment_model_config = deepcopy(model_config)
+        if not self.enable_alignment_heads:
+            model_config.align_params = {}
         model_config.attention_implementation = (
             config.lingbotvlav2.attention_implementation
         )
@@ -163,15 +182,26 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
 
         apply_lingbot_qwen3_vl_patch()
         apply_lingbot_qwen2_patch()
+        enable_expert_lr_multiplier = bool(
+            OmegaConf.select(config, "enable_expert_lr_multiplier", default=False)
+        )
+        if enable_expert_lr_multiplier:
+            num_experts = int(model_config.token_num_experts)
+            top_k = int(model_config.token_top_k)
+            self.lr_multipliers = {".mlp.experts.": (num_experts / top_k) ** 0.5}
         self.vla_model = LingbotVlaV2Policy(model_config, eval=True)
-        if (weights / "model.safetensors.index.json").is_file():
-            load_sharded_checkpoint(
-                self.vla_model, str(weights), strict=True, prefer_safe=True
-            )
-        elif (weights / "model.safetensors").is_file():
-            load_model(self.vla_model, str(weights / "model.safetensors"), strict=True)
-        else:
+        if (
+            not (weights / "model.safetensors.index.json").is_file()
+            and not (weights / "model.safetensors").is_file()
+        ):
             raise FileNotFoundError(f"No safetensors checkpoint in {weights}")
+        load_vla_checkpoint(
+            self.vla_model,
+            weights,
+            self.enable_alignment_heads,
+            alignment_model_config,
+            _build_alignment_policy,
+        )
         self.vla_model.to(dtype=_COMPUTE_DTYPE)
         # No-grad inference kernels can have different numerical reductions.
         # The source package exposes a common differentiable MoE backend.
@@ -202,7 +232,8 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
                 str(item) if isinstance(item, dict) else item
                 for item in data_config[key]
             ]
-        self.image_size = int(data_config["img_size"])
+        data_config["img_size"] = resolve_image_size(data_config)
+        self.image_size = data_config["img_size"]
         self.processor = build_processor(config.tokenizer_path)
         self.transform = FeatureTransform(
             config.lingbotvlav2.robot_config_path,
@@ -416,11 +447,56 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         return latent[..., mask]
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs: Any):
+        if forward_type == ForwardType.SFT:
+            return self.sft_forward(**kwargs)
         if forward_type != ForwardType.DEFAULT:
-            raise NotImplementedError(
-                "The V2 adapter currently implements PPO/GRPO only"
-            )
+            raise NotImplementedError("The V2 adapter implements PPO/GRPO/SFT only")
         return self.default_forward(**kwargs)
+
+    def sft_forward(self, data: dict, **kwargs: Any) -> dict:
+        """Compute the upstream action loss, excluding padded action steps."""
+        device = next(iter(self.vla_model.model.parameters())).device
+        data = tree_map(
+            lambda x: (
+                x.to(device=device).contiguous() if isinstance(x, torch.Tensor) else x
+            ),
+            data,
+        )
+        dtype = _COMPUTE_DTYPE
+        outputs = self.vla_model(
+            images=data["images"].to(dtype),
+            img_masks=data["img_masks"],
+            state=data["state"].to(dtype),
+            lang_tokens=data["lang_tokens"],
+            lang_masks=data["lang_masks"],
+            actions=data["actions"].to(dtype),
+            joint_mask=mask_padded_actions(
+                data.get("joint_mask"), data.get("action_is_pad")
+            ),
+            action_is_pad=data.get("action_is_pad"),
+            image_grid_thw=data.get("image_grid_thw"),
+            noise=data.get("noise"),
+            time=data.get("time"),
+        )
+        (
+            total_loss,
+            loss_vla,
+            loss_depth,
+            loss_future_depth,
+            loss_future_video,
+            seq_wise_loss,
+            loss_dict,
+            *_,
+        ) = outputs
+        return {
+            "loss": total_loss,
+            "l1_loss": loss_vla,
+            "depth_loss": loss_depth,
+            "future_depth_loss": loss_future_depth,
+            "future_video_loss": loss_future_video,
+            "seq_wise_loss": seq_wise_loss,
+            **loss_dict,
+        }
 
     def default_forward(
         self, forward_inputs: dict, compute_values: bool = True, **kwargs: Any

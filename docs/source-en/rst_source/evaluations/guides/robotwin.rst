@@ -178,6 +178,8 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       Default placement uses 2 GPUs (``rollout: 0``, ``env: 1``). Keep LingbotVLA 1.0 and 2.0 in separate virtual environments because both install a ``lingbotvla`` package (see :doc:`../../examples/embodied/lingbotvlav2`).
 
+       For an SFT checkpoint, follow :doc:`LingbotVLA 2.0 SFT <../../examples/embodied/sft_lingbotvlav2>`. V2 PPO and evaluation use the shared ``flex_cached`` attention backend.
+
 .. note::
 
    **Memory & full-seed coverage:** Default configs run ``total_num_envs: 128`` with ``use_fixed_reset_state_ids: True``, which evaluates ~128 of 150–320 task seeds. On memory-constrained hosts, lower ``env.eval.total_num_envs`` (or enable ``env.enable_offload: True`` and ``rollout.enable_offload: True``), and to cover all seeds set ``use_fixed_reset_state_ids: False`` with ``auto_reset: True`` and a larger ``max_steps_per_rollout_epoch`` (see :ref:`Evaluation Configuration <robotwin-eval-config>`).

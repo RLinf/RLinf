@@ -38,6 +38,14 @@ SFT 与模仿学习
 
       在 LIBERO 上评测 FastWAM 并运行全参数 FSDP SFT。
 
+   .. grid-item-card:: LingbotVLA 2.0 监督微调
+      :img-top: https://raw.githubusercontent.com/RLinf/misc/9f22f0d7c6ed5e4b27c0212b3da848831d1a3c2a/pic/lingbotvlav2_foundation_action_loss_ma25.png
+      :img-alt: LingbotVLA 2.0 SFT
+      :link: embodied/sft_lingbotvlav2
+      :link-type: doc
+
+      从 Foundation Base 出发，在 RoboTwin 上训练动作专家。
+
    .. grid-item-card:: OpenPI 监督微调
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
       :img-alt: OpenPI 监督微调
@@ -62,5 +70,6 @@ SFT 与模仿学习
    DAgger <embodied/dagger>
    DreamZero <embodied/sft_dreamzero>
    FastWAM <embodied/sft_fastwam>
+   LingbotVLA 2.0 <embodied/sft_lingbotvlav2>
    OpenPI <embodied/sft_openpi>
    Qwen-VL <embodied/sft_vlm>

@@ -1,0 +1,15 @@
+model_type: lingbotvlav2
+precision: fp32
+num_action_chunks: 50
+action_dim: 14
+num_steps: 10
+noise_level: 0.5
+forward_micro_batch_size: 1
+is_lora: false
+add_value_head: false
+enable_alignment_heads: false
+enable_expert_lr_multiplier: false
+
+lingbotvlav2:
+  attention_implementation: flex_cached
+  data_name: multi

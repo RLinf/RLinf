@@ -29,6 +29,11 @@ wrappers: {}
 mixed_precision_policies: {}
 mixed_precision_rules: {}
 
+# FSDP2 uses a separate MixedPrecisionPolicy with output_dtype instead of
+# FSDP1's buffer_dtype. Policies are assigned to the selected sharded modules.
+fsdp2_mixed_precision_policies: {}
+fsdp2_mixed_precision_rules: {}
+
 amp_autocast:                       # Do not enable `amp_autocast` with FSDP `mixed_precision` enabled, using both will result in conflict.  
   enabled: False                    # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
   precision: "bf16"                 # precision for AMP, options are ["fp16" , "bf16"]

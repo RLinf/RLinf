@@ -31,7 +31,10 @@ import rlinf.robotics.robots  # noqa: F401
 from rlinf.envs import SupportedEnvType
 from rlinf.envs.layout import EnvLayout, EnvSpec
 from rlinf.scheduler.cluster import Cluster
-from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
+from rlinf.utils.fsdp_config import (
+    validate_fsdp2_mixed_precision_config,
+    validate_fsdp_wrapper_config,
+)
 from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
@@ -776,6 +779,7 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         )
         cfg.fsdp_config = validate_amp_cfg(cfg.fsdp_config)
         validate_fsdp_wrapper_config(cfg.fsdp_config)
+        validate_fsdp2_mixed_precision_config(cfg.fsdp_config)
 
         if model_type is not None and str(model_type) == SupportedModel.OPENPI.value:
             low_precision = any(

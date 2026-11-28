@@ -1,7 +1,7 @@
 model_type: lingbotvlav2
-# Fill in absolute paths for the model and its assets before running.
-model_path: ""
-tokenizer_path: ""
+# Set the checkpoint and source paths through the environment before running.
+model_path: ${oc.env:LINGBOT_VLA_V2_ROBOTWIN_ROOT}/checkpoints/global_step_50000/hf_ckpt
+tokenizer_path: ${oc.env:QWEN3VL_PATH}
 # Storage dtype of the trainable weights. Rollout and eval use bf16; the PPO
 # actor overrides this to fp32. Compute is bf16 in both.
 precision: bf16
@@ -13,12 +13,13 @@ num_steps: 10
 forward_micro_batch_size: 1
 noise_level: 0.3
 add_value_head: true
+enable_alignment_heads: true
 value_type: chunk_level
 value_head:
   hidden_sizes: [512, 128]
   activation: relu
 lingbotvlav2:
-  training_config_path: ""
-  robot_config_path: ""
-  stats_path: ""
-  attention_implementation: eager
+  training_config_path: ${oc.env:LINGBOT_VLA_V2_ROBOTWIN_ROOT}/lingbotvla_cli.yaml
+  robot_config_path: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs/robotwin.yaml
+  stats_path: ${oc.env:LINGBOT_VLA_V2_PATH}/assets/norm_stats/robotwin.json
+  attention_implementation: flex_cached

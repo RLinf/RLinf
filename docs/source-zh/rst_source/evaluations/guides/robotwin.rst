@@ -178,6 +178,8 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
 
       默认使用 2 张 GPU（``rollout: 0``、``env: 1``）。LingbotVLA 1.0 与 2.0 均安装 ``lingbotvla`` 包，须分别使用独立的虚拟环境（详见 :doc:`../../examples/embodied/lingbotvlav2`）。
 
+       评测 SFT checkpoint，请参阅 :doc:`LingbotVLA 2.0 SFT <../../examples/embodied/sft_lingbotvlav2>`。V2 的 PPO 与评测共用 ``flex_cached`` attention 后端。
+
 .. note::
 
    **显存与全种子覆盖：** 默认配置使用 ``total_num_envs: 128`` 与 ``use_fixed_reset_state_ids: True``，每轮约覆盖 150–320 条任务种子中的 128 条。内存或显存受限时可调小 ``env.eval.total_num_envs``\ （或开启 ``env.enable_offload: True`` 与 ``rollout.enable_offload: True``）；如需覆盖全部种子，将 ``use_fixed_reset_state_ids`` 设为 ``False`` 并配合 ``auto_reset: True`` 与更大的 ``max_steps_per_rollout_epoch``\ （详见 :ref:`评测配置详解 <robotwin-eval-config>`）。
