@@ -1,18 +1,15 @@
 PhyAI Rollout Backend
 =====================
 
-This guide trains a PI0.5 policy on LIBERO with PPO while
-`PhyAI <https://github.com/mingti-org/phyai>`_ generates the rollouts. PhyAI is
-an inference framework for physical-AI models such as VLAs. Each RLinf rollout
-worker runs one PhyAI engine on its GPU, and the engine samples actions with
-CUDA graphs and FlashInfer kernels instead of the Hugging Face model code.
-Everything else stays with RLinf: the LIBERO environments, observation and
-action transforms, the FSDP actor, and weight synchronization.
+`PhyAI <https://github.com/mingti-org/phyai>`_ is an inference framework for
+embodied models such as VLAs. RLinf integrates PhyAI in two ways:
 
-You'll install the backend, point the example at a checkpoint, and run
-training. Before the run, one section explains why PhyAI training keeps
-importance-sampling correction turned on, because that setting decides how the
-actor treats actions it did not sample itself.
+- **PPO training**: runs a PhyAI engine inside each rollout worker for action
+  sampling, while RLinf manages the LIBERO environments, FSDP actor,
+  observation transforms, and weight synchronization.
+- **Standalone HTTP evaluation**: serves the PI0.5 model as a separate process
+  behind the PhyAI Gateway, while RLinf runs LIBERO and queries it over HTTP
+  (see :ref:`phyai-http-evaluation-en`).
 
 Prerequisites
 -------------
@@ -21,6 +18,8 @@ You need a Linux machine with NVIDIA GPUs and Python 3.12. The backend
 supports PI0.5 on LIBERO with synchronous PPO, and each rollout
 worker uses exactly one GPU. The training path is verified on two
 NVIDIA H800 80 GB GPUs with the RLinf PI0.5 LIBERO SFT checkpoint.
+
+.. _phyai-installation-en:
 
 Installation
 ------------
@@ -32,7 +31,6 @@ one virtual environment, then activate it:
 
    bash requirements/install.sh \
      --python 3.12 \
-     --torch 2.11.0 \
      --install-rlinf \
      embodied \
      --model openpi \
@@ -146,3 +144,113 @@ near 1 with a small ``actor/importance_sampling_clip_fraction`` means PhyAI and
 the actor still agree closely; a weight drifting away from 1 means their scores
 are diverging. :doc:`Training Metrics <../../reference/metrics>` defines the
 remaining metrics.
+
+.. _phyai-http-evaluation-en:
+
+Evaluate Through the PhyAI HTTP Service
+---------------------------------------
+
+In this evaluation-only mode, the PI0.5 model runs as a separate inference
+service decoupled from RLinf's LIBERO environments. RLinf runs the environments
+and sends batched observations over HTTP to the PhyAI Gateway, while the model
+server handles weight loading, observation preprocessing, and action
+postprocessing.
+
+.. code-block:: text
+
+   RLinf evaluation -> HTTP MessagePack -> PhyAI Gateway -> model server
+
+By default, RLinf starts a local model server and Gateway and stops them when
+evaluation ends. To connect to an already deployed external service instead,
+set ``rollout.phyai.gateway_url``.
+
+Requirements and Environment
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+You need at least one NVIDIA GPU and the virtual environment from
+:ref:`phyai-installation-en`, which already includes the model server and
+Gateway.
+
+By default, evaluation uses all available GPUs and starts one model server and
+Gateway on the first GPU. To dedicate one or more GPUs to serving, assign
+``phyai_server`` under ``cluster.component_placement`` (one service pair per
+assigned GPU, called round-robin by rollout workers); see
+:doc:`Placement <../../concepts/placement>`.
+
+Download the Checkpoint and Tokenizer
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+HTTP evaluation requires the `LeRobot PI0.5 LIBERO checkpoint
+<https://huggingface.co/lerobot/pi05_libero_finetuned_v044>`_ and the
+PaliGemma tokenizer. This format differs from the RLinf/OpenPI checkpoint used
+for PPO training above and cannot be mixed.
+
+.. warning::
+
+   The `PaliGemma repository
+   <https://huggingface.co/google/paligemma-3b-pt-224>`_ is gated. Accept its
+   license on Hugging Face and authenticate with ``hf auth login`` or
+   ``HF_TOKEN`` before downloading. Mirrors do not bypass authentication.
+
+Download both snapshots at the verified revisions below:
+
+.. code-block:: bash
+
+   hf download lerobot/pi05_libero_finetuned_v044 \
+     --revision 7152f13e34c6c115d808aea0e5d08aca74eac14b \
+     --local-dir ./pi05_libero_finetuned_v044
+   hf download google/paligemma-3b-pt-224 \
+     --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
+     --local-dir ./paligemma-3b-pt-224
+
+Run Automatic Evaluation
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Activate the PhyAI environment and launch LIBERO-Spatial evaluation from the
+RLinf repository root, passing your checkpoint and tokenizer directories:
+
+.. code-block:: bash
+
+   source .venv/bin/activate
+   bash evaluations/run_eval.sh libero libero_spatial_pi05_eval_phyai \
+     rollout.phyai.checkpoint_dir=./pi05_libero_finetuned_v044 \
+     rollout.phyai.tokenizer_dir=./paligemma-3b-pt-224
+
+The script starts a local model server and Gateway, evaluates 128 parallel
+LIBERO-Spatial environments for 1 epoch (16-step action chunks), and stops both
+services on exit. Requests are split by ``rollout.phyai.max_batch_size: 8`` so
+1, 2, 4, or 8 GPUs work out of the box.
+
+To avoid passing the paths on every run, edit ``checkpoint_dir`` and
+``tokenizer_dir`` in
+``evaluations/libero/libero_spatial_pi05_eval_phyai.yaml``.
+
+Connect to an External Service
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If the model server and Gateway already run in another environment or on
+another host, pass ``rollout.phyai.gateway_url``:
+
+.. code-block:: bash
+
+   source .venv/bin/activate
+   bash evaluations/run_eval.sh libero libero_spatial_pi05_eval_phyai \
+     rollout.phyai.gateway_url=http://127.0.0.1:30000
+
+Configure the checkpoint and tokenizer on the external model server directly.
+Keep ``server.model_name``, the Gateway's ``--backend`` flag, and RLinf's
+``rollout.phyai.model_name`` identical (all default to ``pi05``). See the
+`PhyAI server and Gateway documentation
+<https://phyai.mintlify.app/deployment/server-gateway>`_ for standalone
+deployment steps.
+
+Check the Results
+~~~~~~~~~~~~~~~~~
+
+When evaluation finishes, the script prints the final metrics table—including
+``eval/success_once``, ``eval/success_at_end``, and ``eval/num_trajectories``—
+and writes logs and TensorBoard files under
+``logs/<timestamp>-libero_spatial_pi05_eval_phyai/``. Auto-launched model
+server and Gateway logs go to its ``phyai/`` subdirectory; see
+:doc:`LIBERO Evaluation <../../evaluations/guides/libero>` for the benchmark
+protocol.

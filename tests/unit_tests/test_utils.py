@@ -1160,6 +1160,130 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
     assert resolve_attn_implementation("eager") == "eager"
 
 
+def test_msgpack_codec_roundtrips_numpy_payloads():
+    import numpy as np
+
+    from rlinf.utils.msgpack_codec import pack_msgpack, unpack_msgpack
+
+    contiguous = np.arange(6, dtype=np.uint8).reshape(2, 3)
+    non_contiguous = contiguous[:, ::2]
+    payload = {
+        "codec": "ok",
+        "contiguous": contiguous,
+        "non_contiguous": non_contiguous,
+        "scalar": np.float32(1.5),
+        "zero_dim": np.array(7, dtype=np.int32),
+        "empty": np.zeros((0, 4), dtype=np.float16),
+        "nested": {"images": [np.ones((2, 2, 3), dtype=np.uint8)]},
+    }
+
+    decoded = unpack_msgpack(pack_msgpack(payload))
+
+    assert decoded["codec"] == "ok"
+    assert decoded["contiguous"].dtype == contiguous.dtype
+    assert decoded["contiguous"].flags.writeable
+    assert np.array_equal(decoded["contiguous"], contiguous)
+    assert np.array_equal(decoded["non_contiguous"], non_contiguous)
+    assert isinstance(decoded["scalar"], np.float32)
+    assert float(decoded["scalar"]) == pytest.approx(1.5)
+    assert decoded["zero_dim"].shape == ()
+    assert int(decoded["zero_dim"]) == 7
+    assert decoded["empty"].shape == (0, 4) and decoded["empty"].dtype == np.float16
+    assert np.array_equal(
+        decoded["nested"]["images"][0], payload["nested"]["images"][0]
+    )
+
+
+def test_msgpack_codec_matches_the_gateway_wire_format():
+    import msgpack
+    import numpy as np
+
+    from rlinf.utils.msgpack_codec import pack_msgpack, unpack_msgpack
+
+    array = np.arange(4, dtype=np.float32)
+    raw = msgpack.unpackb(pack_msgpack({"x": array}), raw=False)
+
+    assert raw["x"][b"__ndarray__"] is True
+    assert raw["x"][b"dtype"] == array.dtype.str
+    assert tuple(raw["x"][b"shape"]) == (4,)
+    assert raw["x"][b"data"] == array.tobytes()
+
+    # The Gateway may emit string keys; both spellings must decode.
+    string_keyed = msgpack.packb(
+        {
+            "x": {
+                "__ndarray__": True,
+                "data": array.tobytes(),
+                "dtype": array.dtype.str,
+                "shape": [4],
+            }
+        },
+        use_bin_type=True,
+    )
+    assert np.array_equal(unpack_msgpack(string_keyed)["x"], array)
+
+
+def test_msgpack_codec_rejects_unsupported_dtypes():
+    import numpy as np
+
+    from rlinf.utils.msgpack_codec import pack_msgpack
+
+    with pytest.raises(ValueError, match="Unsupported dtype"):
+        pack_msgpack({"x": np.array([1 + 2j], dtype=np.complex64)})
+
+
+def test_inference_http_client_msgpack_path_does_not_import_sglang(monkeypatch):
+    import sys
+    import types
+
+    import numpy as np
+
+    from rlinf.utils import http_client as http_client_module
+    from rlinf.utils.msgpack_codec import pack_msgpack
+
+    class BlockSglang:
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname == "sglang" or fullname.startswith("sglang."):
+                raise ImportError(f"blocked sglang import: {fullname}")
+            return None
+
+    for name in [m for m in sys.modules if m == "sglang" or m.startswith("sglang.")]:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.setattr(sys, "meta_path", [BlockSglang(), *sys.meta_path])
+
+    captured = {}
+    response_actions = np.zeros((2, 5, 7), dtype=np.float32)
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        body = pack_msgpack({"actions": response_actions})
+        return types.SimpleNamespace(
+            ok=True,
+            status_code=200,
+            content=body,
+            headers={"content-type": "application/msgpack"},
+        )
+
+    monkeypatch.setattr(http_client_module.requests, "post", fake_post)
+    client = http_client_module.InferenceHTTPClient("http://localhost:30000")
+    request_actions = np.zeros((2, 8), dtype=np.float32)
+
+    decoded = client.post(
+        "/v1/actions/generations",
+        {"observation": {"states": request_actions}},
+        msgpack=True,
+        timeout_s=5.0,
+        max_retries=0,
+    )
+
+    assert captured["url"] == "http://localhost:30000/v1/actions/generations"
+    assert isinstance(captured["kwargs"]["data"], bytes)
+    assert captured["kwargs"]["headers"]["Content-Type"] == "application/msgpack"
+    assert captured["kwargs"]["timeout"] == 5.0
+    assert np.array_equal(decoded["actions"], response_actions)
+
+
 def test_loss_weights_count_every_step_of_an_unmasked_trajectory_and_keep_filters():
     from rlinf.utils.utils import add_loss_weights
 

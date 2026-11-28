@@ -34,7 +34,7 @@ Rollout 后端与服务
       :link: phyai
       :link-type: doc
 
-      在 LIBERO 上用 CUDA Graph 与 FlashInfer 加速 OpenPI π₀.₅ PPO Rollout。
+      使用 PhyAI 加速 LIBERO 上 π₀.₅ 的策略推理，支持 PPO 训练和独立 HTTP 服务评测。
 
    .. grid-item-card:: ApxInf 具身评测后端
       :link: ../apxinf

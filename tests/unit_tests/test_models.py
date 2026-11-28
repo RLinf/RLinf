@@ -69,6 +69,7 @@ from rlinf.models.embodiment.prefix_features import (
     pool_prefix,
 )
 from rlinf.scheduler import Worker
+from rlinf.utils import http_client as http_client_module
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
     ConstantDelaySampler,
@@ -77,6 +78,7 @@ from rlinf.utils.env_helpers.delay_sampler import (
     GaussianDelaySampler,
     UniformDelaySampler,
 )
+from rlinf.workers.rollout.embodied_http_worker import EmbodiedRolloutRouterWorker
 from rlinf.workers.rollout.phyai import phyai_rollout_worker
 from rlinf.workers.rollout.phyai.phyai_rollout_worker import PhyAIRolloutWorker
 
@@ -3968,6 +3970,86 @@ def test_phyai_eval_requires_a_nonempty_openpi_config_name(phyai_example_cfg):
         validate_embodied_cfg(phyai_example_cfg)
 
 
+def test_phyai_rejects_unknown_serving_mode(phyai_example_cfg):
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.serving_mode",
+        "worker_http",
+        force_add=True,
+    )
+
+    with pytest.raises(AssertionError, match="serving_mode"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+
+def test_phyai_gateway_serving_mode_requires_eval_and_url(phyai_example_cfg):
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.serving_mode",
+        "gateway",
+        force_add=True,
+    )
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.gateway_url",
+        "http://localhost:30000",
+        force_add=True,
+    )
+
+    with pytest.raises(AssertionError, match="only_eval"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+    phyai_example_cfg.runner.only_eval = True
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.gateway_url",
+        "",
+        force_add=True,
+    )
+
+    with pytest.raises(AssertionError, match="gateway_url"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+
+def test_phyai_gateway_auto_launch_config_validation(phyai_example_cfg):
+    phyai_example_cfg.runner.only_eval = True
+    OmegaConf.update(
+        phyai_example_cfg, "rollout.phyai.serving_mode", "gateway", force_add=True
+    )
+    OmegaConf.update(
+        phyai_example_cfg, "rollout.phyai.gateway_url", None, force_add=True
+    )
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.server",
+        {"plugin": "pi05"},
+        force_add=True,
+    )
+    OmegaConf.update(
+        phyai_example_cfg, "rollout.phyai.checkpoint_dir", "/ckpt", force_add=True
+    )
+    with pytest.raises(AssertionError, match="tokenizer_dir"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+    OmegaConf.update(
+        phyai_example_cfg, "rollout.phyai.tokenizer_dir", "/tok", force_add=True
+    )
+    OmegaConf.update(
+        phyai_example_cfg, "rollout.phyai.max_batch_size", 8, force_add=True
+    )
+    validate_embodied_cfg(phyai_example_cfg)
+
+    for invalid_batch in (0, -1, True):
+        OmegaConf.update(
+            phyai_example_cfg,
+            "rollout.phyai.max_batch_size",
+            invalid_batch,
+            force_add=True,
+        )
+        with pytest.raises(AssertionError, match="max_batch_size"):
+            validate_embodied_cfg(phyai_example_cfg)
+
+
 def _cosmos3_sglang_cfg(batching_max_size=None):
     server = (
         {} if batching_max_size is None else {"batching_max_size": batching_max_size}
@@ -6067,6 +6149,487 @@ def test_openvla_oft_predicts_a_finite_action_on_the_accelerator():
     assert torch.isfinite(result["prev_logprobs"]).all()
 
 
+@pytest.fixture
+def phyai_http_worker(monkeypatch):
+    from rlinf.workers.rollout.phyai import PhyAIGatewayRolloutWorker
+
+    def init_scheduler(worker):
+        worker._rank = 0
+        worker._world_size = 1
+        worker._group_name = "RolloutGroup"
+        worker._logger = logging.getLogger("phyai-http-test")
+        worker._stacklevel = 1
+
+    monkeypatch.setattr(Worker, "__init__", init_scheduler)
+    cfg = _phyai_cfg(only_eval=True)
+    return PhyAIGatewayRolloutWorker(cfg)
+
+
+def test_phyai_http_request_preserves_raw_observations(phyai_http_worker):
+    obs = _phyai_env_obs()
+    obs["states"] = obs["states"].double()
+    payload, state = phyai_http_worker.build_phyai_request(
+        {**obs, "_rlinf_stage_id": 2, "_rlinf_reset": True}
+    )
+    assert payload["model"] == payload["model_name"] == "pi05"
+    assert payload["observation"]["main_images"] is obs["main_images"]
+    assert payload["observation"]["states"].dtype is torch.float32
+    assert torch.equal(payload["observation"]["states"], obs["states"].float())
+    assert payload["metadata"] == {
+        "mode": "eval",
+        "batch_size": 2,
+        "stage_id": 2,
+        "reset": True,
+    }
+    assert payload["requested_action_horizon"] == 5
+    assert state == {"batch_size": 2, "requested_action_horizon": 5}
+    assert "_rlinf_stage_id" not in payload["observation"]
+    actions, info = phyai_http_worker.parse_phyai_response(
+        {"actions": np.zeros((2, 5, 7), dtype=np.float32)}, state
+    )
+    assert actions.shape == (2, 5, 7)
+    assert info == {}
+
+
+@pytest.mark.parametrize("shape", [(2, 4, 7), (2, 5, 32)])
+def test_phyai_http_response_rejects_shape_mismatches(phyai_http_worker, shape):
+    with pytest.raises(RuntimeError, match="Expected PhyAI action shape"):
+        phyai_http_worker.parse_phyai_response(
+            {"actions": np.zeros(shape, dtype=np.float32)},
+            {"batch_size": 2, "requested_action_horizon": 5},
+        )
+
+
+def test_phyai_http_response_rejects_nonfinite_values(phyai_http_worker):
+    with pytest.raises(RuntimeError, match="finite"):
+        phyai_http_worker.parse_phyai_response(
+            {"actions": np.full((2, 5, 7), np.nan, dtype=np.float32)},
+            {"batch_size": 2, "requested_action_horizon": 5},
+        )
+
+
+@pytest.mark.parametrize("codec", ["lz4", "zstd"])
+def test_phyai_http_merge_decompresses_images_and_keeps_epoch_end(
+    phyai_http_worker, codec
+):
+    from rlinf.utils.obs_compression import compress_obs, infer_obs_batch_size
+
+    obs = _phyai_env_obs()
+    compressed = compress_obs(
+        {"obs": obs, "eval_epoch_done": True},
+        {"enable": True, "codec": codec, "level": 1},
+    )
+    assert infer_obs_batch_size(compressed) == 2
+    merged = phyai_http_worker._merge_obs_batches([compressed])
+    assert torch.equal(merged["obs"]["main_images"], obs["main_images"])
+    assert torch.equal(merged["obs"]["wrist_images"], obs["wrist_images"])
+    assert merged["eval_epoch_done"]
+    assert not merged["reset"]
+
+
+def test_phyai_http_evaluate_stops_without_predicting_after_epoch_end(
+    monkeypatch, phyai_http_worker
+):
+    received = []
+    sent = []
+    predictions = []
+    phyai_http_worker.n_eval_chunk_steps = 3
+    actions = torch.zeros(2, 5, 7)
+
+    class ReceiveResult:
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def async_wait(self):
+            return self.payload
+
+    def recv_from(**kwargs):
+        received.append(kwargs)
+        batch = {"obs": _phyai_env_obs(), "eval_epoch_done": len(received) == 2}
+        return ReceiveResult(kwargs["merge_fn"]([batch]))
+
+    def predict(obs, mode):
+        predictions.append((obs, mode))
+        return actions, {}
+
+    monkeypatch.setattr(phyai_http_worker, "recv_from", recv_from)
+    monkeypatch.setattr(
+        phyai_http_worker, "send_to", lambda **kwargs: sent.append(kwargs)
+    )
+    monkeypatch.setattr(phyai_http_worker, "predict", predict)
+    asyncio.run(phyai_http_worker.evaluate("observations", "actions"))
+    assert len(received) == 2
+    assert len(predictions) == len(sent) == 1
+    assert sent[0]["channel"] == "actions"
+    assert sent[0]["route_key"] == 0
+    assert torch.equal(sent[0]["data"], actions)
+
+
+def test_phyai_http_initialization_requires_gateway_urls(phyai_http_worker):
+    with pytest.raises(RuntimeError, match="Expected Gateway URLs"):
+        asyncio.run(phyai_http_worker.init_worker())
+    phyai_http_worker.set_phyai_server_urls(["http://localhost:30000/"])
+    asyncio.run(phyai_http_worker.init_worker())
+    assert phyai_http_worker.http_server_url == "http://localhost:30000"
+
+
+def test_phyai_http_predict_posts_msgpack_to_actions_endpoint(phyai_http_worker):
+    """Exercise predict end to end against a fake HTTP boundary.
+
+    The other PhyAI HTTP worker tests patch predict itself, so the
+    request builder, the MessagePack POST, and the response parser are never
+    wired together. This replaces only the transport, so a regression in any
+    of those three steps fails here.
+    """
+    calls = []
+    phyai_http_worker.set_phyai_server_urls(["http://localhost:30000"])
+    asyncio.run(phyai_http_worker.init_worker())
+    phyai_http_worker.http_client = SimpleNamespace(
+        post=lambda path, body, **kwargs: (
+            calls.append((path, body, kwargs))
+            or {"actions": np.zeros((2, 5, 7), dtype=np.float32)}
+        )
+    )
+    actions, info = phyai_http_worker.predict(_phyai_env_obs(), mode="eval")
+    assert len(calls) == 1
+    path, body, kwargs = calls[0]
+    assert path == "/v1/actions/generations"
+    assert body["model"] == body["model_name"] == "pi05"
+    assert (
+        body["requested_action_horizon"]
+        == phyai_http_worker.model_cfg.num_action_chunks
+    )
+    assert body["metadata"]["batch_size"] == 2
+    assert kwargs == {
+        "msgpack": True,
+        "timeout_s": phyai_http_worker._http_timeout_s,
+        "max_retries": phyai_http_worker._http_max_retries,
+        "retry_backoff_s": phyai_http_worker._http_retry_backoff_s,
+    }
+    assert actions.shape == (2, 5, 7)
+    assert actions.dtype is torch.float32
+    assert info == {}
+
+
+def test_phyai_http_example_uses_pi05_model_contract(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.config import validate_only_eval_rollout_model
+
+    repo = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(repo / "examples/embodiment"))
+    with initialize_config_dir(
+        config_dir=str(repo / "evaluations/libero"), version_base=None
+    ):
+        cfg = compose(config_name="libero_spatial_pi05_eval_phyai")
+        cfg_override = compose(
+            config_name="libero_spatial_pi05_eval_phyai",
+            overrides=["rollout.phyai.gateway_url=http://127.0.0.1:8080"],
+        )
+    validate_only_eval_rollout_model(cfg.rollout.model)
+    assert cfg.rollout.model.action_dim == 7
+    assert cfg.rollout.model.num_action_chunks == 16
+    assert cfg.rollout.phyai.serving_mode == "gateway"
+    assert cfg.rollout.phyai.model_name == "pi05"
+    assert cfg.rollout.phyai.gateway_url is None
+    assert cfg.rollout.phyai.max_batch_size == 8
+    assert cfg.runner.logger.log_path == "../results"
+    assert cfg.rollout.phyai.server.plugin == "pi05"
+    assert cfg.rollout.phyai.server.adapter.args.action_dim == 7
+    assert cfg_override.rollout.phyai.gateway_url == "http://127.0.0.1:8080"
+    with initialize_config_dir(
+        config_dir=str(repo / "tests/e2e_tests/evaluations"), version_base=None
+    ):
+        e2e_override = compose(
+            config_name="libero_spatial_pi05_eval_phyai",
+            overrides=["rollout.phyai.gateway_url=http://127.0.0.1:9090"],
+        )
+    assert e2e_override.rollout.phyai.gateway_url == "http://127.0.0.1:9090"
+    assert e2e_override.rollout.phyai.max_batch_size == 8
+    assert cfg.rollout.model.openpi.task == "eval"
+    assert "action_head_cfg" not in cfg.rollout.model
+
+
+def test_phyai_http_predict_microbatches_above_max_batch_size(monkeypatch):
+    from rlinf.workers.rollout.phyai import PhyAIGatewayRolloutWorker
+
+    def init_scheduler(worker):
+        worker._rank = 0
+        worker._world_size = 1
+        worker._group_name = "RolloutGroup"
+        worker._logger = logging.getLogger("phyai-http-test")
+        worker._stacklevel = 1
+
+    monkeypatch.setattr(Worker, "__init__", init_scheduler)
+    cfg = _phyai_cfg(only_eval=True)
+    OmegaConf.update(cfg, "rollout.phyai.max_batch_size", 2, force_add=True)
+    worker = PhyAIGatewayRolloutWorker(cfg)
+    worker.set_phyai_server_urls(["http://localhost:30000"])
+    asyncio.run(worker.init_worker())
+
+    seen_batches = []
+
+    def fake_post(path, body, **kwargs):
+        states = body["observation"]["states"]
+        bsz = states.shape[0]
+        seen_batches.append(
+            (
+                bsz,
+                list(body["observation"]["task_descriptions"]),
+                body["observation"]["extras"]["ids"].tolist(),
+            )
+        )
+        actions = states[:, :1].unsqueeze(1).expand(bsz, 5, 7).numpy()
+        return {"actions": actions}
+
+    worker.http_client = SimpleNamespace(post=fake_post)
+    obs = {
+        "main_images": torch.zeros(5, 8, 8, 3, dtype=torch.uint8),
+        "wrist_images": torch.zeros(5, 8, 8, 3, dtype=torch.uint8),
+        "states": torch.arange(5, dtype=torch.float32).unsqueeze(1).repeat(1, 8),
+        "task_descriptions": [f"task-{i}" for i in range(5)],
+        "extras": {"ids": torch.arange(5)},
+        "_rlinf_stage_id": 1,
+        "_rlinf_reset": False,
+    }
+    actions, info = worker.predict(obs, mode="eval")
+    assert seen_batches == [
+        (2, ["task-0", "task-1"], [0, 1]),
+        (2, ["task-2", "task-3"], [2, 3]),
+        (1, ["task-4"], [4]),
+    ]
+    assert actions.shape == (5, 5, 7)
+    assert actions[:, 0, 0].tolist() == [0.0, 1.0, 2.0, 3.0, 4.0]
+    assert info == {}
+
+
+def test_phyai_service_worker_prepare_config_and_logs(monkeypatch, tmp_path):
+    import yaml
+
+    from rlinf.workers.rollout.phyai.launcher import PhyAIServiceWorker
+
+    def init_scheduler(worker):
+        worker._rank = 0
+        worker._world_size = 1
+        worker._group_name = "PhyAIServiceGroup"
+        worker._logger = logging.getLogger("phyai-launcher-test")
+        worker._stacklevel = 1
+
+    monkeypatch.setattr(Worker, "__init__", init_scheduler)
+    ckpt_dir = tmp_path / "ckpt"
+    tok_dir = tmp_path / "tok"
+    ckpt_dir.mkdir()
+    tok_dir.mkdir()
+    cfg = OmegaConf.create(
+        {
+            "server": {
+                "plugin": "pi05",
+                "plugin_args": {"checkpoint_dir": "/old", "max_batch_size": 4},
+                "server": {"host": "0.0.0.0", "port": 1111, "model_name": "old"},
+                "adapter": {"args": {"tokenizer_dir": "/old_tok"}},
+            },
+            "checkpoint_dir": str(ckpt_dir),
+            "tokenizer_dir": str(tok_dir),
+            "model_name": "custom_pi05",
+            "max_batch_size": 12,
+            "log_dir": "relative_logs",
+        }
+    )
+    monkeypatch.setenv("REPO_PATH", str(tmp_path))
+    worker = PhyAIServiceWorker(cfg)
+    generated = worker._prepare_server_config(55123)
+    try:
+        rendered = yaml.safe_load(generated.read_text())
+        assert rendered["server"]["host"] == "127.0.0.1"
+        assert rendered["server"]["port"] == 55123
+        assert rendered["server"]["model_name"] == "custom_pi05"
+        assert rendered["plugin_args"]["checkpoint_dir"] == str(ckpt_dir.resolve())
+        assert rendered["plugin_args"]["max_batch_size"] == 12
+        assert rendered["adapter"]["args"]["tokenizer_dir"] == str(tok_dir.resolve())
+    finally:
+        generated.unlink(missing_ok=True)
+
+    worker._open_logs()
+    try:
+        assert (tmp_path / "relative_logs" / "phyai-server-0.log").is_file()
+        assert (tmp_path / "relative_logs" / "phyai-gateway-0.log").is_file()
+    finally:
+        worker.stop()
+
+
+def test_phyai_service_worker_start_rolls_back_temp_config_on_error(
+    monkeypatch, tmp_path
+):
+    from rlinf.workers.rollout.phyai.launcher import PhyAIServiceWorker
+
+    def init_scheduler(worker):
+        worker._rank = 0
+        worker._world_size = 1
+        worker._group_name = "PhyAIServiceGroup"
+        worker._logger = logging.getLogger("phyai-launcher-test")
+        worker._stacklevel = 1
+
+    monkeypatch.setattr(Worker, "__init__", init_scheduler)
+    ckpt_dir = tmp_path / "ckpt"
+    tok_dir = tmp_path / "tok"
+    ckpt_dir.mkdir()
+    tok_dir.mkdir()
+    cfg = OmegaConf.create(
+        {
+            "server": {"plugin_args": {}, "server": {}, "adapter": {"args": {}}},
+            "checkpoint_dir": str(ckpt_dir),
+            "tokenizer_dir": str(tok_dir),
+        }
+    )
+    worker = PhyAIServiceWorker(cfg)
+    ports = iter([41001, 41002, 41003])
+    monkeypatch.setattr(worker, "acquire_free_port", lambda: next(ports))
+
+    created = []
+    orig_prepare = worker._prepare_server_config
+
+    def tracking_prepare(port):
+        path = orig_prepare(port)
+        created.append(path)
+        return path
+
+    monkeypatch.setattr(worker, "_prepare_server_config", tracking_prepare)
+    monkeypatch.setattr(
+        worker,
+        "_open_logs",
+        lambda: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    with pytest.raises(OSError, match="disk full"):
+        worker.start()
+
+    assert len(created) == 1
+    assert not created[0].exists()
+    assert worker._server_config is None
+
+
+def test_phyai_launcher_health_wait_fails_fast_when_server_exits(monkeypatch):
+    import time
+
+    from rlinf.workers.rollout.phyai.launcher import (
+        _backend_is_healthy,
+        _wait_for_gateway,
+    )
+
+    assert _backend_is_healthy(
+        [{"model_name": "pi05", "endpoint": "127.0.0.1:50063", "healthy": True}],
+        "pi05",
+        "127.0.0.1:50063",
+    )
+    assert not _backend_is_healthy(
+        [{"model_name": "pi05", "endpoint": "127.0.0.1:50063", "healthy": False}],
+        "pi05",
+        "127.0.0.1:50063",
+    )
+
+    alive_gateway = SimpleNamespace(poll=lambda: None)
+    dead_server = SimpleNamespace(poll=lambda: 137)
+    with pytest.raises(
+        RuntimeError, match="model server exited with code 137.*phyai-server-0.log"
+    ):
+        _wait_for_gateway(
+            alive_gateway,
+            dead_server,
+            "http://127.0.0.1:30000",
+            "pi05",
+            "127.0.0.1:50063",
+            time.monotonic() + 30.0,
+            server_log_path=Path("/tmp/phyai-server-0.log"),
+        )
+
+    dead_gateway = SimpleNamespace(poll=lambda: 2)
+    alive_server = SimpleNamespace(poll=lambda: None)
+    with pytest.raises(
+        RuntimeError, match="PhyAI Gateway exited with code 2.*phyai-gateway-0.log"
+    ):
+        _wait_for_gateway(
+            dead_gateway,
+            alive_server,
+            "http://127.0.0.1:30000",
+            "pi05",
+            "127.0.0.1:50063",
+            time.monotonic() + 30.0,
+            gateway_log_path=Path("/tmp/phyai-gateway-0.log"),
+        )
+
+
+def test_phyai_launcher_parent_watchdog_kills_orphaned_child(tmp_path):
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    from rlinf.workers.rollout.phyai.launcher import _WATCHDOG_BOOTSTRAP
+
+    pid_file = tmp_path / "grandchild.pid"
+    # Spawn a middle parent that launches a detached watched grandchild, then
+    # SIGKILL the middle parent and verify the grandchild terminates promptly.
+    mod_file = tmp_path / "_phyai_watchdog_sleep_mod.py"
+    mod_file.write_text(
+        "import os, pathlib, sys, time\n"
+        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+        "time.sleep(60)\n"
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"{tmp_path}:{env.get('PYTHONPATH', '')}"
+    parent_script = (
+        "import os, subprocess, sys, time\n"
+        "bootstrap, pid_file = sys.argv[1], sys.argv[2]\n"
+        "subprocess.Popen(\n"
+        "    [sys.executable, '-c', bootstrap, str(os.getpid()), "
+        "'_phyai_watchdog_sleep_mod', pid_file],\n"
+        "    start_new_session=True,\n"
+        ")\n"
+        "time.sleep(60)\n"
+    )
+    parent = subprocess.Popen(
+        [sys.executable, "-c", parent_script, _WATCHDOG_BOOTSTRAP, str(pid_file)],
+        env=env,
+    )
+    grandchild_pid = None
+    try:
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline and not pid_file.exists():
+            time.sleep(0.05)
+        assert pid_file.exists(), "Watched grandchild did not start in time."
+        grandchild_pid = int(pid_file.read_text().strip())
+
+        parent.kill()
+        parent.wait(timeout=5)
+
+        kill_deadline = time.monotonic() + 5.0
+        still_alive = True
+        while time.monotonic() < kill_deadline:
+            try:
+                os.kill(grandchild_pid, 0)
+            except ProcessLookupError:
+                still_alive = False
+                break
+            stat_path = Path(f"/proc/{grandchild_pid}/stat")
+            if stat_path.exists() and stat_path.read_text().split()[2] == "Z":
+                still_alive = False
+                break
+            time.sleep(0.1)
+        assert not still_alive, (
+            f"Watched grandchild pid={grandchild_pid} survived parent SIGKILL."
+        )
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=5)
+        if grandchild_pid is not None:
+            try:
+                os.kill(grandchild_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 def test_steam_gate_preserves_source_state_across_rebatching(tmp_path):
     from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import SteamRoutingGate
     from rlinf.algorithms.rlt.rlt_steam_phase_head import SteamPhaseHead
@@ -6942,6 +7505,202 @@ def test_sd3_pretraining_auxiliary_placement_and_gradients(sd3_policy, offload):
     finally:
         hook.remove()
         model.to("cpu")
+
+
+# Shared HTTP router worker coverage.
+class _FakeHTTPRouterWorker(EmbodiedRolloutRouterWorker):
+    http_config_key = "http"
+    missing_urls_error = "fake URLs are required"
+
+
+@pytest.fixture
+def _http_router_scheduler(monkeypatch):
+    def init_scheduler(worker):
+        worker._rank = 0
+        worker._world_size = 1
+        worker._group_name = "RolloutGroup"
+        worker._logger = logging.getLogger("worker-test")
+        worker._stacklevel = 1
+
+    monkeypatch.setattr(Worker, "__init__", init_scheduler)
+
+
+def _http_router_cfg(only_eval=True, chunks=2, http=None):
+    return OmegaConf.create(
+        {
+            "runner": {"only_eval": only_eval, "enable_decoupled_mode": False},
+            "env": {
+                "group_name": "EnvGroup",
+                "eval": {
+                    "total_num_envs": 4,
+                    "rollout_epoch": 1,
+                    "max_steps_per_rollout_epoch": 4,
+                },
+            },
+            "rollout": {
+                "pipeline_stage_num": 2,
+                "model": {
+                    "model_type": "fake",
+                    "num_action_chunks": chunks,
+                    "action_dim": 1,
+                },
+                "http": http or {},
+            },
+        }
+    )
+
+
+def test_embodied_router_override_and_validation(_http_router_scheduler):
+    worker = _FakeHTTPRouterWorker(
+        _http_router_cfg(chunks=1),
+        config_rollout=OmegaConf.create(
+            {"model": {"num_action_chunks": 2, "action_dim": 3}}
+        ),
+    )
+    assert worker.model_cfg.num_action_chunks == 2
+    assert worker.eval_batch_size == 2
+    assert worker.n_eval_chunk_steps == 2
+    with pytest.raises(ValueError, match="only_eval=True"):
+        _FakeHTTPRouterWorker(_http_router_cfg(only_eval=False))
+
+
+def test_embodied_router_url_config_and_transport(monkeypatch, _http_router_scheduler):
+    worker = _FakeHTTPRouterWorker(
+        _http_router_cfg(
+            http={
+                "http_timeout_s": 7.5,
+                "http_max_retries": 3,
+                "http_retry_backoff_s": 0.25,
+            }
+        )
+    )
+    worker._rank = 3
+    worker._set_http_server_urls(["http://one", "http://two"])
+    seen = []
+
+    class Client:
+        def __init__(self, url):
+            seen.append(url)
+
+    monkeypatch.setattr(http_client_module, "InferenceHTTPClient", Client)
+    asyncio.run(worker.init_worker())
+    assert worker.http_server_url == "http://two"
+    assert worker._http_server_urls == ["http://one", "http://two"]
+    assert seen == ["http://two"]
+    assert (
+        worker._http_timeout_s,
+        worker._http_max_retries,
+        worker._http_retry_backoff_s,
+    ) == (7.5, 3, 0.25)
+    with pytest.raises(RuntimeError, match="fake URLs are required"):
+        asyncio.run(_FakeHTTPRouterWorker(_http_router_cfg()).init_worker())
+
+
+def test_embodied_router_post_predict_and_merge(_http_router_scheduler):
+    worker = _FakeHTTPRouterWorker(_http_router_cfg())
+    calls = []
+
+    class Client:
+        def post(self, path, payload, **kwargs):
+            calls.append((path, payload, kwargs))
+            return {"actions": [[[1.0]]]}
+
+    worker.http_client = Client()
+    worker._post_msgpack("/actions", {"ids": torch.tensor([0])})
+    assert calls[0][0] == "/actions" and calls[0][2]["msgpack"] is True
+    merged = _FakeHTTPRouterWorker._merge_obs_batches(
+        [
+            {"obs": {"x": torch.tensor([[1]]), "t": ["a"]}},
+            {
+                "obs": {"x": torch.tensor([[2]]), "t": ["b"]},
+                "final_obs": {},
+                "eval_epoch_done": True,
+            },
+        ]
+    )
+    assert torch.equal(merged["obs"]["x"], torch.tensor([[1], [2]]))
+    assert (
+        merged["obs"]["t"] == ["a", "b"]
+        and merged["reset"]
+        and merged["eval_epoch_done"]
+    )
+
+
+def test_embodied_router_evaluate_preserves_channels_and_stops(
+    monkeypatch, _http_router_scheduler
+):
+    worker = _FakeHTTPRouterWorker(_http_router_cfg())
+    worker.n_eval_chunk_steps = 2
+    received, sent, predicted = [], [], []
+    actions = torch.tensor([[[1.0]]])
+
+    class ReceiveResult:
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def async_wait(self):
+            return self.payload
+
+    def recv_from(**kwargs):
+        received.append(kwargs)
+        payload = {
+            "obs": {"ids": torch.tensor([0])},
+            "eval_epoch_done": len(received) == 2,
+        }
+        return ReceiveResult(kwargs["merge_fn"]([payload]))
+
+    def predict(obs, mode):
+        predicted.append((obs, mode))
+        return actions, {}
+
+    monkeypatch.setattr(worker, "recv_from", recv_from)
+    monkeypatch.setattr(worker, "predict", predict)
+    monkeypatch.setattr(worker, "send_to", lambda **kwargs: sent.append(kwargs))
+    asyncio.run(worker.evaluate("input", "output"))
+    assert len(received) == 2 and len(predicted) == len(sent) == 1
+    assert received[0]["group_name"] == "EnvGroup"
+    assert received[0]["channel"] == "input" and received[0]["route_key"] == 0
+    assert received[0]["batch_size"] == 2
+    assert predicted[0][0]["_rlinf_stage_id"] == 0
+    assert sent[0]["channel"] == "output" and sent[0]["route_key"] == 0
+    assert sent[0]["batch_size"] == 2
+    assert torch.equal(sent[0]["data"], actions)
+
+
+def test_embodied_router_grouped_transport_without_sglang(_http_router_scheduler):
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "rlinf/workers/rollout/sglang/sglang_embodied_worker.py"
+    )
+    spec = importlib.util.spec_from_file_location("sglang_worker_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    worker = module.SGLangEmbodiedWorker(_http_router_cfg(), SimpleNamespace())
+
+    class Adapter:
+        action_path = "/actions"
+
+        def request_groups(self, obs):
+            return [[2], [0, 1]]
+
+        def build_request(self, obs, mode="eval"):
+            return {"ids": obs["ids"]}, {"ids": obs["ids"]}
+
+        def parse_response(self, response, state):
+            return state["ids"].float().view(-1, 1, 1), {"ids": state["ids"]}
+
+    worker.sglang_adapter = Adapter()
+    calls = []
+
+    def post(path, payload):
+        calls.append(payload["ids"].tolist())
+        return {}
+
+    worker._post_msgpack = post
+    actions, info = worker.predict({"ids": torch.tensor([0, 1, 2])})
+    assert calls == [[2], [0, 1]]
+    assert actions[:, 0, 0].tolist() == [0.0, 1.0, 2.0]
+    assert info["ids"].tolist() == [0, 1, 2]
 
 
 def test_rollout_model_path_inherits_from_actor():

@@ -1114,7 +1114,7 @@ jobs:
 
   embodied-openpi-libero-phyai-test:
     runs-on: embodied
-    timeout-minutes: 90
+    timeout-minutes: 45
     env:
       CUDA_VISIBLE_DEVICES: 0,1
     steps:
@@ -1122,7 +1122,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Create PhyAI environment
-        timeout-minutes: 45
+        timeout-minutes: 20
         run: |
           unset UV_DEFAULT_INDEX PYTHONPATH
           export UV_PATH=/workspace/dataset/.uv
@@ -1140,19 +1140,46 @@ jobs:
             --engine phyai
 
       - name: PhyAI rollout worker unit tests
-        timeout-minutes: 10
+        timeout-minutes: 5
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
           source .venv/bin/activate
           pytest tests/unit_tests/test_models.py -k phyai
 
       - name: Libero-Spatial PPO OpenPI Pi05 PhyAI test
-        timeout-minutes: 40
+        timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi_pi05_phyai_ci
+
+      - name: Libero-Spatial PhyAI HTTP evaluation test
+        # Maintainers stage compatible pi05 checkpoint/tokenizer assets on the runner.
+        if: ${{ vars.PHYAI_HTTP_CHECKPOINT != '' && vars.PHYAI_HTTP_TOKENIZER != '' }}
+        timeout-minutes: 10
+        env:
+          PHYAI_HTTP_CHECKPOINT: ${{ vars.PHYAI_HTTP_CHECKPOINT }}
+          PHYAI_HTTP_TOKENIZER: ${{ vars.PHYAI_HTTP_TOKENIZER }}
+        run: |
+          set -euo pipefail
+          unset PYTHONPATH RAY_ADDRESS
+          export REPO_PATH=$(pwd)
+          test -d "$PHYAI_HTTP_CHECKPOINT"
+          test -d "$PHYAI_HTTP_TOKENIZER"
+          source .venv/bin/activate
+          ray stop --force || true
+          bash tests/e2e_tests/evaluations/run.sh libero_spatial_pi05_eval_phyai egl \
+            "rollout.phyai.checkpoint_dir=$PHYAI_HTTP_CHECKPOINT" \
+            "rollout.phyai.tokenizer_dir=$PHYAI_HTTP_TOKENIZER"
+
+      - name: Upload PhyAI HTTP evaluation logs
+        if: ${{ always() && vars.PHYAI_HTTP_CHECKPOINT != '' && vars.PHYAI_HTTP_TOKENIZER != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: phyai-http-evaluation-logs
+          path: logs/ci/phyai-gateway/**
+          if-no-files-found: warn
 
       - name: Clean up
         if: always()

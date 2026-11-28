@@ -61,6 +61,11 @@ dependencies = [
     # Codecs for `env.obs_compression` (Env -> Rollout observation transfer)
     "lz4",
     "zstandard",
+    # Direct dependencies for the shared HTTP rollout client
+    "aiohttp",
+    "requests",
+    # MessagePack wire format for the HTTP rollout workers
+    "msgpack>=1.0,<2",
 
     # Logging
     "wandb<0.25.1",
