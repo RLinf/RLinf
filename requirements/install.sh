@@ -2853,7 +2853,7 @@ import sys
 print(f"{sys.version_info.major}.{sys.version_info.minor}")
 EOF
 )
-    cp -r "$VENV_DIR/lib/python${py_major_minor}/site-packages/openpi/models_pytorch/transformers_replace/"* \
+    cp -r --remove-destination "$VENV_DIR/lib/python${py_major_minor}/site-packages/openpi/models_pytorch/transformers_replace/"* \
         "$VENV_DIR/lib/python${py_major_minor}/site-packages/transformers/"
     
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets openpi
@@ -3792,10 +3792,42 @@ snapshot_download(
 EOF
 }
 
+link_hf_libero_assets() {
+    python - "$1" <<'EOF'
+import importlib
+import os
+import shutil
+import sys
+from pathlib import Path
+
+existing = Path(os.path.expanduser(sys.argv[1])).resolve()
+required_dirs = ("articulated_objects", "scenes", "stable_hope_objects")
+if not all((existing / name).is_dir() for name in required_dirs):
+    raise FileNotFoundError(
+        f"LIBERO_ASSET_PATH={existing} is missing required subdirectories {required_dirs}."
+    )
+
+package = importlib.import_module("libero.libero")
+assets_dir = Path(package.__file__).resolve().parent / "assets"
+if assets_dir.resolve() == existing:
+    print(f"LIBERO assets already resolve to {existing}; skipping link.")
+    raise SystemExit(0)
+
+if assets_dir.is_symlink():
+    assets_dir.unlink()
+elif assets_dir.is_dir():
+    shutil.rmtree(assets_dir)
+assets_dir.symlink_to(existing)
+print(f"Linked LIBERO assets {assets_dir} -> {existing}")
+EOF
+}
+
 install_hf_libero_env() {
     materialize_package_files hf-libero
     if hf_libero_assets_present; then
         echo "LIBERO assets already present; skipping download."
+    elif [ -n "${LIBERO_ASSET_PATH:-}" ]; then
+        link_hf_libero_assets "$LIBERO_ASSET_PATH"
     else
         retry_cmd download_hf_libero_assets
     fi
@@ -4395,7 +4427,6 @@ install_robodojo_env() {
     if [[ -z "${TERM:-}" || "${TERM}" == "dumb" ]]; then
         export TERM=xterm-256color
     fi
-    export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
     if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
         echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
     fi

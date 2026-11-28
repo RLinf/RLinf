@@ -1,0 +1,52 @@
+name: UV Cache Maintenance
+
+on:
+  schedule:
+    # 04:00 CST (20:00 UTC) daily, during off-peak hours.
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+    inputs:
+      max_cache_gb:
+        description: "Trigger --ci prune if .uv_cache still exceeds this size (GiB)"
+        required: false
+        default: "300"
+        type: string
+
+concurrency:
+  group: uv-cache-maintenance
+  cancel-in-progress: false
+
+jobs:
+  prune-uv-cache:
+    runs-on: embodied
+    timeout-minutes: 30
+    steps:
+      - name: Prune shared uv cache
+        env:
+          UV_CACHE_DIR: /workspace/dataset/.uv_cache
+          MAX_CACHE_GB: ${{ inputs.max_cache_gb || '300' }}
+        run: |
+          set -euo pipefail
+          if [ ! -d "$UV_CACHE_DIR" ]; then
+            echo "Cache directory $UV_CACHE_DIR does not exist; skipping."
+            exit 0
+          fi
+
+          uv --version
+          echo "Cache size before prune:"
+          du -sh "$UV_CACHE_DIR"
+
+          # Plain prune removes dangling archive-v0 entries (such as editable
+          # rebuilds) and stale builds-v0 while preserving both PyPI and
+          # compiled source/git wheels. Safe alongside running hardlink venvs.
+          uv cache prune
+
+          cache_gb=$(du -sBG "$UV_CACHE_DIR" | awk '{gsub(/G/, "", $1); print $1}')
+          echo "Cache size after prune: ${cache_gb}G (threshold: ${MAX_CACHE_GB}G)"
+
+          if [ "$cache_gb" -gt "$MAX_CACHE_GB" ]; then
+            echo "Cache still exceeds ${MAX_CACHE_GB}G; running uv cache prune --ci"
+            uv cache prune --ci
+            echo "Cache size after --ci prune:"
+            du -sh "$UV_CACHE_DIR"
+          fi

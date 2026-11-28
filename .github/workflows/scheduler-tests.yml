@@ -15,7 +15,6 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -29,8 +28,9 @@ jobs:
           bash tests/e2e_tests/auto_placement/run.sh
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   dynamic-scheduler-reason-qwen-grpo-test:
     runs-on: reason
@@ -45,7 +45,6 @@ jobs:
           cd rlinf
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -55,24 +54,11 @@ jobs:
           bash requirements/install.sh agentic --python 3.11.14 --engine sglang
           bash requirements/install.sh agentic --python 3.11.14 --venv .venv-vllm --engine vllm
 
-      - name: Clone Megatron-011
-        uses: actions/checkout@v5
-        with:
-          repository: RLinf/Megatron-LM
-          ref: core_v0.11.0_rlinf
-          path: Megatron-LM-011
-
-      - name: Clone param resharding
-        uses: actions/checkout@v5
-        with:
-          repository: i-Taozi/params_resharding_release
-          path: params_resharding_release
-
       - name: Megatron SGLang
         timeout-minutes: 20
         run: |
           source rlinf/.venv/bin/activate
-          export PYTHONPATH=$(pwd)/Megatron-LM-011:$(pwd)/params_resharding_release
+          export PYTHONPATH=/workspace/dataset/Megatron-LM-011:/workspace/dataset/params_resharding_release
           cd rlinf
           export REPO_PATH=$(pwd)
           bash tests/e2e_tests/dynamic_scheduler/run.sh qwen2.5-1.5b-grpo-dynamic-mg-sgl
@@ -81,11 +67,12 @@ jobs:
         timeout-minutes: 20
         run: |
           source rlinf/.venv-vllm/bin/activate
-          export PYTHONPATH=$(pwd)/Megatron-LM-011:$(pwd)/params_resharding_release
+          export PYTHONPATH=/workspace/dataset/Megatron-LM-011:/workspace/dataset/params_resharding_release
           cd rlinf
           export REPO_PATH=$(pwd)
           bash tests/e2e_tests/dynamic_scheduler/run.sh qwen2.5-1.5b-grpo-dynamic-mg-vllm
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf rlinf/.venv rlinf/.venv-vllm
+          rm -rf rlinf/.venv rlinf/.venv-vllm results /workspace/results/grpo-1.5b-dynamic-mg-sgl

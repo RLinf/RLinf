@@ -14,9 +14,9 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export DREAMZERO_PATH=/workspace/dataset/DreamZero/dreamzero
           bash requirements/install.sh embodied --model dreamzero
 
       - name: DreamZero DROID WAN22 SFT test
@@ -29,8 +29,9 @@ jobs:
           bash tests/e2e_tests/sft/run_vla_sft.sh droid_sft_wan22
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -73,9 +74,9 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
       - name: SFT ManiSkill OpenPI test
@@ -95,8 +96,9 @@ jobs:
           bash tests/e2e_tests/sft/run_vla_sft.sh maniskill_rlt_stage1_sft_openpi_pi05
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -110,10 +112,10 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
+          export FASTWAM_PATH=/workspace/dataset/FastWAM/FastWAM
           bash requirements/install.sh embodied --model fastwam --env libero
 
       - name: FastWAM LIBERO FSDP SFT test
@@ -141,7 +143,7 @@ jobs:
         if: always()
         run: |
           ray stop || true
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -155,7 +157,6 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export BEHAVIOR_PATH=/workspace/dataset/BEHAVIOR-1K
@@ -173,11 +174,11 @@ jobs:
           bash tests/e2e_tests/sft/run_vla_sft.sh behavior_openpi_sft
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
-          rm -rf /tmp/tmp*
 
   sft-robo2vlm-test:
     runs-on: reason
@@ -189,7 +190,6 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -222,8 +222,9 @@ jobs:
           rm -rf /workspace/results/qwen3_vl_megatron_sft/
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -237,9 +238,9 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
       - name: ResNet Reward Model Training test
@@ -251,8 +252,9 @@ jobs:
           bash tests/e2e_tests/sft/run_reward_training.sh resnet_reward_training
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -266,9 +268,10 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export COSMOS_FRAMEWORK_PATH=/workspace/dataset/cosmos-framework
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model cosmos3 --env libero
           bash requirements/install.sh embodied --model sglang --env libero --venv .venv-sglang
 
@@ -295,4 +298,4 @@ jobs:
         if: always()
         run: |
           ray stop || true
-          rm -rf .venv .venv-sglang
+          rm -rf .venv .venv-sglang ../results

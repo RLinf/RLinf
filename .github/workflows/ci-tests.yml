@@ -34,7 +34,7 @@ jobs:
  
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Fail if the PR does not have the 'run-ci' label
         if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'run-ci')
@@ -188,6 +188,9 @@ jobs:
               - 'tests/e2e_tests/evaluations/libero_spatial_fastwam_eval.yaml'
               - 'evaluations/libero/*fastwam*'
               - 'examples/embodiment/config/model/fastwam.yaml'
+              - 'rlinf/models/embodiment/cosmos3/**'
+              - 'tests/e2e_tests/evaluations/libero_spatial_cosmos3_eval_sglang.yaml'
+              - 'evaluations/libero/*cosmos3*'
             offline_rl_filter: &offline_rl
               - *shared
               - 'rlinf/workers/sft/**'

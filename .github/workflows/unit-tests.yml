@@ -13,6 +13,9 @@ jobs:
       - name: Create environment and install dependencies
         run: |
           unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh --no-flash-attn embodied --env dummy
           source .venv/bin/activate
           uv pip install "transformers<=5.9.0"
@@ -46,6 +49,7 @@ jobs:
           pytest --doctest-modules rlinf/scheduler
 
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
 
@@ -135,6 +139,7 @@ jobs:
           done
 
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
 
@@ -253,6 +258,7 @@ jobs:
           done
 
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
 
@@ -266,9 +272,9 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh --platform amd embodied --model openvla --env maniskill_libero
 
       - name: OpenVLA accelerator unit test
@@ -281,6 +287,7 @@ jobs:
           pytest tests/unit_tests/test_models.py::test_openvla_predicts_a_finite_action_on_the_accelerator
 
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
 
@@ -294,9 +301,9 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh --platform amd embodied --model openvla-oft --env libero
 
       - name: OpenVLA-OFT accelerator unit test
@@ -309,6 +316,7 @@ jobs:
           pytest tests/unit_tests/test_models.py::test_openvla_oft_predicts_a_finite_action_on_the_accelerator
 
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
 
@@ -339,6 +347,7 @@ jobs:
           pytest tests/unit_tests/test_models.py::test_openvla_predicts_a_finite_action_on_the_accelerator
 
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
 
@@ -369,6 +378,7 @@ jobs:
           pytest tests/unit_tests/test_models.py::test_openvla_oft_predicts_a_finite_action_on_the_accelerator
 
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
 
@@ -380,6 +390,7 @@ jobs:
 
       - name: Create Ascend OpenVLA environment
         run: |
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend embodied --model openvla --env maniskill_libero
 
@@ -406,6 +417,7 @@ jobs:
 
       - name: Create Ascend OpenVLA-OFT environment
         run: |
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
 
@@ -442,7 +454,6 @@ jobs:
           cd
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           uv pip install $WHL_FILE[embodied]
           uv pip install $WHL_FILE[agentic]
@@ -463,6 +474,7 @@ jobs:
           cd -
       
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
 
@@ -470,7 +482,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check missing __init__.py under rlinf
         run: python tests/unit_tests/check_missing_init.py
