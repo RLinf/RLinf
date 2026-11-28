@@ -36,6 +36,7 @@ class LeRobotRLTManiSkillJointDataConfig(DataConfigFactory):
     prompt_key: str | None = None
     default_prompt: str | None = None
     output_action_dim: int = 8
+    eef_rot6d: bool = False
 
     @override
     def create(
@@ -58,19 +59,33 @@ class LeRobotRLTManiSkillJointDataConfig(DataConfigFactory):
             inputs=[_transforms.RepackTransform(repack_structure)]
         )
 
+        if self.eef_rot6d and (
+            self.output_action_dim != 10 or self.extra_delta_transform
+        ):
+            raise ValueError(
+                "EEF rot6d requires 10-D actions without componentwise deltas."
+            )
+        input_cls = (
+            maniskill_policy.ManiSkillEEFInputs
+            if self.eef_rot6d
+            else maniskill_policy.ManiSkillInputs
+        )
+        output_transform = (
+            maniskill_policy.ManiSkillEEFRot6dOutputs()
+            if self.eef_rot6d
+            else maniskill_policy.ManiSkillOutputs(
+                output_action_dim=self.output_action_dim
+            )
+        )
         data_transforms = _transforms.Group(
             inputs=[
-                maniskill_policy.ManiSkillInputs(
+                input_cls(
                     model_type=model_config.model_type,
                     use_wrist_image=True,
                     default_prompt=self.default_prompt,
                 )
             ],
-            outputs=[
-                maniskill_policy.ManiSkillOutputs(
-                    output_action_dim=self.output_action_dim
-                )
-            ],
+            outputs=[output_transform],
         )
 
         if self.extra_delta_transform:

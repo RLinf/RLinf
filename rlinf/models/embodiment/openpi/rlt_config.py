@@ -38,6 +38,7 @@ class OpenPiPytorchRLTConfig:
     rlt_use_mask: bool = False
     prefix_image_only: bool = True
     prefix_pool: str | None = None
+    prefix_action_space: str = "environment"
 
 
 # Former OpenPI-level pooling fields and the ``prefix`` field replacing each.
@@ -80,6 +81,12 @@ def build_rlt_config(model_cfg: Any, *, parent_cfg: Any) -> OpenPiPytorchRLTConf
         parent_cfg, "prefix.image_only", default=legacy_image_only
     )
 
+    action_space = str(
+        OmegaConf.select(parent_cfg, "prefix.action_space", default="environment")
+    )
+    if action_space not in {"environment", "normalized_model"}:
+        raise ValueError(f"Unsupported prefix.action_space={action_space!r}.")
+
     return OpenPiPytorchRLTConfig(
         use_rlt=use_rlt,
         rlt_alpha=float(OmegaConf.select(model_cfg, "rlt_alpha", default=1.0)),
@@ -93,6 +100,7 @@ def build_rlt_config(model_cfg: Any, *, parent_cfg: Any) -> OpenPiPytorchRLTConf
         rlt_mlp_ratio=float(OmegaConf.select(model_cfg, "rlt_mlp_ratio", default=4.0)),
         rlt_use_mask=bool(OmegaConf.select(model_cfg, "rlt_use_mask", default=False)),
         prefix_image_only=bool(image_only),
+        prefix_action_space=action_space,
         prefix_pool=resolve_prefix_pool(
             use_rlt=use_rlt,
             prefix_pool=str(prefix_pool) if prefix_pool is not None else None,

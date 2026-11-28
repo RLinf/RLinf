@@ -18,7 +18,10 @@ import torch
 
 from rlinf.envs import SupportedEnvType
 from rlinf.envs.layout import EnvLayout
-from rlinf.models.embodiment.prefix_features import PREFIX_OBS_KEYS
+from rlinf.models.embodiment.prefix_features import (
+    PREFIX_OBS_KEYS,
+    PREFIX_OPTIONAL_OBS_KEYS,
+)
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 
 PREFIX_TRANSITION_PREFIX = "rlt_transition_"
@@ -80,9 +83,15 @@ def extract_prefix_obs_from_forward_inputs(
             "rollout.prefix_feature_model is configured and the rollout worker "
             "populates Prefix features."
         )
-    return copy_dict_tensor(
-        {key: forward_inputs[f"{prefix}{key}"] for key in PREFIX_OBS_KEYS}
+    keys = (
+        *PREFIX_OBS_KEYS,
+        *(
+            key
+            for key in PREFIX_OPTIONAL_OBS_KEYS
+            if f"{prefix}{key}" in forward_inputs
+        ),
     )
+    return copy_dict_tensor({key: forward_inputs[f"{prefix}{key}"] for key in keys})
 
 
 def apply_prefix_interventions(

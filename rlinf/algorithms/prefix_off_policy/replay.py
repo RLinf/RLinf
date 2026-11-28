@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import torch
@@ -80,6 +80,9 @@ class PrefixReplayService:
         for trajectory in trajectories:
             trajectory.trajectory_infos = {}
 
+        if not use_simulator_transition_replay(self.cfg):
+            trajectories = [self._filter_chunk_padding(t) for t in trajectories]
+
         collect_trajectory_replay_metrics(
             trajectories, reducer=self._accumulate_metric_totals
         )
@@ -110,6 +113,37 @@ class PrefixReplayService:
             for trajectory in trajectories
         )
         return ReplayIngestResult(transitions, completed_episodes)
+
+    def _filter_chunk_padding(self, trajectory: Trajectory) -> Trajectory:
+        env_path = (
+            "env.train"
+            if trajectory.env_name is None
+            else f"env.train.envs.{trajectory.env_name}"
+        )
+        env_cfg = EnvLayout.env_cfgs(self.cfg.env.train, "env.train")[env_path]
+        if env_cfg.get("auto_reset", False):
+            return trajectory
+
+        flat = self.replay_buffer._flatten_trajectory(trajectory)
+        dones = (
+            flat["dones"]
+            .any(-1)
+            .reshape(env_cfg.get("rollout_epoch", 1), -1, trajectory.rewards.shape[1])
+        )
+        # Keep the first done chunk and restart the mask at each epoch's reset.
+        valid = (dones.long().cumsum(1) - dones.long() == 0).flatten()
+        if valid.all():
+            return trajectory
+
+        # Packing retains one replay entry per rollout, preserving window units.
+        fields = {}
+        for name, value in flat.items():
+            fields[name] = (
+                {key: tensor[valid].unsqueeze(1) for key, tensor in value.items()}
+                if isinstance(value, dict)
+                else value[valid].unsqueeze(1)
+            )
+        return replace(trajectory, **fields)
 
     def _accumulate_metric_totals(self, totals: dict[str, float]) -> dict[str, float]:
         for key, value in totals.items():

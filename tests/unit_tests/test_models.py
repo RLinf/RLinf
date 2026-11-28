@@ -7381,3 +7381,373 @@ def test_prefix_eval_config_validates_without_actor(monkeypatch, config_name):
     del cfg.actor
     validate_embodied_cfg(cfg)
     assert isinstance(get_model(cfg.rollout.model), PrefixPolicy)
+
+
+def _make_prefix_expo_case(num_candidates=3, num_edits=2):
+    from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
+
+    _, context, batch = _make_prefix_training_case("ac", "multi_q_mlp")
+    cfg = context.cfg
+    cfg.algorithm.name = "expo"
+    cfg.algorithm.rlt_transition_replay = False
+    cfg.algorithm.reference_dropout_prob = 0.0
+    cfg.algorithm.pop("actor_weight_schedule")
+    cfg.algorithm.num_candidates = num_candidates
+    cfg.algorithm.num_edits = num_edits
+    cfg.algorithm.entropy_tuning = {"alpha_type": "exp", "initial_alpha": 1e-5}
+    cfg.actor.model.actor_head = {
+        "name": "residual_mlp",
+        "hidden_dims": [8, 8],
+        "edit_scale": 0.02,
+    }
+    cfg.actor.model.critic_head.num_q_heads = 4
+    context.model = PrefixPolicy(
+        prefix_dim=4,
+        proprio_dim=3,
+        action_dim=2,
+        num_action_chunks=2,
+        ref_num_action_chunks=3,
+        actor_head_cfg=cfg.actor.model.actor_head,
+        critic_head_cfg=cfg.actor.model.critic_head,
+    )
+    context.target_model = copy.deepcopy(context.model).requires_grad_(False)
+    context.entropy_temp = EntropyTemperature(1e-5, "exp")
+    context.critic_sample_generator = torch.Generator().manual_seed(7)
+    for name in ("curr_obs", "next_obs"):
+        batch[name]["candidates"] = torch.randn(3, num_candidates, 2, 2)
+    batch["truncations"] = torch.tensor([[False, True], [False, False], [False, False]])
+    batch["terminations"][2, -1] = True
+    return build_prefix_off_policy_algorithm(cfg), context, batch
+
+
+def test_prefix_expo_actor_density_includes_tanh_and_edit_scale():
+    from torch.distributions import (
+        AffineTransform,
+        Normal,
+        TanhTransform,
+        TransformedDistribution,
+    )
+
+    _, context, batch = _make_prefix_expo_case()
+    reference = batch["curr_obs"]["ref_chunk"][:, :2].flatten(1)
+    action, actual_logp, _ = context.model(
+        forward_type=ForwardType.SAC, obs=batch["curr_obs"]
+    )
+    edits = action - reference
+    assert (edits.abs() <= 0.02 + 1e-6).all()
+    distribution = TransformedDistribution(
+        Normal(torch.zeros_like(edits), torch.full_like(edits, math.exp(-1.5))),
+        [TanhTransform(), AffineTransform(0, 0.02)],
+    )
+    torch.testing.assert_close(
+        actual_logp, distribution.log_prob(edits), atol=3e-5, rtol=3e-5
+    )
+    mean, _, _ = context.model(
+        forward_type=ForwardType.SAC, obs=batch["curr_obs"], deterministic=True
+    )
+    torch.testing.assert_close(mean, reference)
+
+
+def test_prefix_expo_chunk_target_uses_independent_pair_and_bootstraps_timeout():
+    algorithm, context, batch = _make_prefix_expo_case(num_edits=0)
+    biases = torch.tensor([1.0, 3.0, 10.0, 11.0])
+    with torch.no_grad():
+        for index, head in enumerate(context.target_model.q_head.q_head.qs):
+            for parameter in head.parameters():
+                parameter.zero_()
+            head.net[-1].bias.fill_(biases[index])
+    rng = torch.Generator().manual_seed(7)
+    select_value = biases[torch.randperm(4, generator=rng)[:2]].min()
+    backup_value = biases[torch.randperm(4, generator=rng)[:2]].min()
+    assert select_value != backup_value
+    target = batch["rewards"].sum(-1, keepdim=True)
+    target[:2] += 0.9 * backup_value
+    values = context.model(
+        forward_type=ForwardType.SAC_Q,
+        obs=batch["curr_obs"],
+        actions=batch["actions"],
+    )
+    loss, metrics = algorithm.critic_loss(context, batch)
+    torch.testing.assert_close(loss, (values - target).square().mean())
+    assert metrics["target_q"] == pytest.approx(target.mean().item())
+    loss.backward()
+    assert all(
+        parameter.grad is None for parameter in context.model.actor_head.parameters()
+    )
+    assert all(
+        parameter.grad is None for parameter in context.target_model.parameters()
+    )
+    assert all(
+        parameter.grad is not None for parameter in context.model.q_head.parameters()
+    )
+
+
+def test_prefix_expo_actor_and_alpha_condition_on_executed_action():
+    algorithm, context, batch = _make_prefix_expo_case()
+    references = []
+    handle = context.model.actor_head.register_forward_pre_hook(
+        lambda module, args: references.append(args[1].detach().clone())
+    )
+    loss, entropy, metrics = algorithm.actor_loss(context, batch)
+    loss.backward()
+    assert torch.isfinite(loss) and torch.isfinite(entropy)
+    assert "q_pi" in metrics
+    context.model.zero_grad(set_to_none=True)
+    alpha_loss = algorithm.alpha_loss(context, batch)
+    alpha_loss.backward()
+    handle.remove()
+    for reference in references:
+        torch.testing.assert_close(reference, batch["actions"])
+    assert len(references) == 2
+    assert all(parameter.grad is None for parameter in context.model.parameters())
+    torch.testing.assert_close(
+        context.entropy_temp.base_alpha.grad, alpha_loss.detach()
+    )
+    assert algorithm.target_entropy == pytest.approx(4 * (math.log(0.02) - 0.5))
+
+
+def test_prefix_expo_rollout_selection_matches_training_target_selection():
+    from rlinf.algorithms.prefix_off_policy.base import rollout_actor_target_critic
+
+    algorithm, context, batch = _make_prefix_expo_case()
+    with torch.no_grad():
+        for parameter in context.target_model.q_head.parameters():
+            parameter.add_(0.1)
+    rollout = copy.deepcopy(context.model)
+    state = rollout_actor_target_critic(
+        context.model.state_dict(), context.target_model.state_dict()
+    )
+    rollout.load_state_dict(state)
+    for key, value in rollout.state_dict().items():
+        expected = (
+            context.target_model.state_dict()[key]
+            if key.startswith("q_head.")
+            else context.model.state_dict()[key]
+        )
+        torch.testing.assert_close(value, expected)
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(123)
+        expected, indices = algorithm.select_actions(
+            context.model, context.target_model, batch["next_obs"]
+        )
+        torch.manual_seed(123)
+        action, result = algorithm.predict_action_batch(
+            rollout, batch["next_obs"], mode="eval"
+        )
+    torch.testing.assert_close(action.flatten(1), expected)
+    torch.testing.assert_close(result["forward_inputs"]["expo_selected_index"], indices)
+
+
+@pytest.mark.parametrize(
+    "path,value,match",
+    [
+        ("algorithm.num_candidates", 0, "positive integer"),
+        ("algorithm.num_edits", 4, "num_edits"),
+        ("algorithm.backup_entropy", True, "backup_entropy"),
+        ("algorithm.rlt_transition_replay", True, "rlt_transition_replay"),
+        ("algorithm.actor_agg_q", "min", "actor_agg_q"),
+        ("actor.model.critic_head.name", "cross_q_mlp", "CrossQ"),
+        ("actor.model.actor_head.name", "fixed_std_mlp", "bounded residual"),
+        ("algorithm.entropy_tuning.target_entropy", 0.0, "target_entropy"),
+        ("actor.model.actor_head.edit_scale", 0.0, "strictly positive"),
+    ],
+)
+def test_prefix_expo_rejects_incompatible_settings(path, value, match):
+    _, context, _ = _make_prefix_expo_case()
+    OmegaConf.update(context.cfg, path, value)
+    with pytest.raises(ValueError, match=match):
+        build_prefix_off_policy_algorithm(context.cfg)
+
+
+def test_prefix_expo_fsdp_cpu_losses_and_rollout_export(tmp_path):
+    import torch.distributed as dist
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    from rlinf.algorithms.prefix_off_policy.base import rollout_actor_target_critic
+
+    if not dist.is_available() or not dist.is_gloo_available() or dist.is_initialized():
+        pytest.skip("Requires an isolated CPU Gloo process group")
+    dist.init_process_group(
+        "gloo", init_method=(tmp_path / "expo-store").as_uri(), rank=0, world_size=1
+    )
+    try:
+        algorithm, context, batch = _make_prefix_expo_case()
+        context.model = FSDP(
+            context.model, device_id=torch.device("cpu"), use_orig_params=True
+        )
+        context.target_model = FSDP(
+            context.target_model, device_id=torch.device("cpu"), use_orig_params=True
+        )
+        loss, _ = algorithm.critic_loss(context, batch)
+        loss.backward()
+        context.model.zero_grad(set_to_none=True)
+        actor_loss, _, _ = algorithm.actor_loss(context, batch)
+        actor_loss.backward()
+        alpha_loss = algorithm.alpha_loss(context, batch)
+        alpha_loss.backward()
+        assert torch.isfinite(actor_loss) and torch.isfinite(alpha_loss)
+        state = rollout_actor_target_critic(
+            context.model.state_dict(), context.target_model.state_dict()
+        )
+        assert any(key.startswith("q_head.") for key in state)
+    finally:
+        dist.destroy_process_group()
+
+
+def test_prefix_expo_config_builds_native_components(monkeypatch):
+    from rlinf.models.embodiment.mlp_policy.prefix_mlp_policy import (
+        get_model as get_prefix_model,
+    )
+
+    cfg = _compose_prefix_config(
+        monkeypatch,
+        "examples/embodiment/config",
+        "maniskill_prefix_expo_openpi_pi05_async",
+    )
+    validate_embodied_cfg(cfg)
+    algorithm = build_prefix_off_policy_algorithm(cfg)
+    policy = get_prefix_model(cfg.actor.model)
+    assert algorithm.num_candidates == algorithm.num_edits == 8
+    assert policy.flat_action_dim == 80
+    assert algorithm.target_entropy == pytest.approx(80 * (math.log(0.02) - 0.5))
+    assert cfg.rollout.prefix_feature_model.prefix.pool == "masked_mean"
+    assert not cfg.rollout.prefix_feature_model.openpi.use_rlt
+    assert cfg.rollout.policy_routing == "full_task"
+    assert cfg.env.eval.video_cfg.save_video
+
+
+def test_prefix_expo_feature_runtime_preserves_candidate_horizon():
+    from rlinf.algorithms.prefix_off_policy.rollout import PrefixRolloutRuntime
+    from rlinf.algorithms.prefix_off_policy.transition import (
+        extract_prefix_obs_from_forward_inputs,
+    )
+    from rlinf.data.schema.embodied_types import PolicyInput
+
+    _, context, _ = _make_prefix_expo_case()
+    context.cfg.env = {"train": {"env_type": "maniskill_rlt"}}
+    context.cfg.rollout = {"policy_routing": "full_task"}
+
+    class ExternalFeatureAdapter:
+        z_dim = 4
+
+        def extract_prefix_obs(self, obs, *, num_candidates=None):
+            batch = obs["states"].shape[0]
+            proposals = (
+                torch.arange(num_candidates, dtype=torch.float32)[None, :, None, None]
+                .expand(batch, -1, 3, 2)
+                .clone()
+            )
+            return {
+                "z_rl": torch.zeros(batch, 4),
+                "proprio": obs["states"],
+                "ref_chunk": proposals[:, 0],
+                "candidates": proposals,
+            }
+
+    runtime = PrefixRolloutRuntime(context.cfg, context.model, ExternalFeatureAdapter())
+    actions, result = runtime.predict(
+        PolicyInput(obs={"states": torch.zeros(2, 3)}), mode="eval"
+    )
+    assert actions.shape == (2, 2, 2)
+    obs = extract_prefix_obs_from_forward_inputs(
+        result["forward_inputs"], transition=True
+    )
+    assert obs["candidates"].shape == (2, 3, 2, 2)
+    torch.testing.assert_close(obs["candidates"][:, 0], obs["ref_chunk"][:, :2])
+
+
+@pytest.mark.parametrize(
+    "version,mode,active",
+    [(19, "train", False), (20, "train", True), (0, "eval", True)],
+)
+def test_prefix_expo_full_task_route_respects_warmup(version, mode, active):
+    from rlinf.algorithms.prefix_off_policy.route import (
+        PrefixRouteContext,
+        build_prefix_route,
+    )
+
+    _, context, _ = _make_prefix_expo_case()
+    context.cfg.algorithm.rlt_schedule = {
+        "enable": True,
+        "warmup_post_collect_updates": 20,
+    }
+    context.cfg.rollout = {"policy_routing": "full_task"}
+    route = build_prefix_route(context.cfg)
+    student = torch.ones(2, 2, 2)
+    output = route.route(
+        PrefixRouteContext(
+            env_obs={},
+            rlt_obs={"ref_chunk": torch.zeros(2, 3, 2)},
+            student_actions=student,
+            result={"forward_inputs": {}},
+            mode=mode,
+            version=version,
+        )
+    )
+    torch.testing.assert_close(
+        output.actions, student if active else torch.zeros_like(student)
+    )
+    torch.testing.assert_close(
+        output.result["forward_inputs"]["action"], output.actions.flatten(1)
+    )
+    assert output.result["forward_inputs"]["record_transition"].all()
+
+
+@pytest.mark.parametrize(
+    "rollout_config",
+    [{"routing_gate": {"enable": True}}, {"expert_model": {"model_type": "openpi"}}],
+)
+def test_prefix_full_task_route_rejects_competing_routes(rollout_config):
+    from rlinf.algorithms.prefix_off_policy.route import build_prefix_route
+
+    cfg = OmegaConf.create(
+        {"algorithm": {}, "rollout": {"policy_routing": "full_task", **rollout_config}}
+    )
+    with pytest.raises(ValueError, match="disabled routing gate"):
+        build_prefix_route(cfg)
+
+
+def test_prefix_expo_eval_runtime_without_training_actor_config():
+    from rlinf.algorithms.prefix_off_policy.rollout import PrefixRolloutRuntime
+
+    _, context, _ = _make_prefix_expo_case()
+    context.cfg.runner = {"only_eval": True}
+    context.cfg.rollout = {
+        "model": context.cfg.actor.model,
+        "policy_routing": "full_task",
+    }
+    del context.cfg.actor
+    runtime = PrefixRolloutRuntime(context.cfg, context.model, None)
+    assert runtime.algorithm.num_candidates == 3
+    assert runtime.algorithm.target_entropy == pytest.approx(4 * (math.log(0.02) - 0.5))
+
+
+@pytest.mark.parametrize("space", ["environment", "normalized_model"])
+def test_openpi_prefix_action_coordinates(space):
+    from rlinf.models.embodiment.openpi.prefix import OpenPiPrefixMixin
+    from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
+
+    cfg = OmegaConf.create({"prefix": {"action_space": space}, "openpi": {}})
+    adapter = OpenPiPrefixMixin()
+    adapter.rlt_cfg = build_rlt_config(cfg.openpi, parent_cfg=cfg)
+    adapter.action_env_dim = 2
+    adapter.output_transform = lambda data: {
+        "actions": data["actions"][..., :2] * 3 + 1
+    }
+    actions = torch.randn(3, 5, 32)
+    expected = actions[..., :2]
+    if space == "environment":
+        expected = expected * 3 + 1
+    torch.testing.assert_close(
+        adapter.prefix_action_chunk(actions, torch.zeros(3, 32)), expected
+    )
+
+
+def test_openpi_prefix_rejects_unknown_action_coordinates():
+    from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
+
+    cfg = OmegaConf.create(
+        {"prefix": {"action_space": "physical_meters"}, "openpi": {}}
+    )
+    with pytest.raises(ValueError, match="prefix.action_space"):
+        build_rlt_config(cfg.openpi, parent_cfg=cfg)

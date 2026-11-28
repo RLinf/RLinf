@@ -214,10 +214,53 @@ class SimulatorPrefixRoute(PrefixRoute):
         return PrefixRouteOutput(actions=routed_actions, result=result)
 
 
+class FullTaskPrefixRoute(PrefixRoute):
+    """Use the frozen reference during learner warmup and the policy thereafter."""
+
+    def __init__(self, warmup_updates: int = 0) -> None:
+        self.warmup_updates = warmup_updates
+
+    def route(self, ctx: PrefixRouteContext) -> PrefixRouteOutput:
+        actions = ctx.student_actions
+        active = ctx.mode == "eval" or ctx.version >= self.warmup_updates
+        if not active:
+            actions = _base_ref_actions(
+                ctx.rlt_obs["ref_chunk"],
+                chunk_len=actions.shape[1],
+                action_dim=actions.shape[2],
+                device=actions.device,
+                dtype=actions.dtype,
+            )
+        forward_inputs = ctx.result["forward_inputs"]
+        forward_inputs["action"] = _flatten_action_chunk(actions).detach()
+        forward_inputs["model_action"] = forward_inputs["action"]
+        forward_inputs["record_transition"] = torch.ones(
+            (actions.shape[0], 1), dtype=torch.bool, device=actions.device
+        )
+        forward_inputs["actor_switch"] = torch.full(
+            (actions.shape[0], 1), active, dtype=torch.bool, device=actions.device
+        )
+        return PrefixRouteOutput(actions=actions, result=ctx.result)
+
+
 def build_prefix_route(cfg: Any) -> PrefixRoute:
     schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
     use_schedule = bool(schedule_cfg.get("enable", False))
     warmup_updates = int(schedule_cfg.get("warmup_post_collect_updates", 0))
+    routing = cfg.get("rollout", {}).get("policy_routing", "gated")
+    if routing == "full_task":
+        rollout_cfg = cfg.get("rollout", {})
+        if (rollout_cfg.get("routing_gate") or {}).get(
+            "enable", False
+        ) or rollout_cfg.get("expert_model"):
+            raise ValueError(
+                "full_task routing requires a disabled routing gate and no expert_model."
+            )
+        return FullTaskPrefixRoute(warmup_updates=warmup_updates if use_schedule else 0)
+    if routing != "gated":
+        raise ValueError(
+            f"Expected rollout.policy_routing='gated' or 'full_task', got {routing!r}."
+        )
     if not use_maniskill_rlt_env(cfg):
         raise ValueError(
             "Prefix rollout routing currently requires env_type=maniskill_rlt; "

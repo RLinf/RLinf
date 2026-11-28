@@ -24,3 +24,5 @@ class PrefixAlgorithmRequirements:
     min_q_heads: int = 2
     requires_action_noise: bool = False
     delayed_policy_updates: bool = False
+    trains_entropy_temperature: bool = False
+    rollout_uses_target_critic: bool = False

@@ -310,19 +310,116 @@ def test_rlt_transition_replay_files_each_step_under_its_env():
         worker.replay_buffer.close()
 
 
+@pytest.mark.parametrize("auto_reset", [False, True])
+@pytest.mark.parametrize("epochs", [1, 2])
+@pytest.mark.parametrize("initial_boundary", [False, True])
+def test_prefix_chunk_replay_keeps_only_live_transitions(
+    auto_reset, epochs, initial_boundary
+):
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {"rlt_transition_replay": False},
+            "env": {
+                "train": {
+                    "envs": {
+                        "task": {
+                            "auto_reset": auto_reset,
+                            "rollout_epoch": epochs,
+                        }
+                    }
+                }
+            },
+        }
+    )
+    ids = torch.arange(epochs * 12).reshape(epochs * 4, 3, 1).float()
+    terminations = torch.zeros(epochs, 4, 3, 2, dtype=torch.bool)
+    truncations = torch.zeros_like(terminations)
+    terminations[:, 1, 0, 0] = True
+    truncations[:, 2, 1, 1] = True
+
+    def boundaries(value):
+        if initial_boundary:
+            value = torch.cat((torch.zeros_like(value[:, :1]), value), dim=1)
+        return value.flatten(0, 1)
+
+    trajectory = Trajectory(
+        max_episode_length=8,
+        model_weights_id="policy-version",
+        env_name="task",
+        actions=ids.expand(-1, -1, 4).clone(),
+        rewards=ids.expand(-1, -1, 2).clone(),
+        terminations=boundaries(terminations),
+        truncations=boundaries(truncations),
+        dones=boundaries(terminations | truncations),
+        curr_obs={"z_rl": ids.clone()},
+        next_obs={"z_rl": ids + 100},
+        forward_inputs={"candidates": ids.unsqueeze(-1).expand(-1, -1, 2, 4)},
+        versions=ids.clone(),
+        intervene_flags=torch.ones_like(ids, dtype=torch.bool),
+    )
+    expected = [
+        epoch * 12 + step * 3 + env
+        for epoch in range(epochs)
+        for step in range(4)
+        for env in range(3)
+        if auto_reset or step <= (1, 2, 3)[env]
+    ]
+    buffer = EnvReplayBuffer(
+        {"task": TrajectoryReplayBuffer(sample_window_size=2)}, {"task": 1.0}
+    )
+    demos = EnvReplayBuffer(
+        {"task": TrajectoryReplayBuffer(sample_window_size=2)}, {"task": 1.0}
+    )
+    replay = PrefixReplayService(cfg)
+    replay.bind_buffers(buffer, demos)
+    try:
+        result = replay.ingest([trajectory])
+        assert result.transitions == len(expected) == buffer.total_samples
+        assert result.completed_episodes == epochs * 2
+        assert demos.total_samples == len(expected)
+        assert buffer.get_stats()["task/num_trajectories"] == 1
+        batch = buffer.sample(512)
+        sampled = batch["actions"][:, 0]
+        assert set(sampled.tolist()) == set(expected)
+        torch.testing.assert_close(batch["next_obs"]["z_rl"][:, 0], sampled + 100)
+        torch.testing.assert_close(batch["rewards"][:, 0], sampled)
+        torch.testing.assert_close(batch["versions"][:, 0], sampled)
+        torch.testing.assert_close(
+            batch["forward_inputs"]["candidates"][:, 0, 0], sampled
+        )
+        local_ids = sampled.long() % 12
+        assert torch.equal(batch["terminations"].any(-1), local_ids == 3)
+        assert torch.equal(batch["truncations"].any(-1), local_ids == 7)
+        # Timeout next observations remain intact and are not marked terminal.
+        assert not batch["terminations"][local_ids == 7].any()
+        assert trajectory.actions.shape == (epochs * 4, 3, 4)
+    finally:
+        buffer.close()
+        demos.close()
+
+
 def test_prefix_schedule_waits_for_every_env_buffer_before_training(
     monkeypatch, tmp_path
 ):
     from rlinf.algorithms.prefix_off_policy.schedule import PrefixUpdateSchedule
     from rlinf.scheduler import Worker
-    from rlinf.workers.actor.fsdp_prefix_off_policy_worker import PrefixOffPolicyRuntime
+    from rlinf.workers.actor.fsdp_prefix_off_policy_worker import (
+        AsyncPrefixOffPolicyFSDPPolicy,
+    )
 
     monkeypatch.setattr(
-        Worker, "torch_platform", SimpleNamespace(current_device=lambda: "cpu")
+        Worker,
+        "torch_platform",
+        SimpleNamespace(
+            current_device=lambda: "cpu",
+            synchronize=lambda: None,
+            empty_cache=lambda: None,
+        ),
     )
-    worker = object.__new__(PrefixOffPolicyRuntime)
+    worker = object.__new__(AsyncPrefixOffPolicyFSDPPolicy)
     worker.cfg = OmegaConf.create(
         {
+            "actor": {},
             "algorithm": {
                 "update_epoch": 2,
                 "replay_buffer": {"min_buffer_size": 1},
@@ -332,7 +429,7 @@ def test_prefix_schedule_waits_for_every_env_buffer_before_training(
                     "warmup_post_collect_updates": 2,
                     "train_every_transitions": 1,
                 },
-            }
+            },
         }
     )
     worker.update_schedule = PrefixUpdateSchedule(worker.cfg)
@@ -361,6 +458,7 @@ def test_prefix_schedule_waits_for_every_env_buffer_before_training(
         plan = worker._plan_updates()
         assert plan.updates == 0
         assert plan.metrics["prefix/skip_reason"] == 1.0
+        assert asyncio.run(worker.run_training()) == {}
 
         worker.update_schedule.schedule_cfg["warmup_min_size"] = 0
         assert worker._plan_updates().updates == 0
@@ -2579,6 +2677,7 @@ def test_history_reward_assignment_matches_main_across_chunks():
         ("rlt_td3", "td3"),
         ("prefix_off_policy", "ac"),
         ("prefix_off_policy", "td3"),
+        ("prefix_off_policy", "expo"),
     ],
 )
 def test_rlt_and_prefix_outputs_preserve_transitions_and_interventions(
@@ -2624,10 +2723,25 @@ def test_rlt_and_prefix_outputs_preserve_transitions_and_interventions(
         initial_transition=EnvTransition(),
     )
 
+    if algorithm_name == "expo":
+        current_candidates = torch.arange(6, dtype=torch.float32).reshape(1, 3, 1, 2)
+        next_candidates = current_candidates + 20
+        policy.output.forward_inputs["candidates"] = current_candidates
+        env.next_rlt_obs["candidates"] = next_candidates
+
     [(_, trajectory)] = _collect(collector, env, policy)
 
-    assert set(trajectory.curr_obs) == {"z_rl", "proprio", "ref_chunk"}
-    assert set(trajectory.next_obs) == {"z_rl", "proprio", "ref_chunk"}
+    keys = {"z_rl", "proprio", "ref_chunk"}
+    if algorithm_name == "expo":
+        keys.add("candidates")
+        torch.testing.assert_close(
+            trajectory.curr_obs["candidates"][0], current_candidates
+        )
+        torch.testing.assert_close(
+            trajectory.next_obs["candidates"][0], next_candidates
+        )
+    assert set(trajectory.curr_obs) == keys
+    assert set(trajectory.next_obs) == keys
     assert torch.equal(trajectory.curr_obs["ref_chunk"][0], intervened_chunk)
     assert torch.equal(
         trajectory.next_obs["ref_chunk"][0], torch.tensor([[11.0, 12.0]])

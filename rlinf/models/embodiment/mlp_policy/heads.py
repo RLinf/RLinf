@@ -40,6 +40,7 @@ class ActorHeadCapabilities:
 
     distribution: Literal["stochastic", "deterministic"]
     supports_action_noise: bool = False
+    bounded_residual: bool = False
 
 
 @dataclass(frozen=True)
@@ -174,6 +175,9 @@ def register_prefix_critic(
 
 def get_prefix_actor_spec(name: str) -> ActorHeadSpec:
     """Return the registered actor specification."""
+    from rlinf.models.embodiment.mlp_policy import eef_rot6d as _eef_rot6d  # noqa: F401
+    from rlinf.models.embodiment.mlp_policy import residual as _residual  # noqa: F401
+
     normalized_name = _normalize_name(name)
     try:
         return _ACTOR_SPECS[normalized_name]
@@ -187,6 +191,8 @@ def get_prefix_actor_spec(name: str) -> ActorHeadSpec:
 
 def get_prefix_critic_spec(name: str) -> CriticHeadSpec:
     """Return the registered critic specification."""
+    from rlinf.models.embodiment.mlp_policy import eef_rot6d as _eef_rot6d  # noqa: F401
+
     normalized_name = _normalize_name(name)
     try:
         return _CRITIC_SPECS[normalized_name]

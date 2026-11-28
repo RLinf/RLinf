@@ -33,6 +33,7 @@ PEG_INSERTION_SIDE_BASE_CLEARANCE = 0.003
 PEG_INSERTION_SIDE_WIDE_CLEARANCE = 0.02
 PEG_INSERTION_SIDE_HARD_CLEARANCE = 0.01
 RLT_OPENPI_JOINT_WRAP_MODE = "rlt_openpi_joint"
+OPENPI_EEF_WRAP_MODE = "openpi_eef_rot6d"
 
 _RLT_JOINT_STATE_DIM = 9
 _RLT_MAIN_CAMERA_KEY = "3rd_view_camera"
@@ -72,11 +73,18 @@ def patch_rlt_openpi_joint_env_args(
     wrap_obs_mode: str,
 ) -> dict[str, Any]:
     """Patch ManiSkill env args for the RLT OpenPI joint observer variant."""
-    if wrap_obs_mode != RLT_OPENPI_JOINT_WRAP_MODE:
+    if wrap_obs_mode not in (RLT_OPENPI_JOINT_WRAP_MODE, OPENPI_EEF_WRAP_MODE):
         return env_args
     if not is_peg_insertion_side_env_id(env_args.get("id")):
         return env_args
 
+    if wrap_obs_mode == OPENPI_EEF_WRAP_MODE:
+        if env_args.get("sim_backend") not in {"gpu", "physx_cuda"}:
+            raise ValueError(
+                "EEF rot6d collection, evaluation and rollout require GPU simulation and GPU IK."
+            )
+        if env_args.get("control_mode") != "pd_ee_delta_pose":
+            raise ValueError("EEF rot6d requires control_mode=pd_ee_delta_pose.")
     register_rlinf_peg_insertion_side_variants()
     observer_env_id = get_joint_observer_env_id(env_args.get("id"))
     if observer_env_id is not None:
@@ -86,6 +94,47 @@ def patch_rlt_openpi_joint_env_args(
     sensor_configs.setdefault("width", 384)
     sensor_configs.setdefault("height", 384)
     return env_args
+
+
+def validate_eef_gpu_controller(env: Any) -> dict[str, Any]:
+    """Check the shared EEF controller contract and return its provenance."""
+    task = env.unwrapped
+    if not task.scene.gpu_sim_enabled or task.device.type != "cuda":
+        raise ValueError(
+            "EEF rot6d requires GPU simulation; CPU execution is incompatible with GPU demonstrations."
+        )
+    if task.control_mode != "pd_ee_delta_pose":
+        raise ValueError(f"Expected pd_ee_delta_pose, got {task.control_mode}.")
+    arm = task.agent.controller.controllers["arm"]
+    cfg = arm.config
+    if not arm.kinematics.use_gpu_ik:
+        raise ValueError("EEF rot6d requires the GPU kinematics solver.")
+    if (
+        not cfg.use_delta
+        or cfg.use_target
+        or not cfg.normalize_action
+        or cfg.interpolate
+        or cfg.frame != "root_translation:root_aligned_body_rotation"
+        or cfg.delta_solver_config != {"type": "levenberg_marquardt", "alpha": 1.0}
+        or cfg.rot_lower != -0.1
+        or cfg.rot_upper != 0.1
+        or cfg.pos_lower != -0.1
+        or cfg.pos_upper != 0.1
+    ):
+        raise ValueError(
+            "Expected normalized root-frame EEF deltas, GPU LM alpha=1, no target accumulation or interpolation, and +/-0.1 bounds."
+        )
+    return {
+        "sim_backend": "gpu",
+        "ik_backend": "gpu_pytorch_kinematics_lm",
+        "control_mode": task.control_mode,
+        "frame": cfg.frame,
+        "delta_solver_config": dict(cfg.delta_solver_config),
+        "rotation_scale": cfg.rot_lower,
+        "position_bounds": [cfg.pos_lower, cfg.pos_upper],
+        "use_target": cfg.use_target,
+        "interpolate": cfg.interpolate,
+    }
 
 
 def normalize_peg_instruction(instruction):
@@ -157,6 +206,7 @@ def wrap_rlt_openpi_joint_obs(
     num_envs: int,
     device: torch.device,
     is_peg_insertion_side: bool,
+    eef_state: bool = False,
 ) -> dict[str, Any]:
     sensor_data = raw_obs.pop("sensor_data")
     raw_obs.pop("sensor_param")
@@ -176,7 +226,9 @@ def wrap_rlt_openpi_joint_obs(
         "main_images": main_images,
         "wrist_images": wrist_images,
         "extra_view_images": None,
-        "states": extract_rlt_joint_states(
+        "states": (
+            extract_openpi_eef_states if eef_state else extract_rlt_joint_states
+        )(
             raw_obs,
             batch_size=main_images.shape[0],
             device=device,
@@ -190,6 +242,33 @@ def extract_rlt_joint_states(raw_obs: dict[str, Any], *, batch_size: int, device
     return torch.stack(
         [_extract_rlt_joint_state(qpos[index], device) for index in range(batch_size)],
         dim=0,
+    )
+
+
+def extract_openpi_eef_states(
+    raw_obs: dict[str, Any], *, batch_size: int, device: torch.device
+) -> torch.Tensor:
+    """Return world TCP xyz, column-based rot6d and total finger opening (m)."""
+    from rlinf.utils.torch_rot6d import quaternion_wxyz_to_rot6d
+
+    pose = torch.as_tensor(raw_obs["extra"]["tcp_pose"], device=device).float()
+    qpos = torch.as_tensor(raw_obs["agent"]["qpos"], device=device).float()
+    if pose.shape != (batch_size, 7) or qpos.shape != (batch_size, 9):
+        raise ValueError(
+            f"Expected TCP [{batch_size},7] and Panda qpos [{batch_size},9], "
+            f"got {tuple(pose.shape)} and {tuple(qpos.shape)}."
+        )
+    quat = pose[:, 3:]
+    norm = quat.norm(dim=-1, keepdim=True)
+    if (
+        not torch.isfinite(pose).all()
+        or not torch.isfinite(qpos).all()
+        or (norm < 1e-8).any()
+    ):
+        raise ValueError("Expected finite EEF state and a nonzero TCP quaternion.")
+    rotation = quaternion_wxyz_to_rot6d(quat / norm)
+    return torch.cat(
+        (pose[:, :3], rotation, qpos[:, 7:9].sum(-1, keepdim=True)), dim=-1
     )
 
 
@@ -479,6 +558,64 @@ def register_rlinf_peg_insertion_side_variants() -> None:
         hole_clearance = PEG_INSERTION_SIDE_WIDE_CLEARANCE
         success_clearance = PEG_INSERTION_SIDE_WIDE_CLEARANCE
 
+        def __init__(
+            self,
+            *args,
+            fixed_peg_half_length: float | None = None,
+            fixed_peg_half_width: float | None = None,
+            hole_clearance: float | None = None,
+            preinsert: dict[str, float] | None = None,
+            **kwargs,
+        ):
+            if hole_clearance is not None:
+                if not np.isfinite(hole_clearance) or hole_clearance <= 0:
+                    raise ValueError(
+                        "Expected a finite positive per-side hole clearance."
+                    )
+                self.hole_clearance = float(hole_clearance)
+                self.success_clearance = float(hole_clearance)
+            if (fixed_peg_half_length is None) != (fixed_peg_half_width is None):
+                raise ValueError(
+                    "Set both fixed peg half-length and half-width, or neither."
+                )
+            if fixed_peg_half_length is not None and (
+                not np.isfinite([fixed_peg_half_length, fixed_peg_half_width]).all()
+                or fixed_peg_half_width <= 0
+                or fixed_peg_half_length <= fixed_peg_half_width + self.hole_clearance
+            ):
+                raise ValueError(
+                    "Expected finite positive peg dimensions with half-length > half-width + clearance."
+                )
+            from .peg_preinsert import PegPreinsertConfig
+
+            self.preinsert = (
+                None if preinsert is None else PegPreinsertConfig(**preinsert)
+            )
+            self.fixed_peg_half_length = fixed_peg_half_length
+            self.fixed_peg_half_width = fixed_peg_half_width
+            super().__init__(*args, **kwargs)
+
+        @property
+        def _default_human_render_camera_configs(self):
+            if self.preinsert is None:
+                return super()._default_human_render_camera_configs
+            return CameraConfig(
+                "render_camera",
+                sapien_utils.look_at([0.45, -0.35, 0.35], [0, 0.15, 0.11]),
+                768,
+                512,
+                1.0,
+                0.01,
+                100,
+            )
+
+        def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
+            super()._initialize_episode(env_idx, options)
+            if self.preinsert is not None:
+                from .peg_preinsert import initialize_peg_preinsert
+
+                initialize_peg_preinsert(self, env_idx, self.preinsert)
+
         def _load_scene(self, options: dict):
             del options
             with torch.device(self.device):
@@ -486,6 +623,9 @@ def register_rlinf_peg_insertion_side_variants() -> None:
                 self.table_scene.build()
                 lengths = self._batched_episode_rng.uniform(0.085, 0.125)
                 radii = self._batched_episode_rng.uniform(0.015, 0.025)
+                if self.fixed_peg_half_length is not None:
+                    lengths = np.full(self.num_envs, self.fixed_peg_half_length)
+                    radii = np.full(self.num_envs, self.fixed_peg_half_width)
                 centers = np.zeros((self.num_envs, 2), dtype=np.float32)
                 self.peg_half_sizes = common.to_tensor(
                     np.vstack([lengths, radii, radii])

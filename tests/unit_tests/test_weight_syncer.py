@@ -3348,3 +3348,47 @@ class TestMegatronSGLangWeightSync:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_prefix_expo_patch_sync_publishes_online_editor_and_target_critics():
+    from rlinf.algorithms.prefix_off_policy.base import rollout_actor_target_critic
+    from rlinf.models.embodiment.mlp_policy.prefix_mlp_policy import PrefixPolicy
+
+    device = _get_cuda_device()
+    online = PrefixPolicy(
+        prefix_dim=2,
+        proprio_dim=1,
+        action_dim=2,
+        num_action_chunks=1,
+        ref_num_action_chunks=1,
+        actor_head_cfg={"name": "residual_mlp", "hidden_dims": [4], "edit_scale": 0.02},
+        critic_head_cfg={"name": "multi_q_mlp", "hidden_dims": [4], "num_q_heads": 2},
+    ).to(device)
+    target, receiver = copy.deepcopy(online), copy.deepcopy(online)
+    transport = _InMemoryDuplexTransport()
+    sender_syncer, receiver_syncer = [
+        PatchWeightSyncer(
+            snapshot_device="cpu",
+            transport_device="cpu",
+            delta_encoding=True,
+            compression_algorithm="none",
+        )
+        for _ in range(2)
+    ]
+
+    async def run():
+        await _init_patch_syncers(
+            sender_syncer, receiver_syncer, online, receiver, transport
+        )
+        with torch.no_grad():
+            for parameter in online.parameters():
+                parameter.add_(2)
+            for parameter in target.parameters():
+                parameter.sub_(3)
+        state = rollout_actor_target_critic(online.state_dict(), target.state_dict())
+        await sender_syncer.sync(state, transport.sender_send, version=12)
+        assert await receiver_syncer.apply(receiver, transport.receiver_recv) == 12
+        for name, value in receiver.state_dict().items():
+            torch.testing.assert_close(value, state[name])
+
+    asyncio.run(run())

@@ -29,6 +29,7 @@ from omegaconf.omegaconf import OmegaConf
 
 from rlinf.envs.sim.maniskill.maniskill_env import ManiskillEnv
 from rlinf.envs.sim.maniskill.peg_insertion_side_variants import (
+    OPENPI_EEF_WRAP_MODE,
     RLT_OPENPI_JOINT_WRAP_MODE,
     init_peg_insertion_event_state,
     is_peg_insertion_side_env_id,
@@ -38,6 +39,7 @@ from rlinf.envs.sim.maniskill.peg_insertion_side_variants import (
     resolve_maniskill_task_descriptions,
     restore_peg_insertion_event_state,
     snapshot_peg_insertion_event_state,
+    validate_eef_gpu_controller,
     wrap_rlt_openpi_joint_obs,
 )
 from rlinf.envs.sim.maniskill.utils import allow_pci_render_backend
@@ -169,7 +171,27 @@ class ManiskillRLTEnv(ManiskillEnv):
             wrap_obs_mode=getattr(cfg, "wrap_obs_mode", "default"),
         )
         allow_pci_render_backend()
+        self._eef_action_normalizer = None
+        stats_path = cfg.get("normalized_actions_stats_path")
+        if stats_path:
+            if getattr(cfg, "wrap_obs_mode", "default") != OPENPI_EEF_WRAP_MODE or (
+                self._rlt_switch_cfg or {}
+            ).get("enable", False):
+                raise ValueError(
+                    "Normalized EEF actions require openpi_eef_rot6d observations and disabled policy switching."
+                )
+            from rlinf.utils.eef_rot6d import EEFNormalizer
+
+            self._eef_action_normalizer = EEFNormalizer(stats_path)
         self.env: BaseEnv = gym.make(**env_args)
+        try:
+            if getattr(cfg, "wrap_obs_mode", "default") == OPENPI_EEF_WRAP_MODE:
+                validate_eef_gpu_controller(self.env)
+            if self._eef_action_normalizer is not None:
+                self._eef_action_normalizer.to(self.device)
+        except Exception:
+            self.env.close()
+            raise
         self.prev_step_reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
             self.device
         )
@@ -953,10 +975,10 @@ class ManiskillRLTEnv(ManiskillEnv):
 
     def _wrap_obs(self, raw_obs, infos=None):
         wrap_obs_mode = getattr(self.cfg, "wrap_obs_mode", "default")
-        if wrap_obs_mode == RLT_OPENPI_JOINT_WRAP_MODE:
+        if wrap_obs_mode in (RLT_OPENPI_JOINT_WRAP_MODE, OPENPI_EEF_WRAP_MODE):
             if self.env.unwrapped.obs_mode != "rgb":
                 raise ValueError(
-                    "wrap_obs_mode='rlt_openpi_joint' requires ManiSkill obs_mode='rgb'."
+                    f"wrap_obs_mode={wrap_obs_mode!r} requires ManiSkill obs_mode='rgb'."
                 )
             return wrap_rlt_openpi_joint_obs(
                 raw_obs,
@@ -965,6 +987,7 @@ class ManiskillRLTEnv(ManiskillEnv):
                 num_envs=self.num_envs,
                 device=self.device,
                 is_peg_insertion_side=self._is_peg_insertion_side,
+                eef_state=wrap_obs_mode == OPENPI_EEF_WRAP_MODE,
             )
         return super()._wrap_obs(raw_obs, infos=infos)
 
@@ -1060,6 +1083,13 @@ class ManiskillRLTEnv(ManiskillEnv):
     ) -> tuple[Array, Array, Array, Array, dict]:
         if isinstance(actions, torch.Tensor):
             actions = actions.to(self.device)
+        if self._eef_action_normalizer is not None:
+            from rlinf.utils.eef_rot6d import decode_eef_actions
+
+            actions = torch.as_tensor(actions, device=self.device, dtype=torch.float32)
+            actions = decode_eef_actions(
+                self._eef_action_normalizer.unnormalize(actions, "actions")
+            )
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
         infos = maybe_augment_peg_insertion_info(
             env=self.env.unwrapped,
@@ -1206,6 +1236,8 @@ class ManiskillRLTEnv(ManiskillEnv):
             self.env.unwrapped.single_action_space, "shape", None
         )
         expected_action_dim = expected_action_dim[-1] if expected_action_dim else None
+        if self._eef_action_normalizer is not None:
+            expected_action_dim = 10
         if expected_action_dim is not None and int(chunk_actions.shape[2]) != int(
             expected_action_dim
         ):
