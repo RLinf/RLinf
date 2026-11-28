@@ -35,9 +35,6 @@ PLATFORM_TORCH_STR=""
 # into pyproject.toml so `uv sync` resolves torch/torchvision/torchaudio from
 # this index (UV_TORCH_BACKEND alone only affects `uv pip install` /  `uv add`).
 PLATFORM_TORCH_INDEX=""
-# "simple" for a PEP 503 index, "flat" for a plain wheel listing. Set to flat
-# by apply_env_torch_source.
-PLATFORM_TORCH_INDEX_FORMAT="simple"
 # Package names routed through PLATFORM_TORCH_INDEX. Must include any transitive
 # deps that only live on the platform-specific index (e.g. pytorch-triton-rocm
 # for ROCm). Set per-platform by configure_<platform>.
@@ -82,9 +79,10 @@ PLATFORM_EXTRA_OVERRIDES=()
 # Override entries an environment needs in place of the project-wide pin for
 # the same package (that pin is removed first). Set by apply_env_default_torch.
 ENV_OVERRIDE_REPLACEMENTS=()
-# torchvision version an environment pairs with its torch when that index does
-# not follow torchvision's usual numbering. Set by apply_env_torch_source.
-ENV_TORCHVISION_VERSION=""
+# Markers written to the pyproject.toml `[tool.uv] environments` list by
+# apply_torch_override, for an index whose wheels do not cover every Python
+# that requires-python allows. Set by apply_env_torch_source.
+ENV_UV_ENVIRONMENTS=()
 # Extra entries (full PEP 508 specifiers) inserted into the pyproject.toml
 # `constraint-dependencies` array by apply_torch_override. Unlike
 # PLATFORM_EXTRA_OVERRIDES, constraints intersect with constituent package
@@ -1173,20 +1171,14 @@ apply_env_default_torch() {
     case "$ENV_NAME:$PLATFORM" in
         # torch 2.14 requires setuptools>=77.0.3, above the project-wide
         # setuptools<75.9 override; setuptools 82 removes pkg_resources.
-        supermimic:nvidia) ENV_OVERRIDE_REPLACEMENTS=("setuptools>=77.0.3,<82") ;;
+        supermimic:nvidia|supermimic:amd) ENV_OVERRIDE_REPLACEMENTS=("setuptools>=77.0.3,<82") ;;
     esac
     [ -n "$TORCH_VERSION" ] && return 0
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
-        supermimic)
-            case "$PLATFORM" in
-                # mjlab 8bb2bc9 requires torch>=2.14.0.
-                nvidia) env_torch="2.14.0" ;;
-                # Community MI300X recipe with mjlab 1.2.0 / mujoco-warp 3.8.1.
-                amd) env_torch="2.9.1" ;;
-            esac
-            ;;
+        # mjlab 8bb2bc9 requires torch>=2.14.0.
+        supermimic) env_torch="2.14.0" ;;
         robolab) env_torch="2.7.1" ;;
         simple) env_torch="2.7.0" ;;
         robodojo) env_torch="2.7.0" ;;
@@ -1203,18 +1195,28 @@ apply_env_default_torch() {
 apply_env_torch_source() {
     case "$ENV_NAME:$PLATFORM" in
         supermimic:amd)
-            # Radeon wheels carry build-specific local versions, unlike PyTorch's
-            # +rocmX.Y tags. Public version pins accept those local suffixes.
-            local rocm_release
-            rocm_release=$(printf '%s' "$ROCM_VERSION" | cut -d. -f1,2)
+            # ROCm Warp's wheels need the ROCm 10.2 Python packages, so torch
+            # comes from AMD's index built on the same packages: one HIP runtime
+            # per process. The torch wheel carries no GPU kernels; they are in
+            # amd-torch-device-<arch>. rocm-sdk-devel provides hipcc for Warp.
+            # Public version pins accept the +rocm10.2.0 local suffixes.
+            local arch="${SUPERMIMIC_HIP_ARCH:-gfx942}"
             PLATFORM_TORCH_STR=""
-            PLATFORM_TORCH_INDEX="https://repo.radeon.com/rocm/manylinux/rocm-rel-${rocm_release}/"
-            PLATFORM_TORCH_INDEX_FORMAT="flat"
-            PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "triton")
-            # ROCm 7.2's Radeon release pairs torch 2.9.1 with torchvision 0.24.0.
-            if [ "$TORCH_VERSION" = "2.9.1" ]; then
-                ENV_TORCHVISION_VERSION="0.24.0"
-            fi
+            PLATFORM_TORCH_INDEX="https://stable.repo.amd.com/rocm/whl-next/"
+            PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "triton" "rocm" "rocm-bootstrap"
+                "rocm-sdk-core" "rocm-sdk-libraries" "rocm-sdk-devel"
+                "amd-torch-device-${arch}" "rocm-sdk-device-${arch}")
+            # Nothing else pins the kernel package, and kernels from another
+            # torch release fail at launch with missing symbols.
+            PLATFORM_EXTRA_OVERRIDES+=("amd-torch-device-${arch}==${TORCH_VERSION}")
+            # hipBLASLt refuses to run inside a CUDA graph capture and the capture
+            # then hangs; rocBLAS captures cleanly. Set in the venv so tests, e2e
+            # runs and Ray workers agree.
+            PLATFORM_VENV_EXPORTS+=("export TORCH_BLAS_PREFER_HIPBLASLT=0")
+            # The index's torch 2.14 wheels cover Linux x86_64 on Python 3.11+.
+            ENV_UV_ENVIRONMENTS=("sys_platform == 'linux' and platform_machine == 'x86_64' and python_version >= '3.11'")
+            # uv has no torch backend for this index, and rejects rocm10.x.
+            unset UV_TORCH_BACKEND
             ;;
     esac
 }
@@ -1864,6 +1866,15 @@ apply_torch_override() {
         echo "[install.sh] Added exclude-dependencies entries: ${PLATFORM_EXCLUDE_DEPS[*]}"
     fi
 
+    if [ ${#ENV_UV_ENVIRONMENTS[@]} -gt 0 ]; then
+        local joined="" entry
+        for entry in "${ENV_UV_ENVIRONMENTS[@]}"; do
+            joined="${joined}${joined:+, }\"${entry}\""
+        done
+        sed -i "/^override-dependencies = \\[\$/i environments = [${joined}]" "$PYPROJECT_FILE"
+        echo "[install.sh] Limited uv resolution to environments: ${ENV_UV_ENVIRONMENTS[*]}"
+    fi
+
     if [ "$needs_torch_rewrite" -eq 0 ]; then
         echo "[install.sh] Original pyproject.toml will be restored on exit."
         return 0
@@ -1903,10 +1914,6 @@ apply_torch_override() {
         fi
     fi
 
-    if [ -n "$ENV_TORCHVISION_VERSION" ]; then
-        torchvision_version="$ENV_TORCHVISION_VERSION"
-    fi
-
     local torch_pin="${torch_version}${PLATFORM_TORCH_STR}"
     local torchvision_pin="${torchvision_version}${PLATFORM_TORCH_STR}"
     local torchaudio_pin="${torchaudio_version}${PLATFORM_TORCH_STR}"
@@ -1941,9 +1948,6 @@ apply_torch_override() {
             echo "[[tool.uv.index]]"
             echo "name = \"pytorch-platform\""
             echo "url = \"${PLATFORM_TORCH_INDEX}\""
-            if [ "$PLATFORM_TORCH_INDEX_FORMAT" = "flat" ]; then
-                echo 'format = "flat"'
-            fi
             echo "explicit = true"
             echo ""
             echo "[tool.uv.sources]"
@@ -4256,26 +4260,22 @@ install_piper_env() {
         "pyAgxArm @ git+${GITHUB_PREFIX}https://github.com/agilexrobotics/pyAgxArm.git@4b0f06585db3324222616999afeda9037df2e8bd"
 }
 
+# AMD-Ecosystem/warp has no 1.15 wheel yet; build its release branch against
+# the ROCm SDK that torch installed. Warp then loads the same HIP runtime.
 install_supermimic_amd_env() {
-    local rocm_path="${ROCM_PATH:-/opt/rocm}"
-    if [ ! -x "$rocm_path/bin/hipcc" ]; then
-        echo "[install.sh] SuperMimic AMD needs a ROCm SDK with hipcc; set ROCM_PATH (found ${rocm_path})." >&2
-        exit 1
-    fi
     local warp_path
     warp_path=$(clone_or_reuse_repo SUPERMIMIC_WARP_PATH "$VENV_DIR/warp-rocm" \
-        "${GITHUB_PREFIX}https://github.com/ROCm/warp.git")
+        "${GITHUB_PREFIX}https://github.com/AMD-Ecosystem/warp.git")
     if [ -z "${SUPERMIMIC_WARP_PATH:-}" ]; then
-        git -C "$warp_path" checkout 36ed75aa65f837a78b20d1a3a1ac08cfe1fc7b71
+        git -C "$warp_path" checkout ac56e32a9afb924645dfc7b57f87b2e89069ac31
     fi
     pushd "$warp_path"
-    # Follow ROCm/warp's gfx942 Docker recipe, including its HIP compiler flags.
-    python build_lib.py --rocm-path "$rocm_path" \
-        --hip-arch "${SUPERMIMIC_HIP_ARCH:-gfx942}" \
-        --hipcc-options="-Xarch_device -fno-inline"
+    python build_lib.py --rocm-path "$(rocm-sdk path --root)" \
+        --hip-arch "${SUPERMIMIC_HIP_ARCH:-gfx942}"
     uv pip install --reinstall-package warp-lang .
     popd
-    uv pip install "amdsmi<=${ROCM_VERSION}" -r "$SCRIPT_DIR/embodied/envs/supermimic_amd.txt"
+    # Ray counts AMD GPUs through amdsmi; this wheel bundles its own library.
+    uv pip install amdsmi==27.2.0 -r "$SCRIPT_DIR/embodied/envs/supermimic.txt"
 }
 
 # PyPI's warp-lang 1.18.0 is a CUDA 13 build and is invisible to an older
