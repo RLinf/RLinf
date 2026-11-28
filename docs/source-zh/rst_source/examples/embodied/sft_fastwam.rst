@@ -35,19 +35,24 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 做 FSDP 监
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1 节点 · 4–8 GPU
+      NVIDIA CUDA · :ref:`Huawei Ascend CANN <sft-fastwam-hardware>`
 
 | **你将完成：** 安装环境 → 下载 LIBERO 数据与 Wan 组件 → 预处理 embedding → 启动 ``run_vla_sft.sh`` 或 ``run_eval.sh``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · LIBERO LeRobot 数据集与 Wan2.2 / Wan2.1 权重（见下文）。
+
+.. _sft-fastwam-hardware:
 
 安装与运行
 ----------
 
 .. include:: _setup_common.rst
 
+NVIDIA CUDA 用户可按 SFT 和评测标签页操作；NPU 用户请使用“华为昇腾 CANN”标签页。
+
 .. tab-set::
 
    .. tab-item:: SFT 训练（LIBERO）
+      :sync: fastwam-sft
 
       **1. 安装环境**
 
@@ -115,6 +120,7 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 做 FSDP 监
          bash examples/sft/run_vla_sft.sh libero_sft_fastwam
 
    .. tab-item:: 评测（LIBERO）
+      :sync: fastwam-evaluation
 
       **1. 安装含 LIBERO 的环境并下载发布权重与统计文件：**
 
@@ -164,6 +170,71 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 做 FSDP 监
            - ``libero_10_fastwam_eval``
            - ``700``
            - ``17500``
+
+   .. tab-item:: 华为昇腾 CANN
+      :sync: ascend
+
+      昇腾支持 FastWAM SFT 和 LIBERO 评测，使用相同的模型权重、数据集和文本 embedding 缓存。
+
+      **1. 安装环境**
+
+      使用昇腾 LIBERO 容器，或已安装 CANN 和 NPU 驱动的主机。
+
+      .. include:: _ascend_libero.rst
+
+      在容器或昇腾主机的 RLinf 仓库目录中创建 FastWAM 环境：
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform ascend embodied --model fastwam --env libero
+         source .venv/bin/activate
+
+      只运行 SFT 时可省略 ``--env libero``\ 。
+
+      **2. 准备模型和数据**
+
+      运行 SFT 前，完成“SFT 训练（LIBERO）”标签页的第 2–4 步，下载资源、完成预处理并设置路径。预处理 ActionDiT 时使用 ``--device cpu``\ ；CUDA 不可用时，文本 embedding 脚本也会使用 CPU。
+
+      将 ``DIFFSYNTH_MODEL_BASE_PATH`` 指向包含 ``Wan-AI`` 的目录。加载原始 Wan ``.pth`` 权重时，在文本 embedding 命令和模型的 ``fastwam.overrides`` 列表中设置 ``model.redirect_common_files=false``\ 。
+
+      **3. 启动 SFT**
+
+      设置好数据和模型路径后，在 ``examples/sft/config/libero_sft_fastwam.yaml`` 中配置 8 张 NPU：
+
+      .. code-block:: yaml
+
+         cluster:
+           component_placement:
+             actor: 0-7
+         actor:
+           micro_batch_size: 1
+           global_batch_size: 8
+           fsdp_config:
+             gradient_checkpointing: true
+
+      根据可用 NPU 调整 placement。global batch size 需能被 micro batch size 与 NPU 数量的乘积整除。
+
+      .. code-block:: bash
+
+         export DIFFSYNTH_MODEL_BASE_PATH=./checkpoints
+         bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+
+      **4. 运行 LIBERO 评测**
+
+      按“评测（LIBERO）”标签页下载官方 checkpoint 和归一化统计文件，并设置路径。评测配置默认使用 4 个设备，启动前请根据可用 NPU 调整 ``cluster.component_placement``\ 。
+
+      在评测环境中安装 OSMesa 运行库，然后启用 CPU 渲染并启动评测：
+
+      .. code-block:: bash
+
+         export DIFFSYNTH_MODEL_BASE_PATH=./checkpoints
+         export MUJOCO_GL=osmesa
+         export PYOPENGL_PLATFORM=osmesa
+         bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+
+      评测 Object、Goal 或 Long 时，使用“评测（LIBERO）”标签页列出的对应配置。
+
+      NPU 运行时会自动启用融合 RoPE 和 RMSNorm。
 
 .. dropdown:: 进阶配置（可选）
 

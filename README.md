@@ -454,6 +454,7 @@ Follow a model or environment link for its training recipe and available backend
 | [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html) | SFT (LeRobot datasets) | ✅ | — | — | — | — | — | — | ✅ |
 | [StarVLA (QwenOFT)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html#starvla-hardware) | LIBERO | ✅ | ✅ | — | — | — | — | — | — |
 | [DreamZero](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html#sft-dreamzero-hardware) | SFT (LeRobot datasets) | ✅ | ✅ | — | — | — | — | — | — |
+| [FastWAM](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_fastwam.html#sft-fastwam-hardware) | LIBERO (SFT · evaluation) | ✅ | ✅ | — | — | — | — | — | — |
 
 ## Awesome Community Projects with RLinf
 We are excited to see a growing ecosystem of projects building on top of or integrate with RLinf, spanning embodied AI, robotics, and long-horizon agentic systems. Here are some awesome community projects:

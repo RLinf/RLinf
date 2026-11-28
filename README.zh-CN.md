@@ -454,6 +454,7 @@ RLinf 用统一的底层接口屏蔽异构硬件差异，同一套训练栈可�
 | [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html) | SFT（LeRobot 数据集） | ✅ | — | — | — | — | — | — | ✅ |
 | [StarVLA (QwenOFT)](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/starvla.html#starvla-hardware) | LIBERO | ✅ | ✅ | — | — | — | — | — | — |
 | [DreamZero](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_dreamzero.html#sft-dreamzero-hardware) | SFT（LeRobot 数据集） | ✅ | ✅ | — | — | — | — | — | — |
+| [FastWAM](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_fastwam.html#sft-fastwam-hardware) | LIBERO（SFT · 评测） | ✅ | ✅ | — | — | — | — | — | — |
 
 ## 基于 RLinf 的社区项目精选
 我们非常高兴地看到围绕 RLinf 构建或集成的项目生态系统正在蓬勃发展，涵盖具身智能、机器人技术以及长时序智能体系统等领域。以下是一些优秀的社区项目：
