@@ -14,9 +14,10 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
       - name: ManiSkill SAC test
@@ -76,8 +77,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-d4rl-offline-iql-test:
     runs-on: embodied
@@ -89,7 +91,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --env d4rl
@@ -111,8 +113,9 @@ jobs:
           bash tests/e2e_tests/embodied/run_offline.sh d4rl_iql_mujoco egl actor.use_fsdp_wrap=true
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-cnn-realworld-sac-test:
     runs-on: embodied
@@ -124,9 +127,10 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
       - name: Franka SAC dummy test
@@ -170,8 +174,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh realworld_xsquare_turtle2_mock_sac_cnn
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-mlp-realworld-dosw1-sac-test:
     runs-on: embodied
@@ -183,7 +188,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --env dosw1
@@ -205,8 +210,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh dosw1_mock_sac_mlp_pick
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-realworld-franka-mock-test:
     runs-on: embodied
@@ -218,7 +224,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --env franka
@@ -249,8 +255,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh realworld_collect_dataset_mock
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-mlp-realworld-so101-mock-sac-test:
     runs-on: embodied
@@ -262,7 +269,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --env so101
@@ -276,8 +283,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh so101_mock_sac_mlp_reach
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-realworld-dual-yam-collect-data-mock-test:
     runs-on: embodied
@@ -289,7 +297,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export I2RT_PATH=/workspace/dataset/i2rt
@@ -318,7 +326,7 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-mlp-realworld-piper-mock-sac-test:
     runs-on: embodied
@@ -330,7 +338,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --env piper
@@ -344,8 +352,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh piper_mock_sac_mlp_reach
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-mlp-frankasim-test:
     runs-on: embodied
@@ -357,7 +366,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export SERL_PATH=/workspace/dataset/serl
@@ -380,8 +389,9 @@ jobs:
           bash tests/e2e_tests/embodied/run_async.sh frankasim_sac_cnn_async
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-mlp-ppo-genesis-cubepick-test:
     runs-on: embodied
@@ -393,7 +403,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --env genesis
@@ -407,8 +417,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh genesis_cubepick_ppo_mlp
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-supermimic-g1-mimic-test:
     runs-on: embodied
@@ -422,7 +433,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --env supermimic
@@ -525,7 +536,7 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          rm -rf .venv /workspace/results/g1_mimic_supermimic*
+          rm -rf .venv /workspace/results/g1_mimic_supermimic* ../results
 
   embodied-mlp-ppo-mujoco-warp-test:
     runs-on: embodied
@@ -537,7 +548,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --env mujoco_warp
@@ -553,7 +564,7 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-cnn-ppo-dexjoco-test:
     runs-on: embodied
@@ -565,7 +576,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export DEXJOCO_PATH=/workspace/dataset/dexjoco
@@ -582,7 +593,7 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openpi-dexjoco-test:
     runs-on: embodied
@@ -594,7 +605,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export DEXJOCO_PATH=/workspace/dataset/dexjoco
@@ -611,7 +622,7 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openvlaoft-maniskill-libero-hetero-test:
     runs-on: embodied
@@ -623,9 +634,10 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
 
       - name: ManiSkill + Libero-Goal heterogeneous env GRPO test
@@ -640,7 +652,7 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openpi-libero-rocm-test:
     runs-on: rocm
@@ -652,9 +664,10 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh --platform amd embodied --model openpi --env libero
 
       - name: LIBERO-10 PPO OpenPI Pi05 test
@@ -668,8 +681,9 @@ jobs:
           ray stop
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-gr00t-libero-rocm-test:
     runs-on: rocm
@@ -681,10 +695,11 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh --platform amd embodied --model gr00t --env libero
 
       - name: Libero-Spatial PPO test
@@ -697,8 +712,9 @@ jobs:
           ray stop
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openpi-maniskill-libero-musa-test:
     runs-on: musa
@@ -736,8 +752,9 @@ jobs:
           ray stop
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-gr00t-libero-musa-test:
     runs-on: musa
@@ -764,8 +781,9 @@ jobs:
           ray stop
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-reward-model-maniskill-test:
     runs-on: embodied
@@ -777,9 +795,10 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
       - name: ManiSkill VLM Trend Reward PPO test (managed SGLang)
@@ -799,8 +818,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_mlp_resnet_reward
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openvlaoft-robotwin-test:
     runs-on: embodied
@@ -812,7 +832,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openvla-oft --env robotwin
@@ -840,8 +860,9 @@ jobs:
           bash tests/e2e_tests/evaluations/run.sh robotwin_place_empty_cup_openvlaoft_eval
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openpi-behavior-test:
     runs-on: embodied
@@ -853,7 +874,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export BEHAVIOR_PATH=/workspace/dataset/BEHAVIOR-1K
@@ -881,9 +902,9 @@ jobs:
           bash tests/e2e_tests/evaluations/run.sh behavior_openpi_eval
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
-          rm -rf /tmp/tmp*
+          rm -rf .venv ../results
 
   embodied-gr00t-maniskill-libero-test:
     runs-on: embodied
@@ -895,10 +916,11 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model gr00t --env maniskill_libero
 
       - name: Libero-Spatial PPO test
@@ -910,8 +932,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-gr00t-libero-ascend-test:
     runs-on: ascend
@@ -923,6 +946,7 @@ jobs:
         run: |
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
           export DECORD_PATH=/workspace/dataset/decord
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
 
@@ -949,6 +973,7 @@ jobs:
 
       - name: Create Ascend embodied environment
         run: |
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend embodied --model openpi --env libero
 
@@ -978,7 +1003,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ISAAC_LAB_PATH=/workspace/dataset/IsaacLab
@@ -995,9 +1020,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh isaaclab_ppo_gr00t
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
-          rm -rf /tmp/tmp*
+          rm -rf .venv ../results
 
   embodied-openpi-isaaclab-test:
     runs-on: embodied
@@ -1009,7 +1034,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ISAAC_LAB_PATH=/workspace/dataset/IsaacLab
@@ -1025,9 +1050,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh isaaclab_ppo_openpi_pi05
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
-          rm -rf /tmp/tmp*
+          rm -rf .venv ../results
           
   embodied-openpi-maniskill-libero-test:
     runs-on: embodied
@@ -1039,14 +1064,16 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
       - name: ManiSkill PPO OpenPI Pi05 training pipeline test
         timeout-minutes: 20
         run: |
+          unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
@@ -1112,14 +1139,13 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh maniskill_rlt_stage2_ac_mlp
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openpi-libero-phyai-test:
     runs-on: embodied
     timeout-minutes: 90
-    env:
-      CUDA_VISIBLE_DEVICES: 0,1
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -1129,10 +1155,11 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX PYTHONPATH
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           rm -rf "$GITHUB_WORKSPACE/.venv"
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh \
             --python 3.12 \
             --venv .venv \
@@ -1162,7 +1189,7 @@ jobs:
         run: |
           source .venv/bin/activate 2>/dev/null || true
           ray stop --force || true
-          rm -rf "$GITHUB_WORKSPACE/.venv"
+          rm -rf "$GITHUB_WORKSPACE/.venv" ../results
 
   embodied-openpi-maniskill-gsenv-test:
     runs-on: embodied
@@ -1174,9 +1201,10 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
           source .venv/bin/activate
@@ -1198,8 +1226,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh gsenv_ppo_openpi_pi05
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openpi-metaworld-test:
     runs-on: embodied
@@ -1211,7 +1240,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env metaworld
@@ -1225,8 +1254,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh metaworld_50_ppo_openpi
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openpi-calvin-test:
     runs-on: embodied
@@ -1238,7 +1268,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export CALVIN_PATH=/workspace/dataset/calvin
@@ -1253,8 +1283,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh calvin_ppo_openpi
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openpi-robocasa-test:
     runs-on: embodied
@@ -1266,7 +1297,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBOCASA_PATH=/workspace/dataset/robocasa
@@ -1281,8 +1312,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh robocasa_closedrawer_ppo_openpi
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openpi-roboverse-test:
     runs-on: embodied
@@ -1294,7 +1326,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBOVERSE_PATH=/workspace/dataset/roboverse
@@ -1313,7 +1345,7 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          rm -rf .venv roboverse_data
+          rm -rf .venv roboverse_data ../results
 
   embodied-openpi-robocasa365-test:
     runs-on: embodied
@@ -1325,7 +1357,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBOCASA_PATH=/workspace/dataset/robocasa365
@@ -1344,8 +1376,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh robocasa365_ppo_openpi
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openpi-robodojo-test:
     runs-on: embodied
@@ -1357,7 +1390,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBODOJO_ASSETS_ROOT=/workspace/dataset/robodojo
@@ -1374,9 +1407,9 @@ jobs:
           bash tests/e2e_tests/evaluations/run.sh robodojo_put_bottles_into_dustbin_pi05_eval
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
-          rm -rf /tmp/tmp*
+          rm -rf .venv ../results
 
   embodied-dexbotic-maniskill-libero-test:
     runs-on: embodied
@@ -1388,10 +1421,11 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export DEXBOTIC_PATH=/workspace/dataset/dexbotic
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
 
       - name: Libero-Spatial PPO Dexbotic test
@@ -1403,8 +1437,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_dexbotic_pi0
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-starvla-maniskill-libero-test:
     runs-on: embodied
@@ -1416,10 +1451,11 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export STARVLA_PATH=/workspace/dataset/starVLA-v1.6
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model starvla --env maniskill_libero
 
       - name: Libero-10 GRPO test
@@ -1431,8 +1467,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh libero_10_grpo_starvla
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-starvla-libero-ascend-test:
     runs-on: ascend
@@ -1444,6 +1481,7 @@ jobs:
         run: |
           export STARVLA_PATH=/workspace/dataset/starVLA-v1.6
           export DECORD_PATH=/workspace/dataset/decord
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend embodied --model starvla --env libero
 
@@ -1472,7 +1510,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export OPENSORA_PATH=/workspace/dataset/opensora
@@ -1487,8 +1525,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh opensora_libero_spatial_grpo_openvlaoft
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openvlaoft-wan-test:
     runs-on: embodied
@@ -1500,7 +1539,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export WAN_PATH=/workspace/dataset/wan
@@ -1515,8 +1554,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh wan_libero_spatial_grpo_openvlaoft
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-lingbotvla-robotwin-test:
     runs-on: embodied
@@ -1528,7 +1568,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBOTWIN_PATH=/workspace/dataset/RoboTwin
@@ -1548,8 +1588,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh robotwin_grpo_lingbotvla
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openvlaoft-liberopro-test:
     runs-on: embodied
@@ -1561,7 +1602,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
@@ -1578,8 +1619,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh liberopro_10_grpo_openvlaoft
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openvlaoft-liberoplus-test:
     runs-on: embodied
@@ -1591,7 +1633,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
@@ -1608,8 +1650,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh liberoplus_10_grpo_openvlaoft
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-evo1-libero-test:
     runs-on: embodied
@@ -1621,10 +1664,11 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export EVO1_PATH=/workspace/dataset/Evo-1
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model evo1 --env libero
 
       - name: LIBERO Evo-1 GRPO test
@@ -1638,8 +1682,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh libero_spatial_grpo_evo1
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-abot-m0-libero-test:
     runs-on: embodied
@@ -1651,7 +1696,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ABOT_PATH=/workspace/dataset/ABot-Manipulation
@@ -1670,8 +1715,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh libero_10_ppo_abot_m0
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-abot-m0-liberoplus-test:
     runs-on: embodied
@@ -1683,7 +1729,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ABOT_PATH=/workspace/dataset/ABot-Manipulation
@@ -1703,8 +1749,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh liberoplus_10_ppo_abot_m0
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-embodichain-test:
     runs-on: embodied
@@ -1716,7 +1763,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --env embodichain
@@ -1734,8 +1781,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh embodichain_ppo_cart_pole
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-gr00t_n1d6-libero-test:
     runs-on: embodied
@@ -1747,10 +1795,11 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T-1.6/
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
 
       - name: Libero-Spatial PPO test
@@ -1762,8 +1811,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t_n1d6
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-gr00t_n1d7-libero-test:
     runs-on: embodied
@@ -1775,10 +1825,11 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T-1.7/
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
 
       - name: Libero-Spatial PPO test
@@ -1790,8 +1841,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t_n1d7
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openpi-polaris-test:
     runs-on: embodied
@@ -1803,7 +1855,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export POLARIS_PATH=/workspace/dataset/polaris
@@ -1820,8 +1872,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh polaris_tapeintocontainer_ppo_openpi_pi05
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-openpi-robolab-eval-test:
     runs-on: embodied
@@ -1838,9 +1891,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          # isaacsim-kernel finds the Isaac Sim root with realpath(__file__); a
-          # symlinked install resolves into the uv cache, where the extensions
-          # from sibling wheels are missing. Keep uv's default link mode.
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBOLAB_PATH=/workspace/dataset/RoboLab
@@ -1867,7 +1918,7 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-molmoact2-libero-eval-test:
     runs-on: embodied
@@ -1879,10 +1930,11 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MOLMOACT2_LEROBOT_PATH=/workspace/dataset/lerobot-molmoact2
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model molmoact2 --env libero
 
       - name: LIBERO MolmoAct2 evaluation test
@@ -1896,8 +1948,9 @@ jobs:
           bash tests/e2e_tests/embodied/run_eval.sh libero_10_molmoact2_eval
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-pi0-fast-libero-test:
     runs-on: embodied
@@ -1909,7 +1962,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export UV_TORCH_BACKEND=cu128
@@ -1931,7 +1984,7 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-lingbotvlav2-robotwin-test:
     runs-on: embodied
@@ -1943,7 +1996,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBOTWIN_PATH=/workspace/dataset/RoboTwin
@@ -1964,8 +2017,9 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh robotwin_ppo_lingbotvlav2
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
 
   embodied-psi0-simple-test:
     runs-on: embodied
@@ -1978,7 +2032,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export SIMPLE_PATH=/workspace/dataset/psi0_simple/SIMPLE
@@ -2006,4 +2060,4 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results

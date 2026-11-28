@@ -14,9 +14,10 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
       - name: STEAM value model SFT test
@@ -68,5 +69,11 @@ jobs:
           bash tests/e2e_tests/offline_rl/run_cfg_rl.sh recap_cfg_openpi_libero
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results \
+            /workspace/results/steam_value_model_sft_libero \
+            /workspace/results/steam_cfg_openpi_libero \
+            /workspace/results/libero_sft_value \
+            /workspace/results/libero_sft_value_no_eval \
+            /workspace/results/recap_cfg_openpi_libero

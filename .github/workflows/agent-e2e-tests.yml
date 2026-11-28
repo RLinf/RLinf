@@ -14,7 +14,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -97,8 +97,9 @@ jobs:
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-fsdp-vllm
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv .venv-vllm
+          rm -rf .venv .venv-vllm ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -113,7 +114,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -122,7 +123,10 @@ jobs:
       - name: Install dependencies
         run: |
           unset UV_DEFAULT_INDEX
-          export UV_LINK_MODE=copy
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=hardlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           source .venv/bin/activate
           uv pip install -r requirements/agentic/agentlightning_constraints.txt
           # litellm 1.95 imports get_flat_dependant, which fastapi dropped in 0.140.7
@@ -138,8 +142,9 @@ jobs:
           bash tests/e2e_tests/agentlightning/run.sh
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -154,7 +159,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -182,8 +187,9 @@ jobs:
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-reinpp-collocated-mg-sgl
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -197,7 +203,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -212,8 +218,13 @@ jobs:
 
       - name: Install dependencies
         run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=hardlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           source .venv/bin/activate
-          apt-get update -y && apt-get install redis -y
+          command -v redis-server >/dev/null || (apt-get update -y && apt-get install -y redis)
           uv pip install -r code-judge/requirements.txt
           uv pip install -e code-judge
           uv pip install math_verify
@@ -266,8 +277,9 @@ jobs:
           bash tests/e2e_tests/agent/rstar2/run.sh
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
           tmux kill-session -t server 2>/dev/null || true
@@ -285,7 +297,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -337,8 +349,9 @@ jobs:
           bash tests/e2e_tests/agent/searchr1/run-eval.sh qwen2.5-1.5b-eval
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -352,7 +365,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -375,14 +388,20 @@ jobs:
       - name: Coding Online RL PPO SGLang Pipeline mode
         timeout-minutes: 20
         run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=hardlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          uv pip install httpx asyncio fuzzywuzzy
+          uv pip install httpx fuzzywuzzy
           bash tests/e2e_tests/agent/coding_online_rl/run.sh
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -396,7 +415,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -448,8 +467,9 @@ jobs:
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-vllm-rollout-logprobs
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv .venv-vllm
+          rm -rf .venv .venv-vllm ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -463,7 +483,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -478,8 +498,9 @@ jobs:
           bash tests/e2e_tests/reasoning/run.sh qwen3-vl-2b-grpo-collocated-fsdp-sgl
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -493,7 +514,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -578,8 +599,9 @@ jobs:
           bash tests/e2e_tests/reasoning/run.sh qwen3-4b-collocated-mg-sgl-test
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
@@ -593,7 +615,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -603,10 +625,16 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: infinigence/FUSCO
+          ref: dd3f46113c1cf40dbebd426f2f3557e31a16b7fe
           path: FUSCO
 
       - name: Install FUSCO
         run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=hardlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           source .venv/bin/activate
           cd FUSCO
           uv pip install . --no-build-isolation
@@ -627,8 +655,9 @@ jobs:
           bash tests/e2e_tests/reasoning/run.sh qwen3-moe-2.5b-collocated-mg-sgl-ep-fusco-test
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           rm -rf FUSCO
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
@@ -643,7 +672,7 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -712,7 +741,8 @@ jobs:
           rm -rf /workspace/results/glm47-flash-megatron-mbridge/
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
+          rm -rf .venv ../results
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true

@@ -2853,7 +2853,7 @@ import sys
 print(f"{sys.version_info.major}.{sys.version_info.minor}")
 EOF
 )
-    cp -r "$VENV_DIR/lib/python${py_major_minor}/site-packages/openpi/models_pytorch/transformers_replace/"* \
+    cp -r --remove-destination "$VENV_DIR/lib/python${py_major_minor}/site-packages/openpi/models_pytorch/transformers_replace/"* \
         "$VENV_DIR/lib/python${py_major_minor}/site-packages/transformers/"
     
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets openpi
