@@ -64,6 +64,9 @@ Hydra 参数覆盖
    * - ``geniesim_*`` / ``geniesim-*``
      - ``geniesim``
      - GenieSim
+   * - ``isaaclab_arena_*`` / ``isaaclab_arena-*``
+     - ``isaaclab_arena``
+     - Isaac Lab-Arena
    * - ``libero_*`` / ``libero-*``
      - ``libero``
      - 自动导出 ``ROBOT_PLATFORM`` 与 ``LIBERO_TYPE``
@@ -137,6 +140,7 @@ Benchmark 环境变量
 各 benchmark 的完整启动示例见对应指南：
 
 - :doc:`../guides/behavior`
+- :doc:`../guides/isaaclab_arena`
 - :doc:`../guides/libero`
 - :doc:`../guides/maniskill_ood`
 - :doc:`../guides/polaris`

@@ -1821,6 +1821,54 @@ jobs:
         run: |
           rm -rf .venv
 
+  embodied-openpi-isaaclab-arena-eval-test:
+    # Select a runner with RTX rendering and the shared DROID checkpoint.
+    if: ${{ vars.ISAACLAB_ARENA_RUNNER != '' }}
+    runs-on: ${{ vars.ISAACLAB_ARENA_RUNNER || 'embodied' }}
+    timeout-minutes: 120
+    env:
+      OMNI_KIT_ACCEPT_EULA: "YES"
+      ACCEPT_EULA: "Y"
+      JAX_PLATFORMS: cpu
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install OpenPI and Isaac Lab-Arena
+        run: bash requirements/install.sh embodied --model openpi --env isaaclab_arena --venv "$RUNNER_TEMP/rlinf-arena-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Check concurrent camera resets on two RTX GPUs
+        run: |
+          source "$RUNNER_TEMP/rlinf-arena-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/activate"
+          IFS=, read -ra devices <<< "${CUDA_VISIBLE_DEVICES:-0,1}"
+          test "${#devices[@]}" -ge 2
+          pids=()
+          for index in 0 1; do
+            PYTHONPATH="$PWD" CUDA_VISIBLE_DEVICES="${devices[$index]}" LOCAL_RANK=0 python tests/e2e_tests/evaluations/isaaclab_arena_smoke.py &
+            pids+=($!)
+          done
+          status=0
+          for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+          exit "$status"
+      - name: Evaluate two DROID episodes
+        run: |
+          source "$RUNNER_TEMP/rlinf-arena-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/activate"
+          bash evaluations/run_eval.sh isaaclab_arena_pi05_eval \
+            rollout.model.model_path=/workspace/dataset/RLinf-Pi05-RoboLab-droid-jointpos \
+            runner.logger.log_path="$VIRTUAL_ENV/smoke-metrics" \
+            env.eval.total_num_envs=2 env.eval.max_episode_steps=16 env.eval.max_steps_per_rollout_epoch=30
+          python - "$VIRTUAL_ENV/smoke-metrics/tensorboard" <<'PY'
+          import sys
+          from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+
+          events = EventAccumulator(sys.argv[1]).Reload()
+          episodes = events.Scalars("eval/num_trajectories")[-1].value
+          length = events.Scalars("eval/episode_len")[-1].value
+          success = events.Scalars("eval/success_once")[-1].value
+          assert episodes == 2 and 1 <= length <= 16, f"Expected two completed episodes within 16 steps, got {episodes=} {length=}"
+          assert success in (0, 0.5, 1), f"Expected a success fraction over two episodes, got {success}"
+          PY
+      - name: Remove the test environment
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/rlinf-arena-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+
   embodied-openpi-robolab-eval-test:
     runs-on: embodied
     timeout-minutes: 90

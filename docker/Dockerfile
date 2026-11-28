@@ -74,6 +74,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-calvin
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa365
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-isaaclab
+FROM base-image-platform-nvidia AS base-image-embodied-isaaclab_arena
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robotwin
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-opensora
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-frankasim
@@ -524,6 +525,17 @@ ENV OMNI_KIT_ACCEPT_EULA=YES
 
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robolab
 
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: Isaac Lab-Arena
+##################################################################################################
+FROM embodied-common-image AS embodied-isaaclab_arena-image
+
+ENV OMNI_KIT_ACCEPT_EULA=YES ACCEPT_EULA=Y
+RUN test "${RLINF_PLATFORM}" = nvidia && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} \
+        embodied --venv openpi --model openpi --env isaaclab_arena
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 ##################################################################################################

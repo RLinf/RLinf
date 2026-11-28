@@ -415,6 +415,7 @@ def prepare_actions(
         SupportedEnvType.ROBOTWIN,
         SupportedEnvType.ROBODOJO,
         SupportedEnvType.EMBODICHAIN,
+        SupportedEnvType.ISAACLAB_ARENA,
     ):
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.METAWORLD:

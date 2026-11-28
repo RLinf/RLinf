@@ -139,7 +139,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "supermimic" "simple" "robolab" "dexjoco")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "isaaclab_arena" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "supermimic" "simple" "robolab" "dexjoco")
 
 #=======================Utility Functions=======================
 
@@ -698,6 +698,23 @@ configure_nvidia() {
     if [ -z "$_torch_ver" ] && [ -f "$PYPROJECT_FILE" ]; then
         _torch_ver=$(sed -nE 's/.*"torch==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
     fi
+    if [ "$ENV_NAME" = isaaclab_arena ] && [ "$_torch_ver" = 2.7.1 ]; then
+        # The colocated OpenPI policy needs SM 120 kernels on Blackwell RTX.
+        if [ "$UV_TORCH_BACKEND" != auto ] && [ "$UV_TORCH_BACKEND" != cu128 ]; then
+            echo "OpenPI on Isaac Lab-Arena requires UV_TORCH_BACKEND=cu128, got $UV_TORCH_BACKEND." >&2
+            return 1
+        fi
+        if [ "$USE_MIRRORS" -eq 1 ]; then
+            PLATFORM_TORCH_INDEX=https://mirrors.tencent.com/pytorch-wheels/whl/cu128
+        else
+            PLATFORM_TORCH_INDEX=https://download.pytorch.org/whl/cu128
+        fi
+        PLATFORM_CUDA_TAG=cu128
+        PLATFORM_TORCH_STR=+cu128
+        PLATFORM_TORCH_PACKAGES=(torch torchvision torchaudio)
+        export UV_TORCH_BACKEND=cu128
+        return
+    fi
     _tmaj=${_torch_ver%%.*}
     _rest=${_torch_ver#*.}
     _tmin=${_rest%%.*}
@@ -1187,7 +1204,7 @@ apply_env_default_torch() {
                 amd) env_torch="2.9.1" ;;
             esac
             ;;
-        robolab) env_torch="2.7.1" ;;
+        robolab|isaaclab_arena) env_torch="2.7.1" ;;
         simple) env_torch="2.7.0" ;;
         robodojo) env_torch="2.7.0" ;;
     esac
@@ -2826,6 +2843,13 @@ EOF
             install_dexjoco_lerobot "rlinf-openpi==0.1.1" "dm-control==1.0.36"
             install_flash_attn
             ;;
+        isaaclab_arena)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip uninstall transformers || true
+            uv pip install "rlinf-openpi==0.1.1"
+            install_isaaclab_arena_env
+            ;;
         robolab)
             create_and_sync_venv
             install_common_embodied_deps
@@ -3676,6 +3700,10 @@ install_env_only() {
             install_common_embodied_deps
             install_supermimic_env
             ;;
+        isaaclab_arena)
+            install_common_embodied_deps
+            install_isaaclab_arena_env
+            ;;
         robolab)
             install_common_embodied_deps
             install_robolab_env
@@ -4005,6 +4033,48 @@ install_polaris_env() {
     python - <<'EOF'
 import isaacsim
 EOF
+}
+
+install_isaaclab_arena_env() {
+    if [ "$PLATFORM" != "nvidia" ]; then
+        echo "Isaac Lab-Arena requires NVIDIA RTX rendering, got platform '$PLATFORM'." >&2
+        return 1
+    fi
+    if [ -n "${ISAACLAB_ARENA_PYTHON:-}" ]; then
+        local arena_version
+        if [ ! -f "$ISAACLAB_ARENA_PYTHON" ] || [ ! -x "$ISAACLAB_ARENA_PYTHON" ] ||
+            ! arena_version=$("$ISAACLAB_ARENA_PYTHON" -I -c '
+import sys
+from importlib.metadata import version
+if sys.version_info[:2] == (3, 12):
+    sys.stdout.write(version("isaaclab_arena"))
+' 2>/dev/null) || [ "$arena_version" != "0.3.0" ]; then
+            echo "Set ISAACLAB_ARENA_PYTHON to an executable Python 3.12 with isaaclab_arena 0.3.0 installed (got $ISAACLAB_ARENA_PYTHON)." >&2
+            return 1
+        fi
+        return 0
+    fi
+    local arena_dir existing=0
+    local arena_spec="https://github.com/isaac-sim/IsaacLab-Arena.git@a72262a0f1896f56bb3a1fdf329a1548ba55aad5"
+    local revision="${arena_spec##*@}"
+    [ -n "${ISAACLAB_ARENA_PATH:-}" ] && [ -e "$ISAACLAB_ARENA_PATH" ] && existing=1
+    arena_dir=$(clone_or_reuse_repo ISAACLAB_ARENA_PATH "$VENV_DIR/isaaclab-arena" "${arena_spec%@*}") || return 1
+    if [ "$existing" -eq 0 ]; then
+        git -C "$arena_dir" checkout --detach "$revision" || return 1
+    elif [ "$(git -C "$arena_dir" rev-parse HEAD)" != "$revision" ]; then
+        echo "Arena checkout at $arena_dir must be at $revision. Point ISAACLAB_ARENA_PATH at that revision or a new directory." >&2
+        return 1
+    fi
+    # The frozen Arena project requests a uv-managed interpreter.
+    UV_PYTHON_PREFERENCE=only-managed PYTHON_VERSION=3.12 ensure_uv_python
+    uv python find --managed-python 3.12 >/dev/null || return 1
+    git -C "$arena_dir" -c "url.${GITHUB_PREFIX}https://github.com/.insteadOf=git@github.com:" submodule update --init --recursive -- submodules/IsaacLab
+    # Isaac Sim wheels share the isaacsim entry point. Install them serially.
+    # The locked egl-probe build needs the CMake 3.5 compatibility policy.
+    env -u VIRTUAL_ENV -u UV_TORCH_BACKEND UV_LINK_MODE=hardlink \
+        UV_CONCURRENT_INSTALLS=1 CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        UV_PROJECT_ENVIRONMENT="$VIRTUAL_ENV/arena-runtime" \
+        uv sync --project "$arena_dir" --frozen --managed-python --python 3.12
 }
 
 install_robolab_env() {

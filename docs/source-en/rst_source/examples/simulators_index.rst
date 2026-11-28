@@ -76,6 +76,14 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
 
       Train π₀.₅ with PPO in Gaussian-splatting scenes for Real2Sim2Real transfer.
 
+   .. grid-item-card:: Isaac Lab-Arena
+      :img-top: https://media.githubusercontent.com/media/isaac-sim/IsaacLab-Arena/a72262a0f1896f56bb3a1fdf329a1548ba55aad5/docs/images/openpi_droid_get_started.png
+      :img-alt: DROID arm in Isaac Lab-Arena
+      :link: embodied/isaaclab_arena
+      :link-type: doc
+
+      Evaluate OpenPI π₀.₅ and train with single-action PPO on DROID tasks.
+
    .. grid-item-card:: IsaacLab
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/IsaacLab.png
       :img-alt: IsaacLab benchmark
@@ -191,6 +199,7 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>
    GSEnv <embodied/gsenv>
+   Isaac Lab-Arena <embodied/isaaclab_arena>
    IsaacLab <embodied/isaaclab>
    LIBERO <embodied/libero>
    ManiSkill <embodied/maniskill>

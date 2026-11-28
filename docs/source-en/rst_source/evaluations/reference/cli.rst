@@ -64,6 +64,9 @@ Supported Benchmark Prefixes
    * - ``geniesim_*`` / ``geniesim-*``
      - ``geniesim``
      - GenieSim
+   * - ``isaaclab_arena_*`` / ``isaaclab_arena-*``
+     - ``isaaclab_arena``
+     - Isaac Lab-Arena
    * - ``libero_*`` / ``libero-*``
      - ``libero``
      - Sets ``ROBOT_PLATFORM`` and ``LIBERO_TYPE``
@@ -137,6 +140,7 @@ If ``evaluations/<benchmark>/<config>.yaml`` does not exist, ``run_eval.sh`` fal
 Full launch examples per benchmark:
 
 - :doc:`../guides/behavior`
+- :doc:`../guides/isaaclab_arena`
 - :doc:`../guides/libero`
 - :doc:`../guides/maniskill_ood`
 - :doc:`../guides/polaris`
