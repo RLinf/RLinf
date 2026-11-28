@@ -122,6 +122,9 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
+          # agentops checks os.path.realpath(module.__file__) against site-packages
+          # and skips symlinked packages, which drops OpenAI spans.
+          export UV_LINK_MODE=copy
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           source .venv/bin/activate
