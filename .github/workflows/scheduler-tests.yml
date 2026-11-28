@@ -15,7 +15,6 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -46,7 +45,6 @@ jobs:
           cd rlinf
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=hardlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
@@ -77,6 +75,4 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          rm -rf rlinf/.venv rlinf/.venv-vllm results
-          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
-               -prune -exec rm -rf {} + 2>/dev/null || true
+          rm -rf rlinf/.venv rlinf/.venv-vllm results /workspace/results/grpo-1.5b-dynamic-mg-sgl

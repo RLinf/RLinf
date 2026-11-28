@@ -4427,7 +4427,6 @@ install_robodojo_env() {
     if [[ -z "${TERM:-}" || "${TERM}" == "dumb" ]]; then
         export TERM=xterm-256color
     fi
-    export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
     if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
         echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
     fi
