@@ -1,0 +1,25 @@
+defaults:
+  - isaaclab_go2_c_ppo
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+runner:
+  logger:
+    log_path: results
+    experiment_name: go2_stairs_smoke
+  max_epochs: 1
+  max_steps: 1
+  save_interval: 1
+
+env:
+  train:
+    total_num_envs: 64
+
+actor:
+  global_batch_size: 384
+  micro_batch_size: 384
+  model:
+    model_path: ''

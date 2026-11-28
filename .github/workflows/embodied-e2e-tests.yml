@@ -991,6 +991,16 @@ jobs:
           source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
           bash tests/e2e_tests/embodied/run.sh isaaclab_ppo_gr00t
 
+      - name: Go2 stairs PPO smoke test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
+          python -m pytest -q tests/e2e_tests/embodied/test_go2_reset.py
+          bash tests/e2e_tests/embodied/run.sh isaaclab_go2_c_ppo_smoke
+
       - name: Clean up
         run: |
           rm -rf .venv

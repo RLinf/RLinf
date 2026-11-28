@@ -118,6 +118,8 @@ algorithm
        截断或终止时都自举。
    * - ``algorithm.kl_beta``
      - 加入奖励的 KL 惩罚权重。
+   * - ``algorithm.desired_kl``
+     - 同步具身 FSDP PPO 在关闭训练流水线时可指定解析 KL 目标值。将 ``actor.optim.lr_scheduler`` 设为 ``torch_constant``，使调整后的学习率在后续迭代生效。策略需以 ``kl_divergence`` 返回每个样本从旧策略到当前策略的 KL。每次优化前，worker 计算全局批次均值。均值超过目标的两倍，学习率除以 1.5，下限为 1e-5。均值为正且低于目标的一半，学习率乘以 1.5，上限为 1e-2。
    * - ``algorithm.entropy_bonus``
      - 熵奖励系数。
    * - ``algorithm.clip_ratio_low`` / ``clip_ratio_high``
@@ -241,6 +243,8 @@ rollout
      - top-k 与核采样参数。
    * - ``rollout.sampling_params.repetition_penalty``
      - 对重复 token 的惩罚。
+   * - ``rollout.seed``
+     - Hugging Face rollout 后端可选的训练种子。每个采样 worker 在加载策略前，将自身的 rank 加到该种子上。
    * - ``rollout.group_name``
      - Rollout Worker 组的逻辑名称。
    * - ``rollout.rollout_backend``

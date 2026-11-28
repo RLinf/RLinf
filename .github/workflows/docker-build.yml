@@ -418,6 +418,9 @@ jobs:
           tags: rlinf:embodied-robocasa
 
   build-embodied-isaaclab:
+    strategy:
+      matrix:
+        target: [embodied-isaaclab, embodied-go2_abc]
     runs-on: ubuntu-latest
     steps:
       - name: Maximize storage space
@@ -465,16 +468,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build embodied-isaaclab
+      - name: Build ${{ matrix.target }}
         uses: docker/build-push-action@v6
         with:
           file: ./docker/Dockerfile
           push: false
           build-args: |
-            BUILD_TARGET=embodied-isaaclab
+            BUILD_TARGET=${{ matrix.target }}
             NO_MIRROR=1
           outputs: type=cacheonly
-          tags: rlinf:embodied-isaaclab
+          tags: rlinf:${{ matrix.target }}
 
   build-embodied-franka:
     runs-on: ubuntu-latest

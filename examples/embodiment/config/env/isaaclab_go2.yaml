@@ -1,0 +1,19 @@
+env_type: isaaclab
+seed: ${actor.seed}
+total_num_envs: 2048
+group_size: 1
+max_steps_per_rollout_epoch: 24
+max_episode_steps: 1000
+auto_reset: true
+ignore_terminations: false
+reward_scale: 1.0
+use_fixed_reset_state_ids: false
+rollout_epoch: 1
+
+init_params:
+  asset_root: null
+  disable_kit_telemetry: true
+
+video_cfg:
+  save_video: false
+  video_base_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/video

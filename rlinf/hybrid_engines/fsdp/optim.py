@@ -242,3 +242,18 @@ def build_adamw(
         )
     except (RuntimeError, TypeError):
         return torch.optim.AdamW(params, eps=eps, weight_decay=weight_decay)
+
+
+def adapt_learning_rate(optimizer: Optimizer, kl: float, desired_kl: float) -> None:
+    """Adjust optimizer groups using the policy's mean analytical KL.
+
+    Args:
+        optimizer: Optimizer whose group learning rates are updated in place.
+        kl: Mean old-to-current policy KL over the global batch.
+        desired_kl: Positive target policy divergence.
+    """
+    for group in optimizer.param_groups:
+        if kl > 2 * desired_kl:
+            group["lr"] = max(1e-5, group["lr"] / 1.5)
+        elif 0 < kl < desired_kl / 2:
+            group["lr"] = min(1e-2, group["lr"] * 1.5)

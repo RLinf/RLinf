@@ -141,6 +141,8 @@ SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "supermimic" "simple" "robolab" "dexjoco")
 
+SUPPORTED_ENVS+=("go2_abc")
+
 #=======================Utility Functions=======================
 
 print_help() {
@@ -702,7 +704,7 @@ configure_nvidia() {
     _rest=${_torch_ver#*.}
     _tmin=${_rest%%.*}
     if [ -n "$_torch_ver" ] && [[ "$_tmaj" =~ ^[0-9]+$ ]] && [[ "$_tmin" =~ ^[0-9]+$ ]] \
-        && { [ "$_tmaj" -gt 2 ] || { [ "$_tmaj" -eq 2 ] && [ "$_tmin" -ge 11 ]; }; }; then
+        && { [ "$ENV_NAME" = "go2_abc" ] || [ "$_tmaj" -gt 2 ] || { [ "$_tmaj" -eq 2 ] && [ "$_tmin" -ge 11 ]; }; }; then
         local _cpu_only=0
         # An explicit UV_TORCH_BACKEND=cuXXX wins over driver detection, for
         # hosts with CUDA forward-compatibility libraries installed.
@@ -1188,7 +1190,7 @@ apply_env_default_torch() {
             esac
             ;;
         robolab) env_torch="2.7.1" ;;
-        simple) env_torch="2.7.0" ;;
+        simple|go2_abc) env_torch="2.7.0" ;;
         robodojo) env_torch="2.7.0" ;;
     esac
     if [ -n "$env_torch" ]; then
@@ -3620,6 +3622,10 @@ install_env_only() {
         d4rl)
             install_d4rl_env
             ;;
+        go2_abc)
+            install_common_embodied_deps
+            install_go2_abc_env
+            ;;
         mujoco_warp)
             install_common_embodied_deps
             install_mujoco_warp_env
@@ -4057,6 +4063,16 @@ install_simple_env() {
     UV_NO_CACHE=1 UV_LINK_MODE=copy \
         UV_PROJECT_ENVIRONMENT="$(realpath "$VENV_DIR")" \
         bash "$simple_dir/scripts/install_curobo.sh"
+}
+
+install_go2_abc_env() {
+    local index_args=()
+    mapfile -t index_args < <(platform_index_args)
+    index_args+=(--extra-index-url https://pypi.nvidia.com)
+    uv pip install --no-build-isolation flatdict==4.0.1
+    # TensorDict 0.15 requires a newer torch than the Go2 runtime's 2.7.
+    UV_LINK_MODE=hardlink uv pip install "${index_args[@]}" \
+        "isaaclab[isaacsim]==2.3.2" "rsl-rl-lib==3.1.2" "tensordict<0.15"
 }
 
 install_isaaclab_env() {

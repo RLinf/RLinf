@@ -47,6 +47,7 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, read the [RLinf Walk
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports [PPO locomotion training for Unitree Go2 in Isaac Lab](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/go2_abc.html).
 - [2026/11] 🔥 RLinf supports SuperMimic for Unitree G1 whole-body motion tracking with a differentiable world model in MuJoCo Warp, including multi-GPU FSDP2 scaling, CUDA graphs, and bf16 mixed precision. On NVIDIA A800, it reaches **1.34×** throughput on 1 GPU (0.383 s vs. 0.515 s/update) and **2.27×** on 4 GPUs (0.227 s/update, 6000 updates in ~23 min) over the official single-GPU code, and reaches **0.856** normalized return on 40 LAFAN1 clips (paper: 0.82) with **0** falls. Doc: [SuperMimic](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/supermimic.html).
 - [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
 - [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
@@ -341,7 +342,7 @@ The components below cover simulators, real-world environments, and training alg
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/roboverse.html">RoboVerse</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/behavior.html">BEHAVIOR</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/metaworld.html">MetaWorld</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/isaaclab.html">IsaacLab</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/isaaclab.html">IsaacLab</a> (<a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/go2_abc.html">Go2 locomotion</a>) ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/calvin.html">CALVIN</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robocasa.html">RoboCasa</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robocasa365.html">RoboCasa365</a> ✅</li>

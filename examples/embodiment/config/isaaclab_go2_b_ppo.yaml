@@ -1,0 +1,17 @@
+defaults:
+  - isaaclab_go2_a_ppo
+  - _self_
+
+runner:
+  logger:
+    experiment_name: B_rlinf
+
+env:
+  train:
+    init_params:
+      id: MTL-Velocity-Rough-Unitree-Go2-B1-RoughWalk-v0
+
+actor:
+  model:
+    model_path: ${oc.env:GO2_ABC_DATA,data/go2_abc}/models/B/baseline.pt
+    distribution_safety_patch: true

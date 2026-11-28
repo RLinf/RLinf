@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .tasks.go2 import FLAT, ROUGH, STAIRS, Go2IsaacLabEnv
 from .tasks.stack_cube import IsaaclabStackCubeEnv
 
 REGISTER_ISAACLAB_ENVS = {
+    FLAT: Go2IsaacLabEnv,
+    ROUGH: Go2IsaacLabEnv,
+    STAIRS: Go2IsaacLabEnv,
     "Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Rewarded-v0": IsaaclabStackCubeEnv,
 }
 

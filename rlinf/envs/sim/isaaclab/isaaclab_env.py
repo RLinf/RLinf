@@ -22,7 +22,25 @@ from omegaconf import open_dict
 from rlinf.envs.sim.isaaclab.venv import SubProcIsaacLabEnv
 
 
-class IsaaclabBaseEnv(gym.Env):
+class IsaaclabProcessEnv(gym.Env):
+    """Run the task factory in a spawned process that owns the Isaac Sim app."""
+
+    def __init__(self, *, timeout: float | None = None):
+        super().__init__()
+        self.env = SubProcIsaacLabEnv(self._make_env_function(), timeout=timeout)
+        self.device = self.env.device()
+
+    def _make_env_function(self):
+        raise NotImplementedError
+
+    def close(self):
+        self.env.close()
+
+    def update_reset_state_ids(self):
+        """A single task does not use reset state IDs."""
+
+
+class IsaaclabBaseEnv(IsaaclabProcessEnv):
     """
     Class for isaaclab in rlinf. Different from other lab enviromnent, the output of isaaclab is all tensor on
     cuda.
@@ -46,8 +64,8 @@ class IsaaclabBaseEnv(gym.Env):
         self.total_num_processes = total_num_processes
         self.worker_info = worker_info
         self.video_cfg = cfg.video_cfg
-        self._init_isaaclab_env()
-        self.device = self.env.device()
+        super().__init__()
+        self.env.reset(seed=self.seed)
 
         self.task_description = cfg.init_params.task_description
         self._is_start = True  # if this is first time for simulator
@@ -60,14 +78,6 @@ class IsaaclabBaseEnv(gym.Env):
             self.device
         )
         self.ignore_terminations = cfg.ignore_terminations
-
-    def _make_env_function(self):
-        raise NotImplementedError
-
-    def _init_isaaclab_env(self):
-        env_fn = self._make_env_function()
-        self.env = SubProcIsaacLabEnv(env_fn)
-        self.env.reset(seed=self.seed)
 
     def _init_metrics(self):
         self.success_once = torch.zeros(self.num_envs, dtype=bool).to(self.device)
@@ -227,15 +237,6 @@ class IsaaclabBaseEnv(gym.Env):
 
     def _wrap_obs(self, obs):
         raise NotImplementedError
-
-    def close(self):
-        self.env.close()
-
-    def update_reset_state_ids(self):
-        """
-        No muti task.
-        """
-        pass
 
     """
     Below codes are all copied from libero, thanks to the author of libero!

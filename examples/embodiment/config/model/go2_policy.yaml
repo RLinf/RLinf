@@ -1,0 +1,7 @@
+model_type: go2_policy
+action_dim: 12
+num_action_chunks: 1
+precision: '32'
+add_value_head: true
+is_lora: false
+distribution_safety_patch: false
