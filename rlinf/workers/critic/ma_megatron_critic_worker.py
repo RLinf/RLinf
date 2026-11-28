@@ -22,7 +22,7 @@ from rlinf.data.schema.actor_batch import DynamicActorBatch
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.hybrid_engines.megatron.utils import (
     postprocess_ragged_seqs,
-    preprocess_ragged_seqs,
+    prepare_ragged_model_inputs,
 )
 from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import (
@@ -64,14 +64,13 @@ class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
             batch = next(dataloader_iter)
             rows = [row.to(self.torch_device_type) for row in batch["input_ids"]]
             lengths = list(map(len, rows))
-            input_ids, packed_params = preprocess_ragged_seqs(rows)
-            position_ids, _ = preprocess_ragged_seqs(
-                [torch.arange(n, device=input_ids.device) for n in lengths]
+            input_ids, attention_mask, position_ids, packed_params = (
+                prepare_ragged_model_inputs(rows, model)
             )
             output = self.custom_forward(
                 model,
                 input_ids,
-                None,
+                attention_mask,
                 position_ids,
                 sequence_parallel=self.transformer_config.sequence_parallel,
                 packed_seq_params=packed_params,

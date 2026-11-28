@@ -18,9 +18,10 @@ import inspect
 import logging
 import unittest
 from collections import OrderedDict
-from types import MethodType
+from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import numpy as np
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -53,7 +54,6 @@ from rlinf.runners.async_weight_sync_mixin import AsyncWeightSyncMixin
 from rlinf.scheduler import AcceleratorType, Worker
 from rlinf.utils.env_helpers import SmoothInterveneController  # noqa: E402
 from rlinf.utils.utils import collect_param_names_need_sync
-from rlinf.workers.env.env_worker import EnvWorker  # noqa: E402
 from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
@@ -2022,6 +2022,8 @@ def test_teardown_is_a_noop_without_a_pending_sync(runner_cls) -> None:
 
 class TestOverlapEnvBootstrap(unittest.TestCase):
     def setUp(self):
+        from rlinf.workers.env.env_worker import EnvWorker
+
         self.cfg = OmegaConf.create(
             {
                 "env": {
@@ -2307,6 +2309,1041 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
             loop.close()
 
         self.assertEqual(self.worker.record_env_metrics.call_count, 1)
+
+
+def _assert_tensor_bits_equal(actual, expected):
+    assert actual.shape == expected.shape
+    assert actual.dtype == expected.dtype
+    assert torch.equal(
+        actual.detach().contiguous().reshape(-1).view(torch.uint8),
+        expected.detach().contiguous().reshape(-1).view(torch.uint8),
+    )
+
+
+@pytest.fixture
+def sglang_args_worker(monkeypatch):
+    native = pytest.importorskip("sglang.srt.server_args")
+    from omegaconf import OmegaConf
+
+    from rlinf.config import validate_megatron_cfg, validate_rollout_cfg
+    from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+
+    # ServerArgs initialization probes hardware and reads the checkpoint.
+    monkeypatch.setattr(native.ServerArgs, "__post_init__", lambda self: None)
+
+    def make(
+        model_type="qwen3_5",
+        training_backend="megatron",
+        load_mtp=True,
+        sglang_options=None,
+        weight_reload="sync",
+    ):
+        worker = object.__new__(SGLangWorker)
+        worker._logger = logging.getLogger("sglang-args-test")
+        worker._stacklevel = 1
+        worker._rank = 1
+        # The port-lock service normally lives in the scheduler process.
+        worker._port_lock = SimpleNamespace(acquire=lambda port: True)
+        worker.weight_reload = weight_reload
+        worker._cfg = OmegaConf.create(
+            {
+                "actor": {
+                    "training_backend": training_backend,
+                    "model": {
+                        "model_type": model_type,
+                        "load_mtp": load_mtp,
+                        "precision": "bf16",
+                        "activation": "swiglu",
+                        "normalization": "rmsnorm",
+                    },
+                    "megatron": {"mbridge": True, "use_hf_ckpt": True},
+                    "optim": {},
+                    "lr_sched": {},
+                },
+                "runner": {"resume_dir": None},
+                "rollout": {
+                    "model": {
+                        "model_type": model_type,
+                        "model_path": "/unused/checkpoint",
+                        "precision": "bf16",
+                    },
+                    "sglang": sglang_options or {},
+                    "enforce_eager": False,
+                    "tensor_parallel_size": 4,
+                    "return_logprobs": True,
+                    "validate_weight": False,
+                    "cuda_graph_max_bs": 8,
+                    "max_running_requests": 8,
+                },
+            }
+        )
+        if training_backend == "megatron":
+            pytest.importorskip("megatron.training")
+            validate_megatron_cfg(worker._cfg.actor)
+        if training_backend is None:
+            del worker._cfg.actor
+        worker._cfg_rollout = validate_rollout_cfg(
+            worker._cfg.rollout, OmegaConf.create({}), worker._cfg.get("actor")
+        )
+        return worker
+
+    return make
+
+
+@pytest.fixture
+def weight_sync_receiver(monkeypatch):
+    native = pytest.importorskip("sglang.srt.managers.scheduler")
+    from sglang.srt.model_loader.weight_utils import default_weight_loader
+
+    from rlinf.hybrid_engines.sglang.common.sgl_scheduler import Scheduler
+    from rlinf.scheduler import Worker
+    from rlinf.utils.placement import RolloutSyncMode
+
+    def make(expected, buckets, *, multimodal=False, header=True):
+        model = torch.nn.Module()
+        for name, value in expected.items():
+            model.register_parameter(name, torch.nn.Parameter(torch.zeros_like(value)))
+        events, replies = [], []
+
+        def load_weights(weights):
+            for name, value in weights:
+                if name.startswith("mtp."):
+                    continue
+                events.append(("load", name))
+                default_weight_loader(model.get_parameter(name), value)
+
+        model.load_weights = load_weights
+        messages = []
+        for index, bucket in enumerate(buckets):
+            payload = dict(bucket)
+            if index == 0 and header:
+                payload["bucket_length"] = torch.tensor([len(buckets)])
+            messages.append(payload)
+        pending = iter(messages)
+
+        def recv(*args, async_op=False, **kwargs):
+            payload = next(pending)
+            events.append(("recv", async_op))
+            if async_op:
+                return SimpleNamespace(wait=lambda: payload)
+            return payload
+
+        def flush_cache(self):
+            events.append(("flush", tuple(self.waiting_queue)))
+            return False
+
+        scheduler = object.__new__(Scheduler)
+        scheduler.tp_worker = SimpleNamespace(
+            worker=SimpleNamespace(model_runner=SimpleNamespace(model=model))
+        )
+        scheduler._rlinf_worker = SimpleNamespace(
+            recv=recv,
+            send=lambda message, *args: replies.append(message),
+            get_parent_rank=lambda: 0,
+            log_info=lambda message: events.append(("info", message)),
+        )
+        scheduler._actor_group_name = "actor"
+        scheduler.actor_weight_rank = 0
+        scheduler.cfg = SimpleNamespace(rollout=SimpleNamespace(enforce_eager=False))
+        scheduler.model_config = SimpleNamespace(is_multimodal=multimodal)
+        scheduler.rollout_sync_mode = RolloutSyncMode.DISAGGREGATED
+        scheduler.weight_reload = "sync"
+        scheduler.is_weight_offloaded = False
+        scheduler.weight_norm_dict = None
+        scheduler.running_batch = SimpleNamespace(reqs=[], is_empty=lambda: True)
+        scheduler.waiting_queue = []
+        scheduler.chunked_req = None
+        scheduler.enable_overlap = False
+        scheduler._sync_draft_model = None
+        monkeypatch.setattr(native.Scheduler, "flush_cache", flush_cache)
+        monkeypatch.setattr(
+            Worker,
+            "torch_platform",
+            SimpleNamespace(synchronize=lambda: events.append(("sync", None))),
+        )
+        return scheduler, model, events, replies
+
+    return make
+
+
+def _inference_sync_model(config, model_type, iteration):
+    """Construct CPU parameter trees using Megatron's actual stage ownership."""
+    import zlib
+
+    from megatron.core import parallel_state as ps
+    from megatron.core.transformer.transformer_block import get_num_layers_to_build
+    from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
+
+    tp, rank = config.tensor_model_parallel_size, ps.get_tensor_model_parallel_rank()
+    expert_tp, expert_rank = (
+        ps.get_expert_tensor_parallel_world_size(),
+        ps.get_expert_tensor_parallel_rank(),
+    )
+    prefix = "language_model." if model_type == "qwen3_5" else ""
+    models = []
+    for vp in range(config.virtual_pipeline_model_parallel_size or 1):
+        offset = get_transformer_layer_offset(config, vp_stage=vp)
+        count = get_num_layers_to_build(config, vp_stage=vp)
+        entries = []
+        for index in range(count):
+            local = f"{prefix}decoder.layers.{index}."
+            global_key = f"{prefix}decoder.layers.{offset + index}."
+            entries.extend(
+                [
+                    (
+                        local + "self_attention.linear_qkv.layer_norm_weight",
+                        global_key + "norm",
+                        (8,),
+                        None,
+                        None,
+                        False,
+                    ),
+                    (
+                        local + "mlp.linear_fc1.weight",
+                        global_key + "fc1",
+                        (32, 8),
+                        0,
+                        (16, 16),
+                        False,
+                    ),
+                    (
+                        local + "mlp.linear_fc2.weight",
+                        global_key + "fc2",
+                        (8, 16),
+                        1,
+                        None,
+                        False,
+                    ),
+                ]
+                if model_type != "deepseek_v3"
+                else [
+                    (
+                        local + "input_layernorm.weight",
+                        global_key + "norm",
+                        (8,),
+                        None,
+                        None,
+                        False,
+                    ),
+                    (
+                        local + "mlp.linear_fc1.weight",
+                        global_key + "fc1",
+                        (32, 8),
+                        0,
+                        (16, 16),
+                        False,
+                    ),
+                    (
+                        local + "mlp.linear_fc2.weight",
+                        global_key + "fc2",
+                        (8, 16),
+                        1,
+                        None,
+                        False,
+                    ),
+                ]
+            )
+            if model_type == "qwen3_5":
+                if (offset + index) % 4 == 3:
+                    entries.append(
+                        (
+                            local + "self_attention.linear_qkv.weight",
+                            global_key + "qkv",
+                            (48, 8),
+                            0,
+                            None,
+                            False,
+                        )
+                    )
+                else:
+                    entries.extend(
+                        [
+                            (
+                                local + "self_attention.in_proj.weight",
+                                global_key + "in_proj",
+                                (64, 8),
+                                0,
+                                (8, 8, 16, 16, 8, 8),
+                                False,
+                            ),
+                            (
+                                local + "self_attention.conv1d.weight",
+                                global_key + "conv",
+                                (32, 1, 4),
+                                0,
+                                (8, 8, 16),
+                                False,
+                            ),
+                        ]
+                    )
+            if config.num_moe_experts:
+                local_experts = (
+                    config.num_moe_experts // ps.get_expert_model_parallel_world_size()
+                )
+                for expert in range(local_experts):
+                    global_expert = (
+                        ps.get_expert_model_parallel_rank() * local_experts + expert
+                    )
+                    entries.extend(
+                        [
+                            (
+                                local + f"mlp.experts.linear_fc1.weight{expert}",
+                                global_key + f"expert{global_expert}.fc1",
+                                (32, 8),
+                                0,
+                                (16, 16),
+                                True,
+                            ),
+                            (
+                                local + f"mlp.experts.linear_fc2.weight{expert}",
+                                global_key + f"expert{global_expert}.fc2",
+                                (8, 16),
+                                1,
+                                None,
+                                True,
+                            ),
+                        ]
+                    )
+        if ps.get_pipeline_model_parallel_rank() == 0 and vp == 0:
+            entries.append(
+                (
+                    prefix + "embedding.word_embeddings.weight",
+                    "embedding",
+                    (32, 8),
+                    0,
+                    None,
+                    False,
+                )
+            )
+            if model_type == "qwen3_5":
+                entries.extend(
+                    [
+                        (
+                            "vision_model.pos_embed.weight",
+                            "vision.pos",
+                            (16, 8),
+                            None,
+                            None,
+                            False,
+                        ),
+                        (
+                            "vision_model.decoder.layers.0.mlp.linear_fc1.weight",
+                            "vision.fc1",
+                            (16, 8),
+                            0,
+                            None,
+                            False,
+                        ),
+                        (
+                            "vision_model.merger.linear_fc2.weight",
+                            "vision.merger",
+                            (8, 16),
+                            1,
+                            None,
+                            False,
+                        ),
+                    ]
+                )
+        if (
+            ps.get_pipeline_model_parallel_rank()
+            == config.pipeline_model_parallel_size - 1
+            and vp == (config.virtual_pipeline_model_parallel_size or 1) - 1
+        ):
+            entries.append(
+                (
+                    prefix + "output_layer.weight",
+                    "embedding"
+                    if config.share_embeddings_and_output_weights
+                    else "output",
+                    (32, 8),
+                    0,
+                    None,
+                    False,
+                )
+            )
+            if model_type == "qwen3_5":
+                entries.extend(
+                    [
+                        (
+                            prefix + "mtp.layers.0.eh_proj.weight",
+                            "mtp.fc",
+                            (8, 16),
+                            0,
+                            None,
+                            False,
+                        ),
+                        (
+                            prefix
+                            + "mtp.layers.0.mtp_model_layer.mlp.linear_fc1.weight",
+                            "mtp.ffn",
+                            (32, 8),
+                            0,
+                            (16, 16),
+                            False,
+                        ),
+                    ]
+                )
+        model = torch.nn.Module()
+        for name, global_key, shape, dim, segments, expert in entries:
+            if (
+                config.share_embeddings_and_output_weights
+                and config.pipeline_model_parallel_size == 1
+                and name.endswith("output_layer.weight")
+            ):
+                continue
+            value = (
+                (
+                    (torch.arange(np.prod(shape)) % 257) / 32
+                    + (zlib.crc32(global_key.encode()) % 317) / 4
+                    + iteration * 16
+                )
+                .to(torch.bfloat16)
+                .reshape(shape)
+            )
+            value.reshape(-1)[0] = -0.0
+            size, local_rank = (expert_tp, expert_rank) if expert else (tp, rank)
+            if dim is not None:
+                if segments:
+                    value = torch.cat(
+                        [
+                            part.chunk(size, dim)[local_rank]
+                            for part in value.split(segments, dim)
+                        ],
+                        dim,
+                    )
+                else:
+                    value = value.chunk(size, dim)[local_rank]
+            module = model
+            parts = name.split(".")
+            for part in parts[:-1]:
+                if part not in module._modules:
+                    module.add_module(part, torch.nn.Module())
+                module = module._modules[part]
+            module.register_parameter(
+                parts[-1], torch.nn.Parameter(value.clone().contiguous())
+            )
+        language = getattr(model, "language_model", model)
+        language.share_embeddings_and_output_weights = (
+            config.share_embeddings_and_output_weights
+        )
+        models.append(model)
+    return models
+
+
+def _inference_sync_rank(process_rank, cases, queues, barrier, directory):
+    import logging
+    import pickle
+    from contextlib import nullcontext
+    from datetime import timedelta
+    from pathlib import Path
+
+    from megatron.core import parallel_state as ps
+    from megatron.core.transformer import TransformerConfig
+    from omegaconf import OmegaConf
+
+    from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
+    from rlinf.utils.resharding.reshard_config import ReshardConfig
+    from rlinf.workers.inference.megatron_inference_worker import MegatronActorInference
+    from rlinf.workers.megatron_worker import MegatronWorker
+
+    torch.set_num_threads(1)
+    for case_index, (model_type, source, target, tied) in enumerate(cases):
+        source_world, target_world = source[0], target[0]
+        active = process_rank < source_world + target_world
+        if active:
+            sending = process_rank < source_world
+            settings = source if sending else target
+            world, tp, pp, vp, cp, ep, etp, first = settings
+            rank = process_rank if sending else process_rank - source_world
+            role = "actor" if sending else "inference"
+            torch.distributed.init_process_group(
+                "gloo",
+                init_method=(Path(directory) / f"{case_index}_{role}").as_uri(),
+                rank=rank,
+                world_size=world,
+                timeout=timedelta(seconds=120),
+            )
+            ps.initialize_model_parallel(
+                tensor_model_parallel_size=tp,
+                pipeline_model_parallel_size=pp,
+                virtual_pipeline_model_parallel_size=vp,
+                context_parallel_size=cp,
+                expert_model_parallel_size=ep,
+                expert_tensor_parallel_size=etp,
+            )
+            config = TransformerConfig(
+                num_layers=8,
+                bf16=True,
+                pipeline_dtype=torch.bfloat16,
+                add_bias_linear=False,
+                hidden_size=8,
+                num_attention_heads=8,
+                num_query_groups=4,
+                kv_channels=2,
+                ffn_hidden_size=16,
+                tensor_model_parallel_size=tp,
+                pipeline_model_parallel_size=pp,
+                virtual_pipeline_model_parallel_size=vp,
+                context_parallel_size=cp,
+                expert_model_parallel_size=ep,
+                expert_tensor_parallel_size=etp,
+                num_moe_experts=4 if model_type == "deepseek_v3" else None,
+                num_layers_in_first_pipeline_stage=first,
+            )
+            config.linear_key_head_dim = config.linear_value_head_dim = 2
+            config.linear_num_key_heads, config.linear_num_value_heads = 4, 8
+            config.share_embeddings_and_output_weights = tied
+            worker = object.__new__(
+                MegatronWorker if sending else MegatronActorInference
+            )
+            worker._rank, worker._world_size = rank, world
+            worker._logger, worker._stacklevel = (
+                logging.getLogger("inference-sync-test"),
+                1,
+            )
+            worker._device_lock = nullcontext()
+            worker.is_running = True
+            worker.is_weight_offloaded = worker.is_grad_offloaded = False
+            worker.mbridge = False
+            worker.transformer_config = config
+            worker._manager_proxy = SimpleNamespace(
+                get_worker_info=lambda address: SimpleNamespace(
+                    group_world_size=target_world if sending else source_world
+                )
+            )
+            worker.model = _inference_sync_model(config, model_type, 0)
+            if sending:
+                worker.inference_cfg = OmegaConf.create({"group_name": "inference"})
+                worker.inference_weights_reshard = MegatronCoreWeightReshard(
+                    ReshardConfig(
+                        model_type=model_type,
+                        model_config=config,
+                        reshard_weights_format="mcore",
+                        reshard_tp_size=target[1],
+                        reshard_pp_size=target[2],
+                        moe_grouped_gemm="te" if config.num_moe_experts else None,
+                        bucket_capacity=700,
+                    )
+                )
+                worker.send = lambda data, group, destination: queues[destination][
+                    0
+                ].put(pickle.dumps(data))
+                worker.recv = lambda group, source_rank: pickle.loads(
+                    queues[source_rank][1].get(timeout=120)
+                )
+                worker._setup_inference_weight_dst_ranks()
+            else:
+                worker._train_group_name = "actor"
+                worker._weight_sync_train_src_rank = rank % source_world
+                worker._weight_layout_sent = False
+                worker.send = lambda data, group, destination: queues[rank][1].put(
+                    pickle.dumps(data)
+                )
+                worker.recv = lambda group, source_rank: pickle.loads(
+                    queues[rank][0].get(timeout=120)
+                )
+            for iteration in range(2):
+                expected = _inference_sync_model(config, model_type, iteration)
+                for model, reference in zip(worker.model, expected, strict=True):
+                    if sending:
+                        model.load_state_dict(reference.state_dict())
+                    else:
+                        for parameter in model.parameters():
+                            parameter.data.fill_(float("nan"))
+                if sending:
+                    worker.sync_model_to_inference()
+                else:
+                    worker.sync_model_from_actor()
+                    for model, reference in zip(worker.model, expected, strict=True):
+                        actual = model.state_dict()
+                        assert actual.keys() == reference.state_dict().keys()
+                        for key, value in reference.state_dict().items():
+                            _assert_tensor_bits_equal(actual[key], value)
+                torch.distributed.barrier()
+            ps.destroy_model_parallel()
+            torch.distributed.destroy_process_group()
+            assert not torch.cuda.is_initialized()
+        barrier.wait(timeout=180)
+
+
+class TestMegatronSGLangWeightSync:
+    @pytest.mark.parametrize("vision_dp", [None, False, True])
+    @pytest.mark.parametrize("load_mtp", [False, True])
+    def test_qwen35_server_args_preserve_vision_dp(
+        self, vision_dp, load_mtp, sglang_args_worker
+    ):
+        worker = sglang_args_worker(
+            load_mtp=load_mtp,
+            sglang_options={}
+            if vision_dp is None
+            else {"mm_enable_dp_encoder": vision_dp},
+        )
+        args = worker._build_server_args()
+        assert args["mm_enable_dp_encoder"] is (vision_dp is True)
+        assert args["speculative_algorithm"] == ("NEXTN" if load_mtp else None)
+        assert args["speculative_draft_model_path"] == (
+            "/unused/checkpoint" if load_mtp else None
+        )
+
+    @pytest.mark.parametrize("legacy_fields", [False, True])
+    @pytest.mark.parametrize("model_type", ["qwen3_5", "deepseek_v3", "glm4_moe_lite"])
+    @pytest.mark.parametrize(
+        "training_backend,weight_reload",
+        [("megatron", "sync"), ("fsdp", "sync"), (None, None)],
+    )
+    def test_sglang_options_reach_all_model_backends(
+        self,
+        model_type,
+        training_backend,
+        weight_reload,
+        sglang_args_worker,
+        caplog,
+        monkeypatch,
+        legacy_fields,
+    ):
+        import dataclasses
+
+        from rlinf.workers.rollout.sglang import sglang_worker
+
+        if legacy_fields:
+            fields = dict(sglang_worker.ServerArgs.__dataclass_fields__)
+            for name in ("mm_enable_dp_encoder", "mamba_scheduler_strategy"):
+                fields.pop(name, None)
+            monkeypatch.setattr(
+                sglang_worker.ServerArgs, "__dataclass_fields__", fields
+            )
+            monkeypatch.setattr(
+                sglang_worker,
+                "_SERVER_ARGS_FIELDS",
+                {field.name for field in dataclasses.fields(sglang_worker.ServerArgs)},
+            )
+
+        options = {
+            "mm_enable_dp_encoder": True,
+            "disable_radix_cache": False,
+            "mamba_scheduler_strategy": "extra_buffer",
+            "mamba_track_interval": 128,
+            "speculative_algorithm": "EAGLE",
+            "speculative_draft_model_path": "/explicit/draft",
+            "speculative_draft_model_revision": "draft-revision",
+            "speculative_num_steps": 3,
+            "speculative_num_draft_tokens": 8,
+            "speculative_eagle_topk": 2,
+        }
+        if model_type == "qwen3_5" and training_backend == "megatron":
+            options["speculative_draft_model_path"] = "/unused/checkpoint"
+        worker = sglang_args_worker(
+            model_type,
+            training_backend,
+            sglang_options=options,
+            weight_reload=weight_reload,
+        )
+        args = worker._build_server_args()
+        for name, value in options.items():
+            if name in sglang_worker._SERVER_ARGS_FIELDS:
+                assert args[name] == value
+            else:
+                assert name not in args
+                assert f"has no field {name!r}" in caplog.text
+
+    @pytest.mark.parametrize("load_mtp", [False, True])
+    @pytest.mark.parametrize(
+        "weight_reload,validate,first,resume,expected",
+        [
+            ("sync", False, False, None, "dummy"),
+            ("sync", False, True, None, "auto"),
+            ("sync", True, False, None, "auto"),
+            ("sync", False, True, "/resume", "dummy"),
+            ("sync", True, True, "/resume", "auto"),
+            ("cpu", False, False, None, "auto"),
+            (None, False, False, None, "auto"),
+        ],
+    )
+    def test_qwen35_uses_common_initial_load_format(
+        self,
+        load_mtp,
+        weight_reload,
+        validate,
+        first,
+        resume,
+        expected,
+        sglang_args_worker,
+    ):
+        worker = sglang_args_worker(load_mtp=load_mtp, weight_reload=weight_reload)
+        worker._cfg_rollout.validate_weight = validate
+        worker._cfg_rollout.validate_weight_first_sync = first
+        worker._cfg.runner.resume_dir = resume
+        assert worker._build_server_args()["load_format"] == expected
+
+    @pytest.mark.parametrize(
+        "multimodal,bucket_count,header",
+        [(False, 1, False)]
+        + [(mm, count, True) for mm in (False, True) for count in (1, 2, 4)],
+    )
+    @pytest.mark.parametrize("pause_mode", [None, "drain", "in_place", "retract"])
+    def test_sglang_weight_sync_common_bucket_lifecycle(
+        self,
+        multimodal,
+        bucket_count,
+        header,
+        pause_mode,
+        weight_sync_receiver,
+        monkeypatch,
+    ):
+        from sglang.srt.managers import mm_utils
+
+        from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
+
+        expected = {
+            f"weight_{index}": torch.tensor([[-0.0, index + 1.0], [2.0, 3.0]])
+            for index in range(bucket_count)
+        }
+        scheduler, model, events, replies = weight_sync_receiver(
+            expected,
+            [{name: value} for name, value in expected.items()],
+            multimodal=multimodal,
+            header=header,
+        )
+        embedding_cache = {"image": object()}
+        monkeypatch.setattr(mm_utils, "embedding_cache", embedding_cache)
+        if pause_mode in ("in_place", "retract"):
+            scheduler.waiting_queue.append(object())
+        waiting_queue = scheduler.waiting_queue
+        waiting_requests = list(waiting_queue)
+        scheduler.sync_hf_weight(SyncHFWeightInput(pause_mode=pause_mode))
+        for name, value in expected.items():
+            _assert_tensor_bits_equal(model.get_parameter(name), value)
+        assert events[0] == ("sync", None)
+        flush_events = [event for event in events if event[0] == "flush"]
+        if pause_mode == "in_place":
+            assert flush_events == []
+        else:
+            assert flush_events == [("flush", ())]
+            assert events.index(("flush", ())) > max(
+                i for i, event in enumerate(events) if event[0] == "load"
+            )
+        assert scheduler.waiting_queue is waiting_queue
+        assert scheduler.waiting_queue == waiting_requests
+        assert bool(embedding_cache) is (not multimodal)
+        assert replies == []
+        assert [event[1] for event in events if event[0] == "recv"] == [False] + [
+            True
+        ] * (bucket_count - 1)
+
+    def test_sglang_weight_sync_propagates_loading_failures(self, weight_sync_receiver):
+        from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
+
+        expected = {"weight": torch.tensor([[-0.0, 1.0], [2.0, 3.0]])}
+        bucket = {"weight": torch.ones(3, 2)}
+        scheduler, _, events, replies = weight_sync_receiver(
+            expected, [bucket], multimodal=True
+        )
+        with pytest.raises(AssertionError):
+            scheduler.sync_hf_weight(SyncHFWeightInput())
+        assert replies == []
+        assert not any(event[0] == "flush" for event in events)
+
+    @pytest.mark.parametrize(
+        "load_mtp,corrupt",
+        [
+            (False, None),
+            (False, "target"),
+            (True, None),
+            (True, "target"),
+            (True, "draft"),
+        ],
+    )
+    def test_sglang_first_sync_validation_checks_target_and_draft(
+        self, load_mtp, corrupt, weight_sync_receiver
+    ):
+        from sglang.srt.model_loader.weight_utils import default_weight_loader
+
+        from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
+        from rlinf.hybrid_engines.sglang.common.sgl_scheduler import (
+            validate_weight_init,
+        )
+
+        expected = {
+            "embedding": torch.tensor([1.0, 2.0]),
+            "head": torch.tensor([3.0, 4.0]),
+        }
+        bucket = {name: value.clone() for name, value in expected.items()}
+        if corrupt == "target":
+            bucket["head"].add_(10)
+        mtp = torch.tensor([5.0, 6.0])
+        if load_mtp:
+            bucket["mtp.fc"] = mtp + (10 if corrupt == "draft" else 0)
+        scheduler, target, events, _ = weight_sync_receiver(expected, [bucket])
+        scheduler.model_instance_id = 0
+        with torch.no_grad():
+            for name, value in expected.items():
+                target.get_parameter(name).copy_(value)
+        scheduler.weight_norm_dict = {"target": validate_weight_init(target)}
+        target.get_embed_and_head = lambda: (target.embedding, target.head)
+        if load_mtp:
+            draft = torch.nn.Module()
+            draft.fc = torch.nn.Parameter(mtp.clone())
+            draft.embedding = torch.nn.Parameter(target.embedding.detach().clone())
+            draft.head = torch.nn.Parameter(target.head.detach().clone())
+            draft.get_embed_and_head = lambda: (draft.embedding, draft.head)
+
+            def load_weights(weights):
+                for name, value in weights:
+                    default_weight_loader(
+                        draft.get_parameter(name.removeprefix("mtp.")), value
+                    )
+
+            draft.load_weights = load_weights
+            scheduler._sync_draft_model = draft
+            scheduler.weight_norm_dict["draft"] = validate_weight_init(draft)
+            with torch.no_grad():
+                for value in draft.parameters():
+                    value.fill_(float("nan"))
+        if corrupt:
+            with pytest.raises(RuntimeError, match=rf"{corrupt}\."):
+                scheduler.sync_hf_weight(SyncHFWeightInput())
+            assert not any(event[0] == "info" for event in events)
+        else:
+            scheduler.sync_hf_weight(SyncHFWeightInput())
+            assert scheduler.weight_norm_dict is None
+            for name, value in expected.items():
+                _assert_tensor_bits_equal(target.get_parameter(name), value)
+            if load_mtp:
+                _assert_tensor_bits_equal(draft.fc, mtp)
+                _assert_tensor_bits_equal(draft.embedding, expected["embedding"])
+                _assert_tensor_bits_equal(draft.head, expected["head"])
+
+    @pytest.mark.parametrize("shared_storage", [False, True])
+    def test_sglang_weight_sync_loads_mtp_and_refreshes_shared_weights(
+        self, shared_storage, weight_sync_receiver
+    ):
+        from sglang.srt.model_loader.weight_utils import default_weight_loader
+
+        from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
+
+        expected = {
+            "embedding": torch.tensor([[-0.0, 1.0], [2.0, 3.0]]),
+            "head": torch.tensor([[4.0, 5.0], [6.0, 7.0]]),
+        }
+        mtp_weight = torch.tensor([[8.0, 9.0], [10.0, 11.0]])
+        scheduler, target, events, replies = weight_sync_receiver(
+            expected, [{"mtp.fc": mtp_weight}, expected], multimodal=True
+        )
+        draft = torch.nn.Module()
+        draft.fc = torch.nn.Parameter(torch.zeros_like(mtp_weight))
+        for name in expected:
+            source = target.get_parameter(name)
+            draft.register_parameter(
+                name,
+                source
+                if shared_storage
+                else torch.nn.Parameter(torch.zeros_like(source)),
+            )
+
+        def load_draft_weights(weights):
+            for name, value in weights:
+                events.append(("draft_load", name))
+                default_weight_loader(
+                    draft.get_parameter(name.removeprefix("mtp.")), value
+                )
+
+        target.get_embed_and_head = lambda: (target.embedding, target.head)
+        draft.get_embed_and_head = lambda: (draft.embedding, draft.head)
+        draft.load_weights = load_draft_weights
+        scheduler._sync_draft_model = draft
+        scheduler.sync_hf_weight(SyncHFWeightInput())
+
+        for model in (target, draft):
+            for name, value in expected.items():
+                _assert_tensor_bits_equal(model.get_parameter(name), value)
+        _assert_tensor_bits_equal(draft.fc, mtp_weight)
+        assert [event for event in events if event[0] == "draft_load"] == [
+            ("draft_load", "mtp.fc")
+        ]
+        assert replies == []
+
+    @pytest.mark.parametrize(
+        "model_type,backend,load_mtp,algorithm,expected",
+        [
+            ("qwen3_5", "fsdp", False, "NEXTN", "auto"),
+            ("deepseek_v3", "megatron", False, "NEXTN", "auto"),
+            ("glm4_moe_lite", "megatron", False, "NEXTN", "auto"),
+        ],
+    )
+    @pytest.mark.parametrize("resume", [None, "/resumed/actor"])
+    def test_independent_draft_loads_checkpoint(
+        self,
+        model_type,
+        backend,
+        load_mtp,
+        algorithm,
+        expected,
+        resume,
+        sglang_args_worker,
+    ):
+        worker = sglang_args_worker(
+            model_type=model_type,
+            training_backend=backend,
+            load_mtp=load_mtp,
+            sglang_options={
+                "speculative_algorithm": algorithm,
+                "speculative_draft_model_path": "/external/draft",
+            },
+        )
+        worker._cfg.runner.resume_dir = resume
+        assert worker._build_server_args()["load_format"] == expected
+
+    def test_megatron_inference_sync_across_parallel_layouts(self, tmp_path):
+        pytest.importorskip("megatron.training")
+        # world, TP, PP, VP, CP, EP, expert TP, first-stage layers
+        cases = [
+            ("qwen3_5", (4, 2, 1, None, 1, 1, 2, None), (4, 4, 1, None, 1, 1, 4, None)),
+            ("qwen3_5", (4, 4, 1, None, 1, 1, 4, None), (4, 2, 1, None, 1, 1, 2, None)),
+            ("qwen3_5", (1, 1, 1, None, 1, 1, 1, None), (2, 1, 2, None, 1, 1, 1, 2)),
+            ("qwen3_5", (2, 1, 2, 2, 1, 1, 1, None), (2, 2, 1, None, 1, 1, 2, None)),
+            ("qwen3_5", (4, 2, 2, 2, 1, 1, 2, None), (4, 1, 2, 2, 1, 1, 1, 2)),
+            ("qwen2.5", (4, 2, 2, None, 1, 1, 2, 2), (2, 1, 2, 2, 1, 1, 1, None)),
+            ("qwen3", (1, 1, 1, None, 1, 1, 1, None), (2, 2, 1, None, 1, 1, 2, None)),
+            (
+                "deepseek_v3",
+                (4, 1, 2, None, 1, 2, 1, None),
+                (2, 2, 1, None, 1, 1, 2, None),
+            ),
+            ("qwen3_5", (4, 1, 2, None, 2, 1, 1, None), (1, 1, 1, None, 1, 1, 1, None)),
+            ("qwen3_5", (2, 1, 2, 2, 1, 1, 1, None), (2, 1, 2, 2, 1, 1, 1, None)),
+        ]
+        cases = [
+            (model_type, source, target, False) for model_type, source, target in cases
+        ]
+        cases += [
+            (
+                "qwen3_5",
+                (1, 1, 1, None, 1, 1, 1, None),
+                (2, 1, 2, 2, 1, 1, 1, None),
+                True,
+            ),
+            (
+                "qwen3_5",
+                (2, 2, 1, None, 1, 1, 2, None),
+                (2, 1, 2, 2, 1, 1, 1, None),
+                True,
+            ),
+            (
+                "qwen3_5",
+                (2, 1, 2, 2, 1, 1, 1, None),
+                (1, 1, 1, None, 1, 1, 1, None),
+                True,
+            ),
+            (
+                "qwen2.5",
+                (1, 1, 1, None, 1, 1, 1, None),
+                (2, 1, 2, 2, 1, 1, 1, None),
+                True,
+            ),
+        ]
+        processes = max(source[0] + target[0] for _, source, target, _ in cases)
+        ctx = torch.multiprocessing.get_context("spawn")
+        with ctx.Manager() as manager:
+            queues = [(manager.Queue(), manager.Queue()) for _ in range(4)]
+            barrier = manager.Barrier(processes)
+            torch.multiprocessing.spawn(
+                _inference_sync_rank,
+                args=(cases, queues, barrier, str(tmp_path)),
+                nprocs=processes,
+                join=True,
+            )
+
+    def test_inference_config_preserves_explicit_layout_overrides(
+        self,
+    ):
+        pytest.importorskip("megatron.training")
+        from omegaconf import OmegaConf
+
+        from rlinf.workers.inference.megatron_inference_worker import (
+            MegatronActorInference,
+        )
+
+        worker = object.__new__(MegatronActorInference)
+        worker.role = "inference"
+        worker.trainer_role_cfg = OmegaConf.create(
+            {
+                "group_name": "actor",
+                "model": {
+                    "tensor_model_parallel_size": 2,
+                    "pipeline_model_parallel_size": 2,
+                    "virtual_pipeline_model_parallel_size": 2,
+                    "context_parallel_size": 1,
+                    "hidden_size": 8,
+                },
+            }
+        )
+        worker.cfg = OmegaConf.create(
+            {
+                "inference": {
+                    "group_name": "inference",
+                    "load_from_actor": True,
+                    "model": {
+                        "tensor_model_parallel_size": 1,
+                        "pipeline_model_parallel_size": 3,
+                        "virtual_pipeline_model_parallel_size": None,
+                        "context_parallel_size": 2,
+                        "decoder_first_pipeline_num_layers": 1,
+                    },
+                }
+            }
+        )
+        OmegaConf.set_struct(worker.trainer_role_cfg, True)
+        OmegaConf.set_struct(worker.cfg, True)
+        worker._build_inference_cfg()
+        assert worker.cfg.inference.model.hidden_size == 8
+        assert worker.cfg.inference.model.pipeline_model_parallel_size == 3
+        assert worker.cfg.inference.model.virtual_pipeline_model_parallel_size is None
+        assert worker.cfg.inference.model.context_parallel_size == 2
+        assert worker.cfg.inference.model.decoder_first_pipeline_num_layers == 1
+        assert worker.trainer_role_cfg.model.virtual_pipeline_model_parallel_size == 2
+
+    @pytest.mark.parametrize("load_mtp", [False, True])
+    def test_sglang_null_options_preserve_native_defaults(
+        self, sglang_args_worker, load_mtp
+    ):
+        from sglang.srt.server_args import ServerArgs
+
+        options = dict.fromkeys(
+            (
+                "mamba_scheduler_strategy",
+                "mamba_full_memory_ratio",
+                "mm_enable_dp_encoder",
+                "disable_radix_cache",
+                "speculative_algorithm",
+                "speculative_num_steps",
+            )
+        )
+        worker = sglang_args_worker(load_mtp=load_mtp, sglang_options=options)
+        args = worker._build_server_args()
+        actual = ServerArgs(**args)
+        defaults = ServerArgs(model_path="/unused/checkpoint")
+        for name in (
+            "mamba_scheduler_strategy",
+            "mamba_full_memory_ratio",
+            "mm_enable_dp_encoder",
+        ):
+            assert getattr(actual, name) == getattr(defaults, name)
+        assert actual.disable_radix_cache is load_mtp
+        if load_mtp:
+            assert actual.speculative_algorithm == "NEXTN"
+            assert actual.speculative_num_steps == 1
+        else:
+            assert actual.speculative_algorithm is None
+
+    def test_sglang_preserves_explicit_false_and_zero(self, sglang_args_worker):
+        options = {
+            "mamba_full_memory_ratio": 0.0,
+            "mm_enable_dp_encoder": False,
+            "disable_radix_cache": False,
+        }
+        args = sglang_args_worker(sglang_options=options)._build_server_args()
+        for name, value in options.items():
+            assert args[name] == value
 
 
 if __name__ == "__main__":

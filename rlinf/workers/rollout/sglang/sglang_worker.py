@@ -205,7 +205,16 @@ class SGLangWorker(Worker):
                 # validate_weight_first_sync compare hf weights with megatron weights,
                 # and if resume_dir is enabled, hf weights can't equal to megatron's.
                 validate_weight_first_sync = False
-            if self._cfg_rollout.validate_weight or validate_weight_first_sync:
+            independent_draft = (
+                self._cfg_rollout.sglang.get("speculative_algorithm") is not None
+                and not self._cfg_rollout.sync_mtp
+            )
+            # SGLang shares load_format between target and draft runners.
+            if (
+                self._cfg_rollout.validate_weight
+                or validate_weight_first_sync
+                or independent_draft
+            ):
                 load_format = "auto"
         else:
             load_format = "auto"
@@ -220,6 +229,14 @@ class SGLangWorker(Worker):
                 "enable_deterministic_inference", False
             ),
         }
+        for name, value in self._cfg_rollout.sglang.items():
+            if value is None:
+                continue
+            if name in (
+                "mm_enable_dp_encoder",
+                "disable_radix_cache",
+            ) or name.startswith(("speculative_", "mamba_")):
+                version_dependent_args[name] = value
         for name in list(version_dependent_args):
             if name in _SERVER_ARGS_FIELDS:
                 continue

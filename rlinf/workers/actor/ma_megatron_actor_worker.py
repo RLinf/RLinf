@@ -42,6 +42,7 @@ from rlinf.data.schema.reasoning_results import (
 from rlinf.hybrid_engines.megatron.utils import (
     align_next_token_scores,
     postprocess_ragged_seqs,
+    prepare_ragged_model_inputs,
     preprocess_ragged_seqs,
 )
 from rlinf.scheduler import Channel
@@ -183,14 +184,13 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                 for row in batch["input_ids"]
             ]
             lengths = [len(row) for row in rows]
-            input_ids, packed_params = preprocess_ragged_seqs(rows)
-            position_ids, _ = preprocess_ragged_seqs(
-                [torch.arange(n, device=input_ids.device) for n in lengths]
-            )
             labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
             label, _ = preprocess_ragged_seqs(labels)
             label_mask, _ = preprocess_ragged_seqs(
-                [torch.arange(n, device=input_ids.device) < n - 1 for n in lengths]
+                [torch.arange(n, device=rows[0].device) < n - 1 for n in lengths]
+            )
+            input_ids, attention_mask, position_ids, packed_params = (
+                prepare_ragged_model_inputs(rows, model)
             )
 
             def logits_processor(logits, label, label_mask):
@@ -214,14 +214,26 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
 
             logits_processor_args = {"label": label, "label_mask": label_mask}
 
+            train_mtp = self.return_loss and self.trains_mtp
+            mtp_mask = None
+            if train_mtp:
+                response_rows = [
+                    mask.to(device=rows[0].device, dtype=torch.float32)
+                    for mask in batch["response_mask"]
+                ]
+                mtp_mask, _ = preprocess_ragged_seqs(
+                    [torch.cat((mask[1:], mask.new_zeros(1))) for mask in response_rows]
+                )
             output = self.custom_forward(
                 model,
                 input_ids,
-                None,
+                attention_mask,
                 position_ids,
                 sequence_parallel=self.transformer_config.sequence_parallel,
                 logits_processor=logits_processor,
                 logits_processor_args=logits_processor_args,
+                mtp_labels=label if train_mtp else None,
+                mtp_loss_mask=mtp_mask,
                 temperature=self.cfg.algorithm.sampling_params.temperature,
                 packed_seq_params=packed_params,
             )
