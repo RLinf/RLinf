@@ -29,6 +29,7 @@
 import functools
 import math
 import warnings
+from contextlib import nullcontext
 from enum import Enum
 from importlib import import_module
 from typing import ContextManager, Iterable, Optional, Union
@@ -1566,3 +1567,52 @@ def generate(
                 break
 
     return generated_ids
+
+
+def activation_cpu_offload_context(
+    enabled: bool = True,
+    *,
+    pin_memory: bool = True,
+    min_bytes: int = 1024 * 1024,
+    gpu_memory_threshold_bytes: int = 0,
+) -> ContextManager:
+    """Offload large autograd saved activations to host memory during forward.
+
+    Parameters, DTensors, CPU tensors, and tensors smaller than ``min_bytes``
+    stay on device. When ``gpu_memory_threshold_bytes > 0``, activations remain
+    on the accelerator until current device allocation exceeds the threshold,
+    splitting long-context checkpointed layers across GPU VRAM and host RAM.
+    """
+    if not enabled:
+        return nullcontext()
+
+    def _pack(tensor: torch.Tensor):
+        if (
+            isinstance(tensor, (torch.nn.Parameter, DTensor))
+            or tensor.device.type == "cpu"
+            or tensor.numel() * tensor.element_size() < min_bytes
+        ):
+            return False, tensor
+        if (
+            gpu_memory_threshold_bytes > 0
+            and Worker.torch_platform.memory_allocated(tensor.device)
+            < gpu_memory_threshold_bytes
+        ):
+            return False, tensor
+        cpu_buf = torch.empty(
+            tensor.shape,
+            dtype=tensor.dtype,
+            device="cpu",
+            pin_memory=pin_memory,
+        )
+        cpu_buf.copy_(tensor, non_blocking=False)
+        return True, (tensor.device, cpu_buf)
+
+    def _unpack(packed):
+        is_offloaded, payload = packed
+        if not is_offloaded:
+            return payload
+        device, cpu_buf = payload
+        return cpu_buf.to(device, non_blocking=True)
+
+    return torch.autograd.graph.saved_tensors_hooks(_pack, _unpack)

@@ -127,8 +127,13 @@ class EmbodiedVLMAgentLoopWorker(MultiAgentLoopWorker):
         env_session_id: str,
         request_type: str,
         tool_args: Optional[dict[str, Any]] = None,
+        *,
+        route_key: Optional[str] = None,
     ) -> ToolChannelResponse:
         input_channel = self._env_tool_channel()
+        put_kwargs: dict[str, Any] = {"async_op": True}
+        if route_key is not None:
+            put_kwargs["key"] = route_key
         await input_channel.put(
             ToolChannelRequest(
                 session_id=env_session_id,
@@ -138,7 +143,7 @@ class EmbodiedVLMAgentLoopWorker(MultiAgentLoopWorker):
                 else None,
                 tool_args=tool_args,
             ),
-            async_op=True,
+            **put_kwargs,
         ).async_wait()
         return await self.tool_worker_output_channel.get(
             env_session_id, async_op=True
@@ -198,6 +203,7 @@ class EmbodiedVLMAgentLoopWorker(MultiAgentLoopWorker):
         eos_id = getattr(self.tokenizer, "eos_token_id", None)
 
         env_started = False
+        env_route_key: Optional[str] = None
         kept_lens: dict[int, int] = {}
         is_end: dict[int, bool] = {}
         reward = 0.0
@@ -211,6 +217,7 @@ class EmbodiedVLMAgentLoopWorker(MultiAgentLoopWorker):
             env_started = True
 
             obs = start_resp.result
+            env_route_key = obs.get("worker_route_key")
             instruction = str(obs.get("instruction") or spec.get("instruction", ""))
             state = obs["state"]
             image_data = list(obs["image_data"])
@@ -283,6 +290,7 @@ class EmbodiedVLMAgentLoopWorker(MultiAgentLoopWorker):
                     env_session_id,
                     "execute",
                     {"action": action},
+                    route_key=env_route_key,
                 )
                 if not step_resp.success:
                     raise GroupDiscarded(f"env_step_failed: {step_resp.result}")
@@ -300,7 +308,11 @@ class EmbodiedVLMAgentLoopWorker(MultiAgentLoopWorker):
                 try:
                     await asyncio.wait_for(
                         asyncio.shield(
-                            self._call_env_tool(env_session_id, "session_end")
+                            self._call_env_tool(
+                                env_session_id,
+                                "session_end",
+                                route_key=env_route_key,
+                            )
                         ),
                         timeout=30.0,
                     )

@@ -2,18 +2,19 @@
 # on LIBERO-Spatial via RLinf's SessionServer + AsyncAgentRunner + MAFSDPActor stack.
 #
 # Layout (4 nodes, 8 x A100 80GB each = 32 GPUs):
-#   - actor (FSDP2 + StreamedAdamW, Qwen3.8-27B): global ranks 0-7 (node 0)
-#   - rollout (6 x SGLang server TP4, 2 replicas/node): global ranks 8-31 (nodes 1-3)
-#   - 3 SessionServer instances and 3 EmbodiedEnvToolWorker instances (one per
+#   - actor (FSDP2 + StreamedAdamW + activation CPU offload, Qwen3.8-27B):
+#     global ranks 0-15 (nodes 0-1, 16-way sharded across 1.8 TiB host RAM)
+#   - rollout (4 x SGLang server TP4, 2 replicas/node):
+#     global ranks 16-31 (nodes 2-3)
+#   - 2 SessionServer instances and 2 EmbodiedEnvToolWorker instances (one per
 #     rollout node) using direct per-group engine pinning.
 #
-# Uses reasoning_effort=low and a 32k context window (28k response budget) so
-# single-GPU activations fit 80GB A100 without Ulysses SP while keeping full
-# PEAR algorithmic alignment (top-K score centering, REINFORCE, DAPO filtering,
-# FP32 residual stream, and FP32 vision tower).
+# Preserves full PEAR Stage 1 reasoning_effort=xhigh and 160k response budget
+# (163840 context) by splitting 27B FSDP2 + StreamedAdamW across 2 actor nodes
+# with hybrid GPU/CPU activation offloading.
 #
 # Launch from the head node after starting Ray with unique RLINF_NODE_RANK:
-#   bash examples/embodiment/run_vlm_policy.sh libero_spatial_grpo_pear_sglang_a100_4node \
+#   RLINF_TIMEOUT=720 bash examples/embodiment/run_vlm_policy.sh libero_spatial_grpo_pear_sglang_a100_4node \
 #     actor.model.model_path=/path/to/Qwen3.8-27B \
 #     rollout.model.model_path=/path/to/Qwen3.8-27B \
 #     actor.tokenizer.tokenizer_model=/path/to/Qwen3.8-27B
@@ -25,68 +26,77 @@ defaults:
 cluster:
   num_nodes: 4
   component_placement:
-    actor: 0-7
-    rollout: 8-31
-    reward: 8-31
+    actor: 0-15
+    rollout: 16-31
+    reward: 16-31
 
 runner:
   experiment_name: "libero_spatial_grpo_pear_sglang_a100_4node"
   logger:
     experiment_name: "libero_spatial_grpo_pear_sglang_a100_4node"
+  max_epochs: 100
   max_steps: 200
   save_interval: 20
-  seq_length: 32768
+  seq_length: 163840
 
 data:
-  # 32 variable groups x 8 trajectories = 256 trajectories per step
-  # (4 groups per actor DP rank across 8 actor GPUs).
+  # 16 variable groups x 8 trajectories = 128 trajectories per step
+  # (1 group per actor DP rank across 16 actor GPUs).
   # Defaults to LIBERO-Spatial (10 tasks) for faster convergence validation;
   # override to libero_gso for full Stage 1 (30 tasks).
   task_suite_name: libero_spatial
-  rollout_batch_size: 32
+  rollout_batch_size: 16
 
 algorithm:
   sampling_params:
-    max_new_tokens: 28672
+    max_new_tokens: 160000
 
 agentloop:
   max_turns: 300
   max_actor_accept_staleness: 4
 
 rollout_buffer:
-  # 18 groups x 8 trajectories = 144 concurrent sessions across 6 TP4 replicas (24/replica).
-  max_inflight_groups: 18
-  max_buffered_groups: 64
+  # 8 groups x 8 trajectories = 64 concurrent sessions across 4 TP4 replicas (16/replica).
+  max_inflight_groups: 8
+  max_buffered_groups: 32
   max_dropped_groups_per_step: 100000
+  progress_log_interval: 10
 
 session_server:
-  num_servers: 3
+  num_servers: 2
   payload_shards: 2
 
 tools:
   embodied_env:
-    # Per rollout-node worker cap (3 rollout nodes x 64 = 192 max envs).
+    # Per rollout-node worker cap (2 rollout nodes x 64 = 128 max envs).
     max_concurrent_envs: 64
 
 rollout:
   tensor_parallel_size: 4
-  max_running_requests: 24
-  cuda_graph_max_bs: 24
+  gpu_memory_utilization: 0.65
+  max_running_requests: 16
+  cuda_graph_max_bs: 16
   sglang:
     max_mamba_cache_size: 256
-    torch_compile_max_bs: 24
-    reasoning_effort: low
-    response_budget: 28672
+    torch_compile_max_bs: 16
+    reasoning_effort: xhigh
+    response_budget: 160000
   model:
-    reasoning_effort: low
-    max_new_tokens: 28672
+    reasoning_effort: xhigh
+    max_new_tokens: 160000
 
 actor:
   model:
-    encoder_seq_length: 32768
-    reasoning_effort: low
-    max_new_tokens: 28672
+    encoder_seq_length: 163840
+    reasoning_effort: xhigh
+    max_new_tokens: 160000
   optim:
     streamed_adamw: True
     # 512 MiB chunks x 3 slots keeps GPU staging memory around 1.5 GiB on 80GB A100.
     streamed_adamw_chunk_bytes: 536870912
+  fsdp_config:
+    activation_cpu_offload: True
+    activation_cpu_offload_pin_memory: True
+    # Keep activations on GPU up to 40 GiB total allocated, then spill to pinned
+    # host RAM so 160k-token episodes fit 80GB A100 without OOM.
+    activation_cpu_offload_gpu_limit_gb: 40.0

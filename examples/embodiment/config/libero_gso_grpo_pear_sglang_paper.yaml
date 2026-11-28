@@ -21,6 +21,7 @@ runner:
   experiment_name: "libero_gso_grpo_pear_sglang_paper"
   logger:
     experiment_name: "libero_gso_grpo_pear_sglang_paper"
+  max_epochs: 100
   # Paper run_stage1.sh caps at 1000 updates (reported Stage 1 curve ~148 steps).
   max_steps: 1000
 

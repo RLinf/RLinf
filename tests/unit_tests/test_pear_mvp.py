@@ -338,7 +338,7 @@ def test_vlm_policy_stage_configs_compose():
             "libero_spatial",
             8,
             "libero",
-            32,
+            16,
         ),
         "libero_gso_grpo_pear_sglang_paper": ("libero_gso", 8, "libero", 128),
         "libero_10_grpo_pear_stage2": ("libero_all", 8, "libero", 8),

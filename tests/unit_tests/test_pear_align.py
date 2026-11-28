@@ -505,6 +505,7 @@ def test_embodied_env_tool_worker_session_lifecycle():
     worker._sessions = {}
     worker._semaphore = None
     worker._executor = None
+    worker._worker_route_key = "worker-0"
 
     async def _run():
         r0 = await worker.handle_request(
@@ -516,6 +517,7 @@ def test_embodied_env_tool_worker_session_lifecycle():
         )
         assert r0.success is True
         assert r0.result["instruction"] == "pick cup"
+        assert r0.result["worker_route_key"] == "worker-0"
         r1 = await worker.handle_request(
             ToolChannelRequest(
                 session_id="s1",
@@ -595,13 +597,14 @@ def test_embodied_vlm_agent_loop_multi_turn_and_cleanup_on_discard():
         seen_sampling_params: list[dict] = []
         gen_iter = iter(gen_responses)
 
-        async def fake_call_env(env_sid, req_type, tool_args=None):
+        async def fake_call_env(env_sid, req_type, tool_args=None, *, route_key=None):
             del env_sid, tool_args
-            env_calls.append(req_type)
+            env_calls.append((req_type, route_key))
             if req_type == "session_start":
                 return ToolChannelResponse(
                     success=True,
                     result={
+                        "worker_route_key": "worker-2",
                         "state": {
                             "arm": {
                                 "x": 0.0,
@@ -620,7 +623,7 @@ def test_embodied_vlm_agent_loop_multi_turn_and_cleanup_on_discard():
                     },
                 )
             if req_type == "execute":
-                step_n = env_calls.count("execute")
+                step_n = sum(1 for call, _ in env_calls if call == "execute")
                 done = step_n >= 2
                 return ToolChannelResponse(
                     success=True,
@@ -681,14 +684,19 @@ def test_embodied_vlm_agent_loop_multi_turn_and_cleanup_on_discard():
     assert out is None
     assert reward == 1.0
     assert close_fields == {"kept_lens": {0: 3, 1: 3}, "is_end": {0: False, 1: True}}
-    assert env_calls == ["session_start", "execute", "execute", "session_end"]
+    assert env_calls == [
+        ("session_start", None),
+        ("execute", "worker-2"),
+        ("execute", "worker-2"),
+        ("session_end", "worker-2"),
+    ]
     assert all(p.get("skip_special_tokens") is False for p in seen_params)
 
-    # Discard mid-episode still runs session_end in finally.
+    # Discard mid-episode still runs session_end in finally on the owning worker.
     worker2, env_calls2, _ = _make_worker([SessionDiscardedError("group aborted")])
     with pytest.raises(GroupDiscarded, match="group aborted"):
         asyncio.run(worker2.run_session_trajectory(binding, [0], spec))
-    assert env_calls2 == ["session_start", "session_end"]
+    assert env_calls2 == [("session_start", None), ("session_end", "worker-2")]
 
 
 def test_assemble_group_payload_merge_continuous_turns_multimodal_and_topk():
@@ -988,7 +996,7 @@ def test_disaggregated_pear_configs_compose_and_match_session_server_contract():
     assert shared.server.attention_backend == "triton"
     for name, expected_nodes, expected_batch, expected_turns in (
         ("libero_gso_grpo_pear_sglang", 2, 8, 300),
-        ("libero_spatial_grpo_pear_sglang_a100_4node", 4, 32, 300),
+        ("libero_spatial_grpo_pear_sglang_a100_4node", 4, 16, 300),
         ("libero_gso_grpo_pear_sglang_paper", 4, 128, 300),
         ("libero_10_grpo_pear_stage2", 2, 8, 520),
         ("pear_stage3_libero_robodojo", 2, 8, 520),
@@ -1016,14 +1024,80 @@ def test_disaggregated_pear_configs_compose_and_match_session_server_contract():
         assert cfg.actor.fsdp_config.strategy == "fsdp2"
         assert cfg.reward.reward_type == "embodied_vlm"
         if name == "libero_spatial_grpo_pear_sglang_a100_4node":
+            assert cfg.cluster.component_placement.actor == "0-15"
+            assert cfg.cluster.component_placement.rollout == "16-31"
             assert cfg.rollout.tensor_parallel_size == 4
-            assert cfg.rollout.sglang.reasoning_effort == "low"
-            assert cfg.runner.seq_length == 32768
-            assert cfg.rollout.sglang.response_budget == 28672
-            assert cfg.session_server.num_servers == 3
-            assert cfg.rollout_buffer.max_inflight_groups == 18
+            assert cfg.rollout.sglang.reasoning_effort == "xhigh"
+            assert cfg.runner.seq_length == 163840
+            assert cfg.rollout.sglang.response_budget == 160000
+            assert cfg.session_server.num_servers == 2
+            assert cfg.rollout_buffer.max_inflight_groups == 8
+            assert cfg.rollout_buffer.progress_log_interval == 10
             assert cfg.actor.optim.streamed_adamw is True
             assert cfg.actor.optim.streamed_adamw_chunk_bytes == 536870912
+            assert cfg.actor.fsdp_config.activation_cpu_offload is True
+            assert cfg.actor.fsdp_config.activation_cpu_offload_gpu_limit_gb == 40.0
         if name == "libero_gso_grpo_pear_sglang_paper":
             assert cfg.rollout_buffer.max_inflight_groups == 16
             assert cfg.actor.optim.streamed_adamw is True
+
+
+def test_activation_cpu_offload_context_preserves_gradients():
+    from rlinf.hybrid_engines.fsdp.utils import activation_cpu_offload_context
+
+    torch.manual_seed(0)
+    layer_ref = torch.nn.Linear(16, 16)
+    layer_off = torch.nn.Linear(16, 16)
+    layer_off.load_state_dict(layer_ref.state_dict())
+
+    x_ref = torch.randn(4, 16, requires_grad=True)
+    x_off = x_ref.detach().clone().requires_grad_(True)
+
+    loss_ref = (layer_ref(x_ref) ** 2).sum()
+    loss_ref.backward()
+
+    with activation_cpu_offload_context(enabled=True, pin_memory=False, min_bytes=1):
+        loss_off = (layer_off(x_off) ** 2).sum()
+    loss_off.backward()
+
+    assert torch.allclose(x_off.grad, x_ref.grad)
+    assert torch.allclose(layer_off.weight.grad, layer_ref.weight.grad)
+
+
+def test_rollout_buffer_worker_progress_logging():
+    from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
+
+    class _FakeBuffer:
+        rollout_batch_size = 16
+
+        def __init__(self):
+            self._buffered = 0
+
+        def _buffered_groups(self):
+            return self._buffered
+
+        def inflight_groups(self):
+            return 8
+
+    worker = RolloutBufferWorker.__new__(RolloutBufferWorker)
+    worker.buffer = _FakeBuffer()
+    worker._progress_log_interval = 10
+    worker._progress_groups_total = 0
+    worker._progress_equal_reward_dropped = 0
+    worker._progress_other_dropped = 0
+    worker._progress_reward_sum = 0.0
+    worker._progress_reward_count = 0
+    messages: list[str] = []
+    worker.log_info = messages.append
+
+    for i in range(9):
+        worker._record_progress(rewards=[0.0, 0.0], drop_reason="equal_reward")
+    assert messages == []
+
+    worker.buffer._buffered = 1
+    worker._record_progress(rewards=[0.0, 1.0])
+    assert len(messages) == 1
+    assert "finished=10" in messages[0]
+    assert "buffered=1/16" in messages[0]
+    assert "equal_reward=9" in messages[0]
+    assert "mean_reward=0.0500" in messages[0]

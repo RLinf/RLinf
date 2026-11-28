@@ -38,6 +38,7 @@ from rlinf.data.schema.reasoning_results import (
     GroupDelivery,
 )
 from rlinf.hybrid_engines.fsdp.utils import (
+    activation_cpu_offload_context,
     pack_fsdp_input,
     unpack_fsdp_logprobs,
     unpack_sequences,
@@ -121,12 +122,30 @@ class MAFSDPActor(FSDPActor):
         self._use_fp32_head = bool(self.cfg.actor.get("use_fp32_head", is_pear))
         self._global_token_mean = bool(pear_cfg.get("global_token_mean", is_pear))
         self._current_global_valid_tokens: Optional[float] = None
+        fsdp_cfg = self.cfg.actor.fsdp_config
+        self._activation_cpu_offload = bool(
+            fsdp_cfg.get("activation_cpu_offload", False)
+        )
+        self._activation_cpu_offload_pin_memory = bool(
+            fsdp_cfg.get("activation_cpu_offload_pin_memory", True)
+        )
+        gpu_limit_gb = float(fsdp_cfg.get("activation_cpu_offload_gpu_limit_gb", 0.0))
+        self._activation_cpu_offload_gpu_limit_bytes = int(
+            max(gpu_limit_gb, 0.0) * (1024**3)
+        )
         if self._sp_size > 1:
             raise NotImplementedError(
                 "MAFSDPActor does not support actor.fsdp_config.ulysses_sp_size > 1 "
                 f"(got {self._sp_size}): Qwen3.8 hybrid Gated DeltaNet + "
                 "FullAttention requires sequence-parallel kernels."
             )
+
+    def _activation_offload_context(self):
+        return activation_cpu_offload_context(
+            enabled=self._activation_cpu_offload and torch.is_grad_enabled(),
+            pin_memory=self._activation_cpu_offload_pin_memory,
+            gpu_memory_threshold_bytes=self._activation_cpu_offload_gpu_limit_bytes,
+        )
 
     def _processor_or_load(self) -> Any:
         if self._processor is None:
@@ -286,7 +305,7 @@ class MAFSDPActor(FSDPActor):
             attention_mask = batch_pad_to_fixed_len(
                 [torch.ones_like(row, dtype=torch.bool) for row in rows], width, 0
             )
-        with self.amp_context:
+        with self.amp_context, self._activation_offload_context():
             outputs = self.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -492,7 +511,7 @@ class MAFSDPActor(FSDPActor):
             backbone_hook = backbone.register_forward_hook(_capture_backbone)
             head_hook = lm_head.register_forward_hook(_chunked_head_hook)
             try:
-                with self.amp_context:
+                with self.amp_context, self._activation_offload_context():
                     head_out = self.model(**model_inputs)[0]
             finally:
                 backbone_hook.remove()

@@ -496,6 +496,46 @@ class RolloutBufferWorker(Worker):
         # run_continuously; payloads are released through these.
         self._payload_channels: list[Channel] = []
         self._pending_fetch: Optional[asyncio.Future] = None
+        self._progress_log_interval = int(
+            cfg.rollout_buffer.get("progress_log_interval", 10)
+        )
+        self._progress_groups_total = 0
+        self._progress_equal_reward_dropped = 0
+        self._progress_other_dropped = 0
+        self._progress_reward_sum = 0.0
+        self._progress_reward_count = 0
+
+    def _record_progress(
+        self,
+        *,
+        rewards: Optional[list[float]] = None,
+        drop_reason: Optional[str] = None,
+    ) -> None:
+        self._progress_groups_total += 1
+        if rewards:
+            self._progress_reward_sum += float(sum(rewards))
+            self._progress_reward_count += len(rewards)
+        if drop_reason == "equal_reward":
+            self._progress_equal_reward_dropped += 1
+        elif drop_reason is not None:
+            self._progress_other_dropped += 1
+        if (
+            self._progress_log_interval > 0
+            and self._progress_groups_total % self._progress_log_interval == 0
+        ):
+            mean_reward = (
+                self._progress_reward_sum / self._progress_reward_count
+                if self._progress_reward_count > 0
+                else 0.0
+            )
+            self.log_info(
+                f"RolloutBuffer progress: finished={self._progress_groups_total} "
+                f"buffered={self.buffer._buffered_groups()}/{self.buffer.rollout_batch_size} "
+                f"inflight={self.buffer.inflight_groups()} "
+                f"equal_reward={self._progress_equal_reward_dropped} "
+                f"other_dropped={self._progress_other_dropped} "
+                f"mean_reward={mean_reward:.4f}"
+            )
 
     async def run_continuously(
         self,
@@ -609,6 +649,7 @@ class RolloutBufferWorker(Worker):
                     self.max_dropped_groups_per_step,
                     already_buffered=False,
                 )
+                self._record_progress(drop_reason=result.reason)
                 continue
             if isinstance(result, GroupMetadata):
                 # With the session server: the payload waits in its channel
@@ -624,6 +665,9 @@ class RolloutBufferWorker(Worker):
                     "equal_reward",
                     self.max_dropped_groups_per_step,
                     already_buffered=False,
+                )
+                self._record_progress(
+                    rewards=metadata.rewards, drop_reason="equal_reward"
                 )
                 continue
             if (
@@ -644,8 +688,10 @@ class RolloutBufferWorker(Worker):
                     self.max_dropped_groups_per_step,
                     already_buffered=False,
                 )
+                self._record_progress(rewards=metadata.rewards, drop_reason="stale")
                 continue
             self.buffer.record_result(result, metadata)
+            self._record_progress(rewards=metadata.rewards)
             if (
                 self.buffer.pending_release_version is not None
                 and self.buffer.can_release()

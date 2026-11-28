@@ -19,7 +19,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import multiprocessing as mp
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -241,6 +243,133 @@ class LiberoEpisodeBackend:
                 pass
 
 
+def _libero_slot_worker_main(conn: Any, init_kwargs: dict[str, Any]) -> None:
+    """Run one LIBERO backend on a single thread inside an isolated process.
+
+    MuJoCo's OSMesa/EGL OpenGL contexts are thread-local and not thread-safe;
+    isolating each active environment in a dedicated spawned process avoids
+    cross-thread ``GLContext.free()`` segfaults and removes GIL contention.
+    """
+    backend: Optional[LiberoEpisodeBackend] = None
+    try:
+        while True:
+            try:
+                cmd, payload = conn.recv()
+            except EOFError:
+                break
+            if cmd == "shutdown":
+                break
+            try:
+                if cmd == "open":
+                    if backend is not None:
+                        backend.close()
+                    backend = LiberoEpisodeBackend(payload, **init_kwargs)
+                    conn.send(("ok", backend.open()))
+                elif cmd == "step":
+                    if backend is None:
+                        raise RuntimeError("LIBERO slot received step before open.")
+                    conn.send(("ok", backend.step(payload)))
+                elif cmd == "close":
+                    if backend is not None:
+                        backend.close()
+                        backend = None
+                    conn.send(("ok", None))
+                else:
+                    conn.send(("err", f"unknown command: {cmd!r}"))
+            except Exception as exc:
+                conn.send(("err", f"{type(exc).__name__}: {exc}"))
+    finally:
+        if backend is not None:
+            backend.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+class _SubprocessEnvSlot:
+    """One reusable spawned worker process hosting a single LIBERO episode."""
+
+    def __init__(self, init_kwargs: dict[str, Any]) -> None:
+        ctx = mp.get_context("spawn")
+        parent_conn, child_conn = ctx.Pipe()
+        self._conn = parent_conn
+        self._proc = ctx.Process(
+            target=_libero_slot_worker_main,
+            args=(child_conn, dict(init_kwargs)),
+            daemon=True,
+        )
+        self._proc.start()
+        child_conn.close()
+
+    @property
+    def alive(self) -> bool:
+        return self._proc.is_alive()
+
+    def call(self, cmd: str, payload: Any = None) -> Any:
+        if not self._proc.is_alive():
+            raise RuntimeError(
+                f"LIBERO worker subprocess exited unexpectedly (exitcode={self._proc.exitcode})"
+            )
+        self._conn.send((cmd, payload))
+        status, result = self._conn.recv()
+        if status != "ok":
+            raise RuntimeError(str(result))
+        return result
+
+    def shutdown(self) -> None:
+        try:
+            if self._proc.is_alive():
+                self._conn.send(("shutdown", None))
+                self._proc.join(timeout=5.0)
+        except Exception:
+            pass
+        if self._proc.is_alive():
+            self._proc.terminate()
+            self._proc.join(timeout=2.0)
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
+
+class _SubprocessLiberoBackend:
+    """Adapter exposing a reusable ``_SubprocessEnvSlot`` as a standard backend."""
+
+    def __init__(
+        self,
+        spec: dict[str, Any],
+        acquire_slot: Callable[[], _SubprocessEnvSlot],
+        release_slot: Callable[[_SubprocessEnvSlot], None],
+    ) -> None:
+        self._spec = spec
+        self._acquire_slot = acquire_slot
+        self._release_slot = release_slot
+        self._slot: Optional[_SubprocessEnvSlot] = None
+
+    def open(self) -> dict[str, Any]:
+        if self._slot is None:
+            self._slot = self._acquire_slot()
+        return self._slot.call("open", self._spec)
+
+    def step(self, action: Optional[dict[str, dict[str, float]]]) -> dict[str, Any]:
+        assert self._slot is not None
+        return self._slot.call("step", action)
+
+    def close(self) -> None:
+        slot = self._slot
+        self._slot = None
+        if slot is None:
+            return
+        try:
+            if slot.alive:
+                slot.call("close", None)
+        except Exception:
+            slot.shutdown()
+        finally:
+            self._release_slot(slot)
+
+
 @dataclass
 class _ActiveEnvSession:
     """One live simulator session and the lock serializing its thread calls."""
@@ -283,10 +412,42 @@ class EmbodiedEnvToolWorker(ToolWorker):
         self._backend_factory = backend_factory
 
         self._sessions: dict[str, _ActiveEnvSession] = {}
+        self._idle_slots: list[_SubprocessEnvSlot] = []
+        self._slots_lock = threading.Lock()
         self._semaphore: Optional[asyncio.Semaphore] = None
         self._executor: Optional[ThreadPoolExecutor] = None
-        self._request_processor_task: Optional[asyncio.Task] = None
+        self._worker_route_key: Optional[str] = None
+        self._request_processor_tasks: list[asyncio.Task] = []
         self._inflight_tasks: set[asyncio.Task] = set()
+
+    def _acquire_libero_slot(self) -> _SubprocessEnvSlot:
+        while True:
+            with self._slots_lock:
+                slot = self._idle_slots.pop() if self._idle_slots else None
+            if slot is None:
+                break
+            if slot.alive:
+                return slot
+            slot.shutdown()
+        return _SubprocessEnvSlot(
+            {
+                "camera_height": self._camera_height,
+                "camera_width": self._camera_width,
+                "reset_gripper_open": self._reset_gripper_open,
+                "num_steps_wait": self._num_steps_wait,
+                "seed": self._seed,
+            }
+        )
+
+    def _release_libero_slot(self, slot: _SubprocessEnvSlot) -> None:
+        keep = False
+        if slot.alive:
+            with self._slots_lock:
+                if len(self._idle_slots) < self._max_concurrent_envs:
+                    self._idle_slots.append(slot)
+                    keep = True
+        if not keep:
+            slot.shutdown()
 
     def init_worker(self, input_channel: Channel, output_channel: Channel) -> None:
         self.input_channel = input_channel
@@ -294,19 +455,22 @@ class EmbodiedEnvToolWorker(ToolWorker):
 
     def start_server(self) -> None:
         loop = asyncio.get_running_loop()
+        self._worker_route_key = f"worker-{self._rank}"
         self._semaphore = asyncio.Semaphore(self._max_concurrent_envs)
         self._executor = ThreadPoolExecutor(
             max_workers=self._max_concurrent_envs,
             thread_name_prefix="embodied-env",
         )
-        self._request_processor_task = loop.create_task(self._process_requests())
+        self._request_processor_tasks = [
+            loop.create_task(self._process_session_starts()),
+            loop.create_task(self._process_routed_requests()),
+        ]
 
     def stop_server(self) -> None:
-        if (
-            self._request_processor_task is not None
-            and not self._request_processor_task.done()
-        ):
-            self._request_processor_task.cancel()
+        for task in self._request_processor_tasks:
+            if not task.done():
+                task.cancel()
+        self._request_processor_tasks.clear()
         for task in list(self._inflight_tasks):
             if not task.done():
                 task.cancel()
@@ -317,6 +481,11 @@ class EmbodiedEnvToolWorker(ToolWorker):
                     session.backend.close()
                 except Exception:
                     pass
+        with self._slots_lock:
+            idle_slots = list(self._idle_slots)
+            self._idle_slots.clear()
+        for slot in idle_slots:
+            slot.shutdown()
         if self._executor is not None:
             self._executor.shutdown(wait=False)
             self._executor = None
@@ -326,13 +495,10 @@ class EmbodiedEnvToolWorker(ToolWorker):
             return self._backend_factory(spec)
         embodiment = str(spec.get("embodiment", "libero")).lower()
         if embodiment == "libero":
-            return LiberoEpisodeBackend(
+            return _SubprocessLiberoBackend(
                 spec,
-                camera_height=self._camera_height,
-                camera_width=self._camera_width,
-                reset_gripper_open=self._reset_gripper_open,
-                num_steps_wait=self._num_steps_wait,
-                seed=self._seed,
+                self._acquire_libero_slot,
+                self._release_libero_slot,
             )
         if embodiment == "robodojo":
             from rlinf.envs.sim.robodojo.vlm_action import execute_action
@@ -346,10 +512,14 @@ class EmbodiedEnvToolWorker(ToolWorker):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, fn, *args)
 
-    async def handle_request(self, request: ToolChannelRequest) -> ToolChannelResponse:
+    async def handle_request(
+        self, request: ToolChannelRequest, *, slot_acquired: bool = False
+    ) -> ToolChannelResponse:
         """Process one session_start / execute / session_end request."""
         if request.request_type == "session_start":
-            return await self._handle_session_start(request)
+            return await self._handle_session_start(
+                request, slot_acquired=slot_acquired
+            )
         if request.request_type == "execute":
             return await self._handle_execute(request)
         if request.request_type == "session_end":
@@ -360,22 +530,33 @@ class EmbodiedEnvToolWorker(ToolWorker):
         )
 
     async def _handle_session_start(
-        self, request: ToolChannelRequest
+        self, request: ToolChannelRequest, *, slot_acquired: bool = False
     ) -> ToolChannelResponse:
         if request.session_id in self._sessions:
+            if slot_acquired and self._semaphore is not None:
+                self._semaphore.release()
             return ToolChannelResponse(
                 success=False,
                 result=f"session {request.session_id!r} already exists",
             )
-        if self._semaphore is not None:
+        if not slot_acquired and self._semaphore is not None:
             await self._semaphore.acquire()
         spec = dict(request.tool_args or {})
+        backend: Any = None
         try:
             backend = self._create_backend(spec)
             initial_obs = await self._run_in_executor(backend.open)
             self._sessions[request.session_id] = _ActiveEnvSession(backend=backend)
-            return ToolChannelResponse(success=True, result=initial_obs)
+            result = dict(initial_obs)
+            if self._worker_route_key is not None:
+                result["worker_route_key"] = self._worker_route_key
+            return ToolChannelResponse(success=True, result=result)
         except Exception as exc:
+            if backend is not None:
+                try:
+                    await self._run_in_executor(backend.close)
+                except Exception:
+                    pass
             if self._semaphore is not None:
                 self._semaphore.release()
             self.log_error(
@@ -428,16 +609,41 @@ class EmbodiedEnvToolWorker(ToolWorker):
                 self._semaphore.release()
         return ToolChannelResponse(success=True, result={"closed": True})
 
-    async def _dispatch_and_reply(self, request: ToolChannelRequest) -> None:
-        response = await self.handle_request(request)
+    async def _dispatch_and_reply(
+        self, request: ToolChannelRequest, *, slot_acquired: bool = False
+    ) -> None:
+        response = await self.handle_request(request, slot_acquired=slot_acquired)
         await self.output_channel.put(
             response, key=request.session_id, async_op=True
         ).async_wait()
 
-    async def _process_requests(self) -> None:
+    async def _process_session_starts(self) -> None:
+        """Pull unrouted requests (session_start) only while this worker has capacity."""
+        while True:
+            assert self._semaphore is not None
+            await self._semaphore.acquire()
+            try:
+                request: ToolChannelRequest = await self.input_channel.get(
+                    async_op=True
+                ).async_wait()
+            except BaseException:
+                self._semaphore.release()
+                raise
+            if request.request_type == "session_start":
+                coro = self._dispatch_and_reply(request, slot_acquired=True)
+            else:
+                self._semaphore.release()
+                coro = self._dispatch_and_reply(request, slot_acquired=False)
+            task = asyncio.create_task(coro)
+            self._inflight_tasks.add(task)
+            task.add_done_callback(self._inflight_tasks.discard)
+
+    async def _process_routed_requests(self) -> None:
+        """Serve session-pinned execute/session_end requests for sessions on this rank."""
+        assert self._worker_route_key is not None
         while True:
             request: ToolChannelRequest = await self.input_channel.get(
-                async_op=True
+                key=self._worker_route_key, async_op=True
             ).async_wait()
             task = asyncio.create_task(self._dispatch_and_reply(request))
             self._inflight_tasks.add(task)
