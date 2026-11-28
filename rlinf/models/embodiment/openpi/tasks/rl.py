@@ -286,7 +286,7 @@ class Pi0RL(EnvIO, Pi0):
             :, :, : self.action_chunk, : self.action_env_dim
         ]
         if rl_cfg.joint_logprob:
-            log_probs_picked = log_probs_stacked.mean(dim=1)
+            log_probs_picked = log_probs_stacked.sum(dim=1)
         else:
             log_probs_picked = log_probs_stacked[
                 torch.arange(B, device=device), denoise_inds[:, 0]
@@ -498,7 +498,7 @@ class Pi0RL(EnvIO, Pi0):
         log_probs = torch.stack(step_logprobs, dim=1)
         log_probs = log_probs[:, :, : self.action_chunk, : self.action_env_dim].float()
         if rl_cfg.joint_logprob:
-            log_probs = log_probs.mean(dim=1)
+            log_probs = log_probs.sum(dim=1)
         else:
             log_probs = log_probs[:, 0]
 
