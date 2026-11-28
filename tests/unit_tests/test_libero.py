@@ -15,6 +15,7 @@
 """LIBERO observation preprocessing and episode-local history contracts."""
 
 from collections import deque
+from contextlib import nullcontext
 from unittest.mock import Mock
 
 import numpy as np
@@ -128,6 +129,70 @@ def test_libero_partial_reset_preserves_other_histories(libero_history_env):
 
     assert before["main_images"][0, :, 0, 0, 0].tolist() == [2, 4, 6]
     assert before["frame_mask"][0].tolist() == [True, True, True]
+
+
+@pytest.mark.parametrize("rollout_epoch", [1, 2])
+def test_libero_eval_auto_reset_counts_one_pass_per_epoch(rollout_epoch):
+    pytest.importorskip("gym")
+    from rlinf.envs.sim.libero.libero_env import LiberoEnv
+    from rlinf.workers.env.env_worker import EnvWorker
+
+    env = LiberoEnv.__new__(LiberoEnv)
+    env.num_envs = 2
+    env.is_eval = True
+    env.is_libero_mem = False
+    env.specific_reset_id = None
+    env._init_metrics()
+    env.task_ids = np.zeros(env.num_envs, dtype=np.int64)
+    env.trial_ids = np.zeros(env.num_envs, dtype=np.int64)
+
+    # Stub out the simulator: a 4-state pool, and every env finishes its
+    # episode (or, once idle, times out again) on every chunk step.
+    def reset(env_idx=None, reset_state_ids=None):
+        if env.is_start:
+            env._init_metrics()
+            env._eval_reset_pool = np.arange(4)
+            env.start_idx = 0
+            env.reset_state_ids = env._get_ordered_reset_state_ids(env.num_envs)
+            env_idx, reset_state_ids = np.arange(env.num_envs), env.reset_state_ids
+            env.is_start = False
+        env.trial_ids[env_idx] = reset_state_ids
+        return {}, {}
+
+    def env_evaluate_step(raw_actions, stage_id):
+        dones = np.ones(env.num_envs, dtype=bool)
+        infos = {"episode": {"success_once": np.ones(env.num_envs, dtype=bool)}}
+        _, _, count_mask = env._handle_eval_auto_reset(dones, {}, infos)
+        return Mock(dones=None), {"counted": torch.tensor(count_mask)}
+
+    env.reset = reset
+    worker = object.__new__(EnvWorker)
+    worker.cfg = OmegaConf.create({"rollout": {"group_name": "rollout"}})
+    worker.eval_assignment = Mock(cfg=OmegaConf.create({"auto_reset": True}))
+    worker.eval_assignment.scoped.return_value = {}
+    worker.eval_env_list = [env]
+    worker.stage_num = 1
+    worker.eval_num_envs_per_stage = env.num_envs
+    worker.eval_prev_done = [None]
+    worker.eval_rollout_epoch = rollout_epoch
+    # A full-pool budget per epoch, plus one step for idle envs to pick up the
+    # next pass.
+    worker.n_eval_chunk_steps = 3
+    worker.eval_batch_size = env.num_envs
+    worker.env_decoupled_mode = False
+    worker.eval_enable_offload = False
+    worker.send_to = Mock()
+    worker.recv_from = Mock()
+    worker.finish_rollout = Mock()
+    worker._build_rollout_input_data = lambda batch: batch
+    worker.env_evaluate_step = env_evaluate_step
+    worker.worker_timer = lambda *args, **kwargs: nullcontext()
+    worker._accelerator_type = None
+
+    metrics = worker.evaluate(Mock(), Mock())
+
+    assert int(metrics["counted"].sum()) == 4 * rollout_epoch
+    assert env._task_success_stats[0]["total"] == 4 * rollout_epoch
 
 
 @pytest.mark.parametrize(
@@ -272,7 +337,7 @@ def test_libero_eval_keeps_exhausted_slots_reset_without_recounting(
         env.env.close()
 
     assert counts == [2, num_trials - 2, 0, 0, 0, 0]
-    assert env._eval_seen_trials == {(0, trial) for trial in range(num_trials)}
+    assert env._eval_seen_trials == {(0, 0, trial) for trial in range(num_trials)}
     assert env._task_success_stats == {
         0: {"total": num_trials, "success": (num_trials + 1) // 2}
     }

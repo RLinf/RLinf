@@ -772,7 +772,9 @@ class LiberoEnv(gym.Env):
         self.returns = np.zeros(self.num_envs)
         self.success_episode_len = np.zeros(self.num_envs, dtype=np.int32)
         self._task_success_stats: dict[int, dict[str, int]] = {}
-        self._eval_seen_trials: set[tuple[int, int]] = set()
+        self._eval_seen_trials: set[tuple[int, int, int]] = set()
+        self._eval_pass = 0
+        self._eval_pass_ids = np.zeros(self.num_envs, dtype=np.int64)
 
     def _reset_metrics(self, env_idx: list[int] | np.ndarray | None = None) -> None:
         if env_idx is not None:
@@ -932,6 +934,19 @@ class LiberoEnv(gym.Env):
             init_state = self._get_reset_states(env_idx=env_idx)
             self.env.set_init_state(init_state=init_state, id=env_idx)
 
+    def start_eval_pass(self) -> None:
+        """Start a new pass over the eval reset pool.
+
+        Called by the env worker at the start of each eval rollout epoch after
+        the first when auto_reset keeps envs running across epochs. Envs that
+        finish from now on are reset from the start of the pool, and their
+        trials are counted again under the new pass.
+        """
+        if not self.is_eval:
+            return
+        self._eval_pass += 1
+        self.start_idx = 0
+
     def reset(
         self,
         env_idx: list[int] | np.ndarray | None = None,
@@ -945,6 +960,8 @@ class LiberoEnv(gym.Env):
             if self.is_eval:
                 self._task_success_stats = {}
                 self._eval_seen_trials = set()
+                self._eval_pass = 0
+                self._eval_pass_ids = np.zeros(self.num_envs, dtype=np.int64)
                 self.start_idx = 0
                 pool = self.reset_state_ids_all[self.seed_offset]
                 self._eval_reset_pool = pool[pool >= 0].copy()
@@ -1218,11 +1235,14 @@ class LiberoEnv(gym.Env):
             self._eval_seen_trials,
             self._task_success_stats,
             success_key="strict_success" if self.is_libero_mem else "success_once",
+            pass_ids=self._eval_pass_ids,
         )
 
         new_reset_state_ids = self._get_ordered_reset_state_ids(len(env_idx))
         valid_mask = new_reset_state_ids >= 0
-        self.reset_state_ids[env_idx[valid_mask]] = new_reset_state_ids[valid_mask]
+        env_to_reset = env_idx[valid_mask]
+        self.reset_state_ids[env_to_reset] = new_reset_state_ids[valid_mask]
+        self._eval_pass_ids[env_to_reset] = self._eval_pass
         # Exhausted slots replay their last trial; count_mask excludes repeats.
         obs, infos = self.reset(
             env_idx=env_idx,
