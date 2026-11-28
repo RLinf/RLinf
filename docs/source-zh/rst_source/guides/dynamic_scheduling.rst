@@ -130,6 +130,8 @@
 - rollout 待执行任务量较少时，触发 rollout 迁移，释放部分 rollout 资源以扩容 actor
 - rollout 或 inference 执行结束时，释放资源给 actor 扩容
 
+迁移 SGLang rollout 任务时，源实例先请求中断，等待当前生成任务返回后，再转交未完成的回答。SGLang 在正常的输出处理流程中执行中断，因此请求在停止前仍可能生成更多 token。目标实例将原始 prompt 与返回的 token 拼接作为输入，并将本次生成预算设为原始上限减去累计已生成的 token 数量。
+
 可选策略
 ~~~~~~~~
 
