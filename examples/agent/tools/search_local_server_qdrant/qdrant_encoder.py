@@ -11,11 +11,29 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from types import ModuleType
 from typing import Any
 
 import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer
+
+
+def get_device_module(device_type: str) -> ModuleType:
+    """Return the torch backend, registering Ascend only when requested."""
+    if device_type == "npu":
+        import torch_npu  # noqa: F401
+
+    return torch.get_device_module(device_type)
+
+
+def get_devices(device_type: str) -> list[str]:
+    """List visible encoder devices as names safe to send to spawned workers."""
+    backend = get_device_module(device_type)
+    count = backend.device_count()
+    if count == 0:
+        raise RuntimeError(f"No {device_type} devices are visible to the retriever")
+    return [f"{device_type}:{index}" for index in range(count)]
 
 
 def load_model(
@@ -57,7 +75,11 @@ class Encoder:
         self.pooling_method = pooling_method
         self.max_length = max_length
         self.use_fp16 = use_fp16
-        self.device = device
+        # Register the backend before constructing an NPU device in each child.
+        self.torch_platform = get_device_module(str(device).split(":")[0])
+        self.device = torch.device(device)
+        if self.device.type != "cpu" and self.device.index is not None:
+            self.torch_platform.set_device(self.device)
 
         self.model, self.tokenizer = load_model(
             model_path=model_path, use_fp16=use_fp16, device=self.device
@@ -116,6 +138,7 @@ class Encoder:
         query_emb = query_emb.astype(np.float32, order="C")
 
         del inputs, output
-        torch.cuda.empty_cache()
+        if self.device.type != "cpu":
+            self.torch_platform.empty_cache()
 
         return query_emb

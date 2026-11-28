@@ -7,12 +7,12 @@ WIKI2018_DIR=/your/wiki_dataset/path
 corpus_file=$WIKI2018_DIR/wiki_corpus.jsonl
 
 # Build step 2: set your retriever model path
+device_type=cuda # Set to npu for Ascend.
 retriever_name=e5 # this is for indexing naming
-retriever_path=/path/to/Qwen2.5-3B-Instruct
+retriever_path=/path/to/e5-base-v2
 
 # Qdrant configuration
-# Build step 3: Install qdrant and set qdrant_path to qdrant dir
-qdrant_path=/your/qdrant/path
+# Build step 3: set the running Qdrant server URL and collection
 qdrant_url=http://localhost:6333
 qdrant_collection_name=wiki_collection
 hnsw_config='{"m":32,"ef_construct":512}'
@@ -20,6 +20,7 @@ hnsw_config='{"m":32,"ef_construct":512}'
 CONFIG_PATH="$( realpath "$( dirname "${BASH_SOURCE[0]}" )"  )"
 python3 ${CONFIG_PATH}/build_index.py \
     --corpus_path $corpus_file \
+    --device_type "$device_type" \
     --retriever_name $retriever_name \
     --retriever_model $retriever_path \
     --qdrant_collection_name $qdrant_collection_name \

@@ -20,11 +20,10 @@ import os
 import socket
 import time
 from concurrent.futures import ProcessPoolExecutor
-from multiprocessing import Queue, set_start_method
+from multiprocessing import Queue, get_context, set_start_method
 from typing import Optional
 
 import numpy as np
-import torch
 import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -33,7 +32,7 @@ from qdrant_client.models import (
     QuantizationSearchParams,
     SearchParams,
 )
-from qdrant_encoder import Encoder
+from qdrant_encoder import Encoder, get_devices
 from tqdm import tqdm
 
 
@@ -53,7 +52,8 @@ class AsyncEncoderPool:
     def __init__(
         self, model_name, model_path, pooling_method, max_length, use_fp16, devices
     ):
-        init_queue = Queue()
+        context = get_context("spawn")
+        init_queue = context.Queue()
         for device in devices:
             init_queue.put(
                 [model_name, model_path, pooling_method, max_length, use_fp16, device]
@@ -61,13 +61,14 @@ class AsyncEncoderPool:
 
         self.encoders = ProcessPoolExecutor(
             max_workers=len(devices),
+            mp_context=context,
             initializer=AsyncEncoderPool.set_global_encoder,
             initargs=(init_queue,),
         )
 
     async def encode(self, query_list: list[str], is_query=True) -> np.ndarray:
-        return await loop.run_in_executor(
-            self.encoders, AsyncEncoderPool.global_encode, (query_list, is_query)
+        return await asyncio.get_running_loop().run_in_executor(
+            self.encoders, AsyncEncoderPool.global_encode, query_list, is_query
         )
 
 
@@ -152,9 +153,7 @@ class AsyncDenseRetriever(AsyncBaseRetriever):
             logging.info("collection status is green now")
 
         # Initialize encoder first (needed for building collection)
-        devices = [
-            torch.device(f"cuda:{i}") for i in range(0, torch.cuda.device_count())
-        ]
+        devices = get_devices(config.device_type)
         self.encoder = AsyncEncoderPool(
             model_name=self.retrieval_method,
             model_path=config.retrieval_model_path,
@@ -277,6 +276,7 @@ class Config:
         retrieval_pooling_method: str = "mean",
         retrieval_query_max_length: int = 256,
         retrieval_use_fp16: bool = False,
+        device_type: str = "cuda",
     ):
         self.retrieval_method = retrieval_method
         self.retrieval_topk = retrieval_topk
@@ -290,6 +290,7 @@ class Config:
         self.retrieval_pooling_method = retrieval_pooling_method
         self.retrieval_query_max_length = retrieval_query_max_length
         self.retrieval_use_fp16 = retrieval_use_fp16
+        self.device_type = device_type
 
 
 class QueryRequest(BaseModel):
@@ -414,6 +415,7 @@ if __name__ == "__main__":
         help="Directory to save server address file (optional)",
     )
 
+    parser.add_argument("--device_type", choices=("cuda", "npu"), default="cuda")
     args = parser.parse_args()
     logging.getLogger().setLevel(logging.INFO)
     host_name = socket.gethostname()
@@ -447,6 +449,7 @@ if __name__ == "__main__":
         retrieval_pooling_method="mean",
         retrieval_query_max_length=256,
         retrieval_use_fp16=True,
+        device_type=args.device_type,
     )
 
     # 2) Instantiate a global retriever so it is loaded once and reused.
@@ -478,14 +481,19 @@ if __name__ == "__main__":
         logging.info("Page Access is ready.")
 
     # 4) Launch the server.
-    config = uvicorn.Config(
+    server_config = uvicorn.Config(
         app,
         host="0.0.0.0",
         port=args.port,
         log_level="warning",
         loop=loop,
     )
-    server = uvicorn.Server(config)
+    server = uvicorn.Server(server_config)
     logging.info(f"Server is ready at port {args.port}")
 
-    loop.run_until_complete(server.serve())
+    try:
+        loop.run_until_complete(server.serve())
+    finally:
+        retriever.encoder.encoders.shutdown(wait=True)
+        loop.run_until_complete(retriever.client.close())
+        loop.close()

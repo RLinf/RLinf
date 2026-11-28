@@ -7,6 +7,7 @@ WIKI2018_DIR=/your/wiki_dataset/path
 pages_file=$WIKI2018_DIR/wiki_webpages.jsonl
 
 # Launch step 2: set your retriever model path
+device_type=cuda # Set to npu for Ascend.
 retriever_name=e5
 retriever_path=/your/retriever/model/path
 
@@ -19,6 +20,7 @@ CONFIG_PATH="$( realpath "$( dirname "${BASH_SOURCE[0]}" )"  )"
 python3 -u ${CONFIG_PATH}/local_retrieval_server.py \
     --pages_path $pages_file \
     --topk 3 \
+    --device_type "$device_type" \
     --retriever_name $retriever_name \
     --retriever_model $retriever_path \
     --qdrant_collection_name $qdrant_collection_name \
