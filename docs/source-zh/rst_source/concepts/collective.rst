@@ -20,7 +20,11 @@
 
 ``CollectiveGroup`` 是 RLinf 中管理两个 Worker 间点对点通信的核心抽象。它会根据 ``group_info`` 确定本地 rank（0 或 1），并在首次使用时 **延迟初始化** 通信进程组。  
 
-在内部，会分别为 GPU (NCCL) 和 CPU (Gloo) 创建独立的 **发送** 和 **接收** 进程组，形成专用的单向通道；在双 Worker 设置中，精心配置的广播等价于 send/recv。初始化过程使用 TCP rendezvous 协调端口分配与同步，确保双方准备就绪。每个方向都有一个基于专用 CUDA stream 的工作队列，严格保证 send/recv 操作的顺序，避免消息交错。  
+在内部，会分别为 GPU (NCCL) 和 CPU (Gloo) 创建独立的 **发送** 和 **接收** 进程组，形成专用的单向通道；在双 Worker 设置中，精心配置的广播等价于 send/recv。
+
+rank 0 的 Worker 在操作系统分配的端口上启动 TCP 监听，绑定完成后再公布端口号，并保持监听，直到其他 Worker 建立连接并完成进程组初始化。
+
+每个方向都有一个基于专用 CUDA stream 的工作队列，严格保证 send/recv 操作的顺序，避免消息交错。
 
 建立进程组后，``CollectiveGroup`` 可以执行通信。主要 API 有：
 
