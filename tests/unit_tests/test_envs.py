@@ -14,6 +14,8 @@
 
 """Heterogeneous env modes, and the observations env workers send the policy."""
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
@@ -32,6 +34,130 @@ from rlinf.envs.layout import EnvLayout
 from rlinf.envs.policy_obs import PolicyObsSpec
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.workers.env.env_worker import EnvWorker
+
+
+def _make_maniskill_chunk_env(
+    outcomes,
+    *,
+    num_envs: int,
+    auto_reset: bool = False,
+    ignore_terminations: bool = False,
+):
+    pytest.importorskip("mani_skill")
+    from rlinf.envs.sim.maniskill.maniskill_env import ManiskillEnv
+
+    env = ManiskillEnv.__new__(ManiskillEnv)
+    env.cfg = OmegaConf.create(
+        {"wrap_obs_mode": "simple", "reward_mode": "only_success"}
+    )
+    env.auto_reset = auto_reset
+    env.ignore_terminations = ignore_terminations
+    env.use_rel_reward = True
+    env.use_fixed_reset_state_ids = False
+    env.record_metrics = True
+    env.prev_step_reward = torch.zeros(num_envs)
+    sim = SimpleNamespace(
+        num_envs=num_envs,
+        device=torch.device("cpu"),
+        obs_mode="state",
+        elapsed_steps=torch.zeros(num_envs),
+    )
+    step_iter = iter(outcomes)
+
+    def step(actions):
+        success_vals, trunc_vals = next(step_iter)
+        success = torch.tensor(success_vals, dtype=torch.bool)
+        truncations = torch.tensor(trunc_vals, dtype=torch.bool)
+        sim.elapsed_steps += 1
+        return (
+            actions,
+            torch.zeros(num_envs),
+            success,
+            truncations,
+            {"success": success},
+        )
+
+    def reset(seed=None, options=None):
+        if options and "env_idx" in options:
+            sim.elapsed_steps[options["env_idx"]] = 0
+        else:
+            sim.elapsed_steps.zero_()
+        return torch.zeros(num_envs, 1), {}
+
+    env.env = SimpleNamespace(unwrapped=sim, step=step, reset=reset)
+    env._init_metrics()
+    return env
+
+
+def test_maniskill_chunk_keeps_first_action_boundary():
+    env = _make_maniskill_chunk_env(
+        [
+            ([False, False], [False, False]),
+            ([True, False], [False, False]),
+            ([False, True], [False, False]),
+            ([False, True], [False, False]),
+        ],
+        num_envs=2,
+    )
+
+    _, rewards, terminations, _, _ = env.chunk_step(torch.zeros(2, 4, 1))
+
+    assert rewards.tolist() == [[0, 1, 0, 0], [0, 0, 1, 0]]
+    assert terminations.tolist() == [
+        [False, True, False, False],
+        [False, False, True, False],
+    ]
+
+
+@pytest.mark.parametrize(
+    (
+        "auto_reset",
+        "ignore_terminations",
+        "expected_rewards",
+        "expected_terms",
+        "expected_truncs",
+    ),
+    [
+        (
+            True,
+            False,
+            [[0.0, 1.0, 0.0, 0.0]],
+            [[False, False, False, True]],
+            [[False, False, False, False]],
+        ),
+        (
+            False,
+            True,
+            [[0.0, 1.0, -1.0, 0.0]],
+            [[False, False, False, False]],
+            [[False, False, False, True]],
+        ),
+    ],
+)
+def test_maniskill_chunk_collapses_boundaries_for_auto_reset_and_ignored_terms(
+    auto_reset,
+    ignore_terminations,
+    expected_rewards,
+    expected_terms,
+    expected_truncs,
+):
+    env = _make_maniskill_chunk_env(
+        [
+            ([False], [False]),
+            ([True], [False]),
+            ([False], [False]),
+            ([False], [True]),
+        ],
+        num_envs=1,
+        auto_reset=auto_reset,
+        ignore_terminations=ignore_terminations,
+    )
+
+    _, rewards, terminations, truncations, _ = env.chunk_step(torch.zeros(1, 4, 1))
+
+    assert rewards.tolist() == expected_rewards
+    assert terminations.tolist() == expected_terms
+    assert truncations.tolist() == expected_truncs
 
 
 def _env(env_type: str, total_num_envs: int, **fields) -> dict:

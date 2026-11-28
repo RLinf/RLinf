@@ -353,8 +353,15 @@ class ManiskillEnv(gym.Env):
             raw_chunk_truncations, dim=1
         )  # [num_envs, chunk_steps]
 
-        past_terminations = raw_chunk_terminations.any(dim=1)
-        past_truncations = raw_chunk_truncations.any(dim=1)
+        raw_chunk_dones = raw_chunk_terminations | raw_chunk_truncations
+        post_done = torch.zeros_like(raw_chunk_dones)
+        post_done[:, 1:] = raw_chunk_dones[:, :-1].cumsum(dim=1) > 0
+        chunk_rewards.masked_fill_(post_done, 0)
+        chunk_terminations = raw_chunk_terminations & ~post_done
+        chunk_truncations = raw_chunk_truncations & ~post_done
+
+        past_terminations = chunk_terminations.any(dim=1)
+        past_truncations = chunk_truncations.any(dim=1)
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
         if past_dones.any() and self.auto_reset:
@@ -362,11 +369,12 @@ class ManiskillEnv(gym.Env):
                 past_dones, obs_list[-1], infos_list[-1]
             )
 
-        chunk_terminations = torch.zeros_like(raw_chunk_terminations)
-        chunk_terminations[:, -1] = past_terminations
+        if self.auto_reset or self.ignore_terminations:
+            chunk_terminations.zero_()
+            chunk_terminations[:, -1] = past_terminations
 
-        chunk_truncations = torch.zeros_like(raw_chunk_truncations)
-        chunk_truncations[:, -1] = past_truncations
+            chunk_truncations.zero_()
+            chunk_truncations[:, -1] = past_truncations
         return (
             obs_list,
             chunk_rewards,
