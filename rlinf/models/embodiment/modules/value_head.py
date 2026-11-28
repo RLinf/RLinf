@@ -64,4 +64,4 @@ class ValueHead(nn.Module):
                         nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        return self.mlp(x)
+        return self.mlp(x.to(dtype=self.mlp[0].weight.dtype))

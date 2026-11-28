@@ -578,6 +578,7 @@ def apply_fsdp2_to_model(
             offload_policy=offload_policy,
             reshard_after_forward=reshard_after_forward,
         )
+        submodule._fsdp_param_dtype = mp_policy.param_dtype
 
     root_kwargs = {
         "mesh": device_mesh,
@@ -606,7 +607,16 @@ def apply_fsdp2_to_model(
             stacklevel=2,
         )
 
-    return fully_shard(module, **root_kwargs)
+    wrapped = fully_shard(module, **root_kwargs)
+    wrapped._fsdp_param_dtype = mp_policy.param_dtype
+    return wrapped
+
+
+def get_fsdp_param_dtype(module: torch.nn.Module) -> Optional[torch.dtype]:
+    """Return the configured FSDP mixed-precision param dtype for a module, if any."""
+    if isinstance(module, FSDP):
+        return module.mixed_precision.param_dtype
+    return getattr(module, "_fsdp_param_dtype", None)
 
 
 def get_fsdp2_full_state_dict_all_ranks(

@@ -141,12 +141,8 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
         batch_size = vl_embs.shape[0]
 
         action_encoder = self.base.action_encoder
-        action_encoder_param = next(iter(action_encoder.parameters()), None)
-        if action_encoder_param is not None:
-            x_t = x_t.to(
-                device=action_encoder_param.device,
-                dtype=action_encoder_param.dtype,
-            )
+        # FSDP exposes this weight as a tensor view during the forward.
+        x_t = x_t.to(action_encoder.layer1.weight)
 
         if isinstance(idx, int):
             idx_tensor = torch.full(
@@ -296,12 +292,6 @@ class AMLFlowMatchingActionHeadRL(nn.Module):
         else:
             pooled_state = torch.zeros_like(pooled_vl)
         value_input = torch.cat((pooled_vl, pooled_state), dim=1)
-        value_head_param = next(iter(self.value_head.parameters()), None)
-        if value_head_param is not None:
-            value_input = value_input.to(
-                device=value_head_param.device,
-                dtype=value_head_param.dtype,
-            )
         return self.value_head(value_input)  # [B, 1]
 
     @torch.no_grad()
