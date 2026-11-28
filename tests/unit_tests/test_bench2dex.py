@@ -917,8 +917,10 @@ def test_bench2dex_recipes(
     samples = cfg.env.train.total_num_envs * cfg.env.train.rollout_epoch * (slots // 20)
     assert samples % cfg.actor.global_batch_size == 0
     assert cfg.actor.global_batch_size % (4 * cfg.actor.micro_batch_size) == 0
+    assert cfg.cluster.component_placement["actor,env,rollout"] == (
+        "0-7" if action_dim == 40 else "0-3"
+    )
     if action_dim == 40:
-        assert cfg.cluster.component_placement["actor,env,rollout"] == "0-7"
         assert cfg.runner.ckpt_path is None
         assert cfg.runner.resume_dir is None
         assert cfg.actor.optim.critic_warmup_steps == 0

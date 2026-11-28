@@ -104,7 +104,9 @@ Setup and Run
            --include "22/multi_panda_with_orca/pi05/pi05_base_dex2bench_full/22_pi05_256/2000/**" \
            --local-dir ./data/bench2dex/jax
 
-      Export the local paths (all Task22 training and evaluation configs read ``BENCH2DEX_ASSETS_PATH``, ``BENCH2DEX_ANCHOR_DIR``, and ``BENCH2DEX_PI05_PATH`` directly) and convert the downloaded checkpoint to PyTorch format:
+      Point ``BENCH2DEX_ASSETS_PATH`` to the parent directory containing ``dex2bench_dataset/``. Activating ``.venv-bench2dex-openpi`` exports ``BENCH2DEX_PATH`` automatically.
+
+      Export the local paths (all Task22 training and evaluation configs read ``BENCH2DEX_ASSETS_PATH``, ``BENCH2DEX_ANCHOR_DIR``, and ``BENCH2DEX_PI05_PATH``) and convert the downloaded checkpoint to PyTorch format:
 
       .. code-block:: bash
 
@@ -175,7 +177,9 @@ Setup and Run
            --include "64/multi_panda_with_allegro/pi05/pi05_base_dex2bench_full/64_pi05_256/2000/**" \
            --local-dir ./data/bench2dex/jax
 
-      Export the local paths (all Task64 training and evaluation configs read ``BENCH2DEX_ASSETS_PATH``, ``BENCH2DEX_ANCHOR_DIR``, and ``BENCH2DEX_PI05_PATH`` directly) and convert the downloaded checkpoint to PyTorch format:
+      Point ``BENCH2DEX_ASSETS_PATH`` to the parent directory containing ``dex2bench_dataset/``. Activating ``.venv-bench2dex-openpi`` exports ``BENCH2DEX_PATH`` automatically.
+
+      Export the local paths and convert the downloaded checkpoint to PyTorch format (Task64 training and evaluation read ``BENCH2DEX_ASSETS_PATH`` and ``BENCH2DEX_PI05_PATH``; validation and four-channel evaluation also read ``BENCH2DEX_ANCHOR_DIR``):
 
       .. code-block:: bash
 
@@ -259,7 +263,7 @@ Setup and Run
       * - ``actor.model.action_dim`` / ``actor.model.openpi.model_action_dim``
         - Number of active robot joints controlled by the policy.
       * - ``env.train.max_episode_steps`` / ``env.train.max_steps_per_rollout_epoch``
-        - Task control-step limit and rollout budget rounded up to a multiple of ``num_action_chunks``.
+        - Task control-step limit and rollout budget rounded up to a multiple of ``actor.model.num_action_chunks``.
       * - ``env.train.skip_intermediate_renders`` / ``env.eval.skip_intermediate_renders``
         - Set to ``false`` whenever ``env.train.video_cfg.save_video=true`` or ``env.eval.video_cfg.save_video=true`` is enabled.
 
@@ -268,14 +272,14 @@ Setup and Run
 Visualization and Results
 -------------------------
 
-Track ``env/success_once`` and ``eval/success_once`` with ``tensorboard --logdir ./logs --port 6006`` (the Task22 critic warmup command above writes to ``./results/task22-warmup``); see :doc:`Training Metrics </rst_source/reference/metrics>` for metric definitions.
+Track ``env/success_once`` and ``eval/success_once`` with ``tensorboard --logdir ./logs --port 6006`` (pass ``--logdir ./results/task22-warmup`` for the Task22 critic warmup run above); see :doc:`Training Metrics </rst_source/reference/metrics>` for metric definitions.
 
-Multi-channel evaluation writes summary success rates to ``success_rates.tsv`` and per-episode records to each channel's ``per_episode.jsonl`` under ``--output-root``. For general single-config evaluation CLI usage, see :doc:`Evaluation </rst_source/evaluations/index>`.
+Multi-channel evaluation writes summary success rates to ``success_rates.tsv`` and per-episode records to each channel's ``per_episode.jsonl`` under ``--output-root``. For general single-config evaluation CLI usage, see :doc:`Evaluation CLI </rst_source/evaluations/reference/cli>`.
 
 Task22 Fixed White-Background PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Synchronous PPO on Task22 (the reference config schedules 190 epochs; the verification run stopped after 22 epochs once independent evaluation reached 100%, using 128 training episodes per epoch and 32-episode independent evaluations after epochs 10 and 20, starting from warmup weights with a fresh optimizer):
+Synchronous PPO on Task22 starts from the warmup weights with a fresh optimizer, collecting 128 training episodes per epoch and running 32-episode independent evaluations after epochs 10 and 20. The reference config schedules 190 epochs; the verification run stopped after epoch 22 once independent evaluation reached 100%:
 
 .. list-table::
    :header-rows: 1
@@ -300,7 +304,7 @@ Synchronous PPO on Task22 (the reference config schedules 190 epochs; the verifi
 Task64 Evaluation and Throughput
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Pre-RL evaluation parity and throughput of the official ``2000`` π₀.₅ checkpoint on NVIDIA A800 80 GB GPUs using ``64_sports_ball_cup_sort`` with dual Panda/Allegro (50 episodes per channel for success rate across 3 runs on 4 GPUs / 16 environments; end-to-end physics throughput vs. single-GPU official implementation):
+Pre-RL evaluation parity and end-to-end physics throughput of the official ``2000`` π₀.₅ checkpoint on ``64_sports_ball_cup_sort`` (dual Panda/Allegro, NVIDIA A800 80 GB GPUs). Success rates average 3 runs of 50 episodes per channel on 4 GPUs / 16 environments, and throughput compares against the single-GPU official implementation:
 
 .. list-table::
    :header-rows: 1
@@ -314,7 +318,7 @@ Pre-RL evaluation parity and throughput of the official ``2000`` π₀.₅ check
      - Speedup vs. 1-GPU Official
    * - ``none``
      - 42.00%
-     - 34.67%
+     - 34.00%
      - 11.94 steps/s
      - 65.30 steps/s
      - 5.47×
