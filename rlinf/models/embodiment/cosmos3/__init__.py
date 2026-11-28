@@ -33,6 +33,10 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
+from rlinf.models.embodiment.cosmos3.cosmos3_config import (
+    _apply_checkpoint_model_config,
+    _configure_sft_objective,
+)
 from rlinf.models.embodiment.cosmos3.cosmos3_policy import Cosmos3Policy
 from rlinf.utils.logging import get_logger
 
@@ -145,6 +149,15 @@ def _load_base_weights(
     )
 
 
+def load_inference_checkpoint(model: Cosmos3Policy, checkpoint_path: str) -> None:
+    """Load RLinf weights from a memory-mapped CPU checkpoint."""
+    state_dict = torch.load(
+        checkpoint_path, map_location="cpu", weights_only=True, mmap=True
+    )
+    model.load_state_dict(state_dict, strict=True)
+    logger.info("Cosmos3: loaded inference checkpoint %s", checkpoint_path)
+
+
 def get_model(cfg: DictConfig, torch_dtype=None):
     """Build and warm-start a ``Cosmos3Policy`` for RLinf SFT.
 
@@ -169,6 +182,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         cosmos3_cfg = make_config()
         experiment_name = "action_policy_libero_nano"
         cosmos3_cfg = override(cosmos3_cfg, ["--", f"experiment={experiment_name}"])
+        _apply_checkpoint_model_config(cosmos3_cfg, cfg)
 
         # Disable cosmos internal FSDP/CP/CFGP at any world size; RLinf FSDP owns
         # fully_shard. enable_inference_mode avoids degrees=1 re-enabling cosmos
@@ -184,17 +198,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         cosmos3_cfg.model.config.compile.enabled = bool(
             cfg.get("compile_enabled", False)
         )
-
-        # Wan2.2 VAE: the cookbook injects via ${oc.env:WAN_VAE_PATH}; we build the
-        # config directly, so set the local file path here instead.
-        wan_vae_path = cfg.get("wan_vae_path") or os.environ.get("WAN_VAE_PATH")
-        if wan_vae_path:
-            try:
-                cosmos3_cfg.model.config.tokenizer.vae_path = str(wan_vae_path)
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "Cosmos3: could not set tokenizer.vae_path=%s", wan_vae_path
-                )
+        _configure_sft_objective(cosmos3_cfg.model.config, cfg)
 
         # cosmos probes on CPU unless get_backend() == "nccl", which RLinf's lazily
         # bound group never reports; the probe is diagnostic only, so skip it.
@@ -244,7 +248,8 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         cosmos3_model,
         lr_multipliers=dict(cfg.get("lr_multipliers", {})),
         ema_enabled=bool(cfg.get("ema_enabled", True)),
+        rollout_config=cfg,
     )
 
 
-__all__ = ["Cosmos3Policy", "get_model"]
+__all__ = ["Cosmos3Policy", "get_model", "load_inference_checkpoint"]

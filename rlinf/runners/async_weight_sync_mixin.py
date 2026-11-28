@@ -78,6 +78,9 @@ class AsyncWeightSyncMixin:
         self._pending_rollout_weight_sync = None
         return True
 
+    def _before_rollout_weight_sync(self) -> None:
+        """Prepare a sync request before it can be coalesced."""
+
     def update_rollout_weights(self, no_wait: bool = False) -> None:
         """Synchronize actor weights to the rollout workers.
 
@@ -85,6 +88,7 @@ class AsyncWeightSyncMixin:
             no_wait: Issue the sync in the background instead of blocking. When
                 a previous sync is still in flight, this one is coalesced away.
         """
+        self._before_rollout_weight_sync()
         if not no_wait:
             self._cleanup_pending_rollout_weight_sync(no_wait=False)
             return super().update_rollout_weights()

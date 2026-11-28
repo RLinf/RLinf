@@ -70,9 +70,8 @@ class RollingLeRobotDataset(Dataset):
             these keys.  ``None`` returns every key from LeRobotDataset.
         image_transforms: Optional callable passed directly to each
             :class:`LeRobotDataset` as ``image_transforms``.
-        min_frames: Minimum total number of frames required before the dataset
-            is considered ready.  Construction blocks until this threshold is
-            met.  Defaults to ``10``.
+        min_frames: Minimum number of sample starts before the dataset is
+            considered ready. Defaults to ``10``.
         wait_interval_s: Seconds to sleep between readiness polls when fewer
             than ``min_frames`` total frames are available.  Defaults to
             ``10.0``.
@@ -93,8 +92,8 @@ class RollingLeRobotDataset(Dataset):
             ``require_all_intervene`` is active, logical frames are the
             intervene-valid subset, so ``window_size=1000`` always means
             "the last 1000 usable samples" regardless of intervene density.
-            Without intervene filtering logical == physical, so the behavior
-            is equivalent to a physical-frame window.  Analogous to
+            Without filtering, logical and physical frames are the same.
+            Analogous to
             ``TrajectoryReplayBuffer.sample_window_size`` in
             :mod:`rlinf.data.storage.replay.buffer` but counted in frames instead of
             trajectories. ``None`` or ``0`` disables windowing (full history).
@@ -102,6 +101,13 @@ class RollingLeRobotDataset(Dataset):
             an in-memory Arrow store for training reads.
         fps: Dataset frame rate used when auto-generating ``delta_timestamps``.
             Defaults to ``10``.
+        vision_horizon: Number of future camera frames to read after the current
+            frame. Zero disables video windows.
+        keep_uint8_images: Cache camera frames as uint8 tensors outside Arrow.
+        require_full_window: Expose only starts with a complete action and video
+            window when true. An explicit value is included in dataset metrics.
+        keep_latest_shard: Keep the latest store available for online append
+            even when it contains no usable starts in the rolling window.
     """
 
     def __init__(
@@ -120,6 +126,11 @@ class RollingLeRobotDataset(Dataset):
         window_size: int | None = None,
         in_memory_mode: bool = False,
         fps: int = 10,
+        *,
+        vision_horizon: int = 0,
+        keep_uint8_images: bool = False,
+        require_full_window: bool | None = None,
+        keep_latest_shard: bool = False,
     ) -> None:
         if not in_memory_mode:
             raise ValueError(
@@ -136,11 +147,15 @@ class RollingLeRobotDataset(Dataset):
         self.require_all_intervene = bool(require_all_intervene)
         self.intervene_flag_key = intervene_flag_key
         self.window_size = window_size
+        self.require_full_window = require_full_window
+        self._vision_horizon = vision_horizon
+        self._keep_uint8_images = keep_uint8_images
+        self._keep_latest_shard = keep_latest_shard
         self._window_physical_start: int = 0
         self._window_valid_slice_lo: int = 0
         self._valid_physical_indices: list[int] | None = None
         self._valid_physical_set: set[int] | None = None
-        if self.require_all_intervene:
+        if self.require_all_intervene or self.require_full_window:
             self._valid_physical_indices = []
             self._valid_physical_set = set()
         # Serializes in-memory index growth vs __getitem__/__getitems__.
@@ -280,6 +295,8 @@ class RollingLeRobotDataset(Dataset):
             action_sequence_keys=self._shard_cache_action_keys,
             fps=self._shard_cache_fps,
             image_transforms=self.image_transforms,
+            vision_horizon=self._vision_horizon,
+            keep_uint8_images=self._keep_uint8_images,
         )
 
     def append_episode_to_memory(self, path: str | Path, ep_frames: list[dict]) -> None:
@@ -330,33 +347,9 @@ class RollingLeRobotDataset(Dataset):
 
             self._cumulative_lengths[-1] += added_frames
             self._total_episodes += 1
-            if self.require_all_intervene and self._valid_physical_indices is not None:
-                assert self._valid_physical_set is not None
-                ep_ds = prepared_episode["dataset"]
-                if self.intervene_flag_key not in ep_ds.column_names:
-                    logger.warning(
-                        "[RollingLeRobotDataset] require_all_intervene=True but "
-                        "column %r missing in appended in-memory episode; keeping "
-                        "all %d chunk starts for this episode.",
-                        self.intervene_flag_key,
-                        added_frames,
-                    )
-                    valid_locals = range(old_len, old_len + added_frames)
-                else:
-                    flags = _hf_column_to_numpy_bool_1d(ep_ds, self.intervene_flag_key)
-                    assert int(flags.shape[0]) == added_frames
-                    deltas = np.arange(max(1, int(self.chunk_size)), dtype=np.int64)
-                    offsets = np.arange(added_frames, dtype=np.int64)[:, None]
-                    raw = offsets + deltas[None, :]
-                    in_episode = raw < added_frames
-                    step_ok = np.ones_like(in_episode, dtype=np.bool_)
-                    step_ok[in_episode] = flags[raw[in_episode]]
-                    valid_offsets = np.nonzero(step_ok.all(axis=1))[0]
-                    valid_locals = (old_len + int(offset) for offset in valid_offsets)
-                for local_i in valid_locals:
-                    gidx = physical_base + int(local_i)
-                    self._valid_physical_indices.append(gidx)
-                    self._valid_physical_set.add(gidx)
+            self._append_valid_episode_indices(
+                prepared_episode["dataset"], physical_base + old_len, added_frames
+            )
 
             self._update_window_sampling_bounds()
             self._evict_stale_shards()
@@ -385,6 +378,8 @@ class RollingLeRobotDataset(Dataset):
             return 0
         n_evicted = 0
         for ds_idx, path in enumerate(self._sub_datasets):
+            if self._keep_latest_shard and ds_idx == len(self._sub_datasets) - 1:
+                break
             shard_end = self._cumulative_lengths[ds_idx + 1]
             if shard_end <= self._window_physical_start:
                 if self._in_memory_shards.pop(path, None) is not None:
@@ -458,46 +453,62 @@ class RollingLeRobotDataset(Dataset):
             store.add_episode(ep_frames)
         return path, store
 
-    def _append_valid_indices_for_store(
-        self, store: InMemoryArrowStore, physical_base: int
+    def _append_valid_episode_indices(
+        self, episode: Any, physical_base: int, num_frames: int
     ) -> None:
-        """Add intervene-filtered indices for one attached in-memory store."""
-        if not self.require_all_intervene or self._valid_physical_indices is None:
+        """Index eligible sample starts for an online or restored episode."""
+        if self._valid_physical_indices is None:
+            return
+        assert self._valid_physical_set is not None
+
+        num_starts = num_frames
+        if self.require_full_window:
+            window_length = max(int(self.chunk_size), self._vision_horizon + 1)
+            num_starts = max(0, num_frames - window_length + 1)
+        if num_starts == 0:
             return
 
-        assert self._valid_physical_set is not None
-        for ep_ds, ep_from, ep_to in zip(
-            store._episode_datasets,
-            store._ep_from,
-            store._ep_to,
-            strict=True,
-        ):
-            if self.intervene_flag_key not in ep_ds.column_names:
+        offsets = range(num_starts)
+        if self.require_all_intervene:
+            if self.intervene_flag_key not in episode.column_names:
                 logger.warning(
                     "[RollingLeRobotDataset] require_all_intervene=True but "
                     "column %r missing in appended in-memory episode; keeping "
                     "all %d chunk starts for this episode.",
                     self.intervene_flag_key,
-                    int(ep_to) - int(ep_from),
+                    num_starts,
                 )
-                valid_locals = range(int(ep_from), int(ep_to))
             else:
-                flags = _hf_column_to_numpy_bool_1d(ep_ds, self.intervene_flag_key)
-                added_frames = int(ep_to) - int(ep_from)
-                assert int(flags.shape[0]) == added_frames
+                flags = _hf_column_to_numpy_bool_1d(episode, self.intervene_flag_key)
+                assert int(flags.shape[0]) == num_frames
                 deltas = np.arange(max(1, int(self.chunk_size)), dtype=np.int64)
-                offsets = np.arange(added_frames, dtype=np.int64)[:, None]
-                raw = offsets + deltas[None, :]
-                in_episode = raw < added_frames
+                frame_indices = np.arange(num_starts, dtype=np.int64)[:, None] + deltas
+                in_episode = frame_indices < num_frames
                 step_ok = np.ones_like(in_episode, dtype=np.bool_)
-                step_ok[in_episode] = flags[raw[in_episode]]
-                valid_offsets = np.nonzero(step_ok.all(axis=1))[0]
-                valid_locals = (int(ep_from) + int(offset) for offset in valid_offsets)
+                step_ok[in_episode] = flags[frame_indices[in_episode]]
+                offsets = np.flatnonzero(step_ok.all(axis=1))
 
-            for local_i in valid_locals:
-                gidx = int(physical_base) + int(local_i)
-                self._valid_physical_indices.append(gidx)
-                self._valid_physical_set.add(gidx)
+        for offset in offsets:
+            index = physical_base + int(offset)
+            self._valid_physical_indices.append(index)
+            self._valid_physical_set.add(index)
+
+    def _append_valid_indices_for_store(
+        self, store: InMemoryArrowStore, physical_base: int
+    ) -> None:
+        """Add eligible indices for all episodes of an attached in-memory store."""
+        if self._valid_physical_indices is None:
+            return
+
+        for episode, ep_from, ep_to in zip(
+            store._episode_datasets,
+            store._ep_from,
+            store._ep_to,
+            strict=True,
+        ):
+            self._append_valid_episode_indices(
+                episode, int(physical_base) + int(ep_from), int(ep_to) - int(ep_from)
+            )
 
     def load_archived_shards_staged(
         self, paths: Sequence[str | Path], num_workers: int = 0
@@ -551,7 +562,7 @@ class RollingLeRobotDataset(Dataset):
             self._in_memory_shards = {}
             self._cumulative_lengths = [0]
             self._total_episodes = 0
-            if self.require_all_intervene:
+            if self._valid_physical_indices is not None:
                 self._valid_physical_indices = []
                 self._valid_physical_set = set()
 
@@ -628,6 +639,8 @@ class RollingLeRobotDataset(Dataset):
             "shard_cache_hits": self._shard_cache_hits,
             "shard_cache_misses": self._shard_cache_misses,
         }
+        if self.require_full_window is not None:
+            stats["require_full_window"] = self.require_full_window
         return stats
 
     def __len__(self) -> int:
