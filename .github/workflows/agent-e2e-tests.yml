@@ -610,16 +610,13 @@ jobs:
           source .venv/bin/activate
           cd FUSCO
           uv pip install . --no-build-isolation
-          mkdir -p lib
-          apt-get update -y && apt-get install curl -y
-          curl -L -o lib/libfusco.so https://gh-proxy.com/https://github.com/infinigence/FUSCO/releases/download/v0.1/libfusco-torch2.11.so
           cd ..
 
       - name: MoE FUSCO ep test
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
-          export FUSCO_SO_PATH=$(pwd)/FUSCO/lib/libfusco.so
+          export FUSCO_SO_PATH=/workspace/dataset/FUSCO/libfusco-torch2.11.so
           source .venv/bin/activate
           cleanup() {
             ray stop --force || true

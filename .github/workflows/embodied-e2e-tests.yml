@@ -292,6 +292,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export I2RT_PATH=/workspace/dataset/i2rt
           bash requirements/install.sh embodied --model openpi --env yam
 
       - name: Dual-YAM data collection mock-robot test
@@ -567,6 +568,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export DEXJOCO_PATH=/workspace/dataset/dexjoco
           bash requirements/install.sh embodied --env dexjoco
 
       - name: DexJoCo PPO CNN test
@@ -595,6 +597,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export DEXJOCO_PATH=/workspace/dataset/dexjoco
           bash requirements/install.sh embodied --model openpi --env dexjoco
 
       - name: DexJoCo PPO OpenPI Pi05 test
@@ -1294,6 +1297,8 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ROBOVERSE_PATH=/workspace/dataset/roboverse
+          export PYROKI_PATH=/workspace/dataset/pyroki
           bash requirements/install.sh embodied --model openpi --env roboverse
 
       - name: RoboVerse PPO OpenPI test
@@ -1356,6 +1361,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export ROBODOJO_ASSETS_ROOT=/workspace/dataset/robodojo
+          export ROBODOJO_ISAACLAB_PATH=/workspace/dataset/robodojo-isaaclab
           bash requirements/install.sh embodied --model openpi --env robodojo
 
       - name: RoboDojo OpenPI Pi05 eval test
@@ -1558,7 +1564,8 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PRO_PATH=/workspace/dataset/LIBERO-PRO
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
+          export LIBERO_PRO_ASSET_PATH=/workspace/dataset/LIBERO-PRO/liberopro/liberopro/assets
           bash requirements/install.sh embodied --model openvla-oft --env liberopro
 
       - name: LIBERO-Pro GRPO test
@@ -1587,7 +1594,8 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PLUS_PATH=/workspace/dataset/LIBERO-PLUS
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
+          export LIBERO_PLUS_ASSET_PATH=/workspace/dataset/LIBERO-PLUS/liberoplus/liberoplus/assets
           bash requirements/install.sh embodied --model openvla-oft --env liberoplus
 
       - name: LIBERO-Plus GRPO test
@@ -1646,14 +1654,10 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ABOT_PATH=/workspace/dataset/ABot-Manipulation
+          export VGGT_PATH=/workspace/dataset/vggt
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
-
-      - name: Patch ABot-M0 VGGT path
-        run: |
-          source .venv/bin/activate
-          ABOT_PATH=$(python -c "import ABot; import os; print(os.path.dirname(ABot.__file__))")
-          sed -i "s|VGGT.from_pretrained('facebook/VGGT-1B')|VGGT.from_pretrained('/workspace/dataset/VGGT-1B')|" \
-            "${ABOT_PATH}/model/framework/ABot_M0.py"
 
       - name: LIBERO ABot-M0 PPO test
         timeout-minutes: 30
@@ -1662,6 +1666,7 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           export LIBERO_TYPE=standard
+          export VGGT_MODEL_PATH=/workspace/dataset/VGGT-1B
           bash tests/e2e_tests/embodied/run.sh libero_10_ppo_abot_m0
 
       - name: Clean up
@@ -1681,15 +1686,11 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PLUS_PATH=/workspace/dataset/LIBERO-PLUS
+          export ABOT_PATH=/workspace/dataset/ABot-Manipulation
+          export VGGT_PATH=/workspace/dataset/vggt
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
+          export LIBERO_PLUS_ASSET_PATH=/workspace/dataset/LIBERO-PLUS/liberoplus/liberoplus/assets
           bash requirements/install.sh embodied --model abot_m0 --env liberoplus
-
-      - name: Patch ABot-M0 VGGT path
-        run: |
-          source .venv/bin/activate
-          ABOT_PATH=$(python -c "import ABot; import os; print(os.path.dirname(ABot.__file__))")
-          sed -i "s|VGGT.from_pretrained('facebook/VGGT-1B')|VGGT.from_pretrained('/workspace/dataset/VGGT-1B')|" \
-            "${ABOT_PATH}/model/framework/ABot_M0.py"
 
       - name: LIBERO-Plus ABot-M0 PPO test
         timeout-minutes: 30
@@ -1698,6 +1699,7 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           export LIBERO_TYPE=plus
+          export VGGT_MODEL_PATH=/workspace/dataset/VGGT-1B
           bash tests/e2e_tests/embodied/run.sh liberoplus_10_ppo_abot_m0
 
       - name: Clean up
@@ -1841,6 +1843,7 @@ jobs:
           # from sibling wheels are missing. Keep uv's default link mode.
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ROBOLAB_PATH=/workspace/dataset/RoboLab
           bash requirements/install.sh embodied --model openpi --env robolab
 
       - name: RoboLab OpenPI Pi05 evaluation
@@ -1910,6 +1913,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export UV_TORCH_BACKEND=cu128
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model pi0_fast --env libero \
             --python 3.12.12 --torch 2.11.0 --no-flash-attn
 
@@ -1978,6 +1982,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export SIMPLE_PATH=/workspace/dataset/psi0_simple/SIMPLE
+          export PSI0_PATH=/workspace/dataset/psi0_simple/Psi0
           bash requirements/install.sh embodied --model psi0 --env simple
 
       - name: SIMPLE OpenOven Psi0 PPO test

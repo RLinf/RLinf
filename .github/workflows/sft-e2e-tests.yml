@@ -17,6 +17,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export DREAMZERO_PATH=/workspace/dataset/DreamZero/dreamzero
           bash requirements/install.sh embodied --model dreamzero
 
       - name: DreamZero DROID WAN22 SFT test
@@ -113,7 +114,8 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
+          export FASTWAM_PATH=/workspace/dataset/FastWAM/FastWAM
           bash requirements/install.sh embodied --model fastwam --env libero
 
       - name: FastWAM LIBERO FSDP SFT test
@@ -269,6 +271,8 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export COSMOS_FRAMEWORK_PATH=/workspace/dataset/cosmos-framework
+          export LIBERO_ASSET_PATH=/workspace/dataset/LIBERO/libero/libero/assets
           bash requirements/install.sh embodied --model cosmos3 --env libero
           bash requirements/install.sh embodied --model sglang --env libero --venv .venv-sglang
 

@@ -3792,10 +3792,42 @@ snapshot_download(
 EOF
 }
 
+link_hf_libero_assets() {
+    python - "$1" <<'EOF'
+import importlib
+import os
+import shutil
+import sys
+from pathlib import Path
+
+existing = Path(os.path.expanduser(sys.argv[1])).resolve()
+required_dirs = ("articulated_objects", "scenes", "stable_hope_objects")
+if not all((existing / name).is_dir() for name in required_dirs):
+    raise FileNotFoundError(
+        f"LIBERO_ASSET_PATH={existing} is missing required subdirectories {required_dirs}."
+    )
+
+package = importlib.import_module("libero.libero")
+assets_dir = Path(package.__file__).resolve().parent / "assets"
+if assets_dir.resolve() == existing:
+    print(f"LIBERO assets already resolve to {existing}; skipping link.")
+    raise SystemExit(0)
+
+if assets_dir.is_symlink():
+    assets_dir.unlink()
+elif assets_dir.is_dir():
+    shutil.rmtree(assets_dir)
+assets_dir.symlink_to(existing)
+print(f"Linked LIBERO assets {assets_dir} -> {existing}")
+EOF
+}
+
 install_hf_libero_env() {
     materialize_package_files hf-libero
     if hf_libero_assets_present; then
         echo "LIBERO assets already present; skipping download."
+    elif [ -n "${LIBERO_ASSET_PATH:-}" ]; then
+        link_hf_libero_assets "$LIBERO_ASSET_PATH"
     else
         retry_cmd download_hf_libero_assets
     fi
