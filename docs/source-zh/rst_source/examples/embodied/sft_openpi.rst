@@ -76,6 +76,8 @@ OpenPI 监督微调
      - ``model/pi0``
      - ``robotwin_adjust_bottle_sft_openpi``
 
+在关闭短时记忆的 π₀.₅ SFT 中，如果数据集的相机数少于模型预留的槽位数，可设置 ``actor.model.openpi.prune_invalid_image_slots=true``。对于当前批次，如果各训练进程的所有样本都将某个相机标为无效，视觉编码器就跳过这个槽位。如果所有相机都无效，模型会保留一个槽位用于反向传播。此选项默认关闭。
+
 安装与运行
 ----------
 

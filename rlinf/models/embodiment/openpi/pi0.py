@@ -26,6 +26,7 @@ from typing import Any, Sequence
 
 import einops
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -202,9 +203,13 @@ class Pi0(model.BaseModel):
             nn.init.zeros_(self.action_time_mlp_out.bias)
 
     def embed_prefix(
-        self, obs: model.Observation
+        self, obs: model.Observation, *, prune_invalid_image_slots: bool = False
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Embed the prefix (images + language + optional point cloud).
+
+        Args:
+            obs: Preprocessed observation in the model's camera schema.
+            prune_invalid_image_slots: Skip camera slots masked on every SFT rank.
 
         Returns:
             tokens: (B, S, emb_dim) embedded tokens
@@ -236,6 +241,20 @@ class Pi0(model.BaseModel):
                     ]
                 ).tolist()
                 current_only_by_camera = dict(zip(history_names, current_only))
+        elif prune_invalid_image_slots and self.pi05:
+            keep = torch.stack([obs.image_masks[name].any() for name in image_names])
+            # FSDP ranks must call the wrapped vision module in the same order.
+            if (
+                dist.is_available()
+                and dist.is_initialized()
+                and dist.get_world_size() > 1
+            ):
+                dist.all_reduce(keep, op=dist.ReduceOp.MAX)
+            kept_names = [
+                name for name, valid in zip(image_names, keep.tolist()) if valid
+            ]
+            # Keep vision in the backward graph even on an entirely masked step.
+            image_names = kept_names or image_names[:1]
         for name in image_names:
             image_mask = obs.image_masks[name]
             if self._config.short_memory:
@@ -427,7 +446,10 @@ class Pi0(model.BaseModel):
         u_t = noise - actions
 
         # One forward pass for prefix + suffix
-        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(
+            observation,
+            prune_invalid_image_slots=self._config.prune_invalid_image_slots,
+        )
         suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
             observation, x_t, time
         )
