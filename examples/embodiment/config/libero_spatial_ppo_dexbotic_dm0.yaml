@@ -146,6 +146,9 @@ actor:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
+      # The actor scores the original FP32 rollout chains.
+      cast_forward_inputs: False
+      cast_root_forward_inputs: False
 
 reward:
   use_reward_model: False
