@@ -84,6 +84,8 @@ action chunk. For current-frame evaluation, set
 Results and success semantics are described in
 :doc:`LIBERO Evaluation </rst_source/evaluations/guides/libero>`.
 
+For Aloha training and simulator evaluation, see the :doc:`RMBench example <../rmbench>`.
+
 .. note::
 
    Short Memory supports ``openpi.task=eval`` and ``sft``. RL training is not

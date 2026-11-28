@@ -79,6 +79,9 @@ Hydra 参数覆盖
    * - ``realworld_*`` / ``realworld-*``
      - ``realworld``
      - 跳过仿真环境初始化
+   * - ``rmbench_*`` / ``rmbench-*``
+     - ``rmbench``
+     - RMBench
    * - ``robocasa365_*`` / ``robocasa365-*``
      - ``robocasa365``
      - 默认导出 ``NUMBA_DISABLE_JIT=1``
@@ -141,6 +144,7 @@ Benchmark 环境变量
 - :doc:`../guides/maniskill_ood`
 - :doc:`../guides/polaris`
 - :doc:`../guides/realworld`
+- :doc:`../guides/rmbench`
 - :doc:`../guides/robolab`
 - :doc:`../guides/robotwin`
 - :doc:`../guides/simple`

@@ -36,6 +36,12 @@
 
       Franka PnP、自定义 ``FrankaEnv-v1`` 任务与 Dual Franka RTC 真机评测。
 
+   .. grid-item-card:: RMBench
+      :link: rmbench
+      :link-type: doc
+
+      用带 Short Memory 的 π₀.₅ 评测需要记忆历史观测的双臂操作任务。
+
    .. grid-item-card:: RoboLab
       :link: robolab
       :link-type: doc
@@ -93,6 +99,7 @@ SGLang 服务评测
    ManiSkill OOD <maniskill_ood>
    PolaRiS <polaris>
    RealWorld <realworld>
+   RMBench <rmbench>
    RoboLab <robolab>
    RoboTwin <robotwin>
    SIMPLE <simple>

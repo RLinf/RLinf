@@ -1,0 +1,78 @@
+defaults:
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: 0
+
+runner:
+  task_type: embodied_eval
+  only_eval: true
+  logger:
+    log_path: ./logs/rmbench
+    project_name: rlinf
+    experiment_name: rmbench_pi05_eval
+    logger_backends: [tensorboard]
+  ckpt_path: null
+
+env:
+  group_name: EnvGroup
+  eval:
+    env_type: rmbench
+    rollout_epoch: 100
+    total_num_envs: 1
+    group_size: 1
+    auto_reset: false
+    ignore_terminations: false
+    early_stop_on_done: true
+    is_eval: true
+    seed: 0
+    max_episode_steps: 250
+    # Cover the task's 250 control steps with complete 32-action chunks.
+    max_steps_per_rollout_epoch: 256
+    init_params:
+      rmbench_path: /path/to/RMBench
+      sim_python: /path/to/.rmbench-venv/bin/python
+      task_name: observe_and_pickup
+      instruction_type: seen
+    short_memory:
+      num_frames: 8
+      stride: 53
+      fps: 15.0
+    video_cfg:
+      save_video: false
+      video_base_dir: ${runner.logger.log_path}/video
+      fps: 10
+
+rollout:
+  group_name: RolloutGroup
+  rollout_backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    model_path: /path/to/checkpoints/global_step_10000
+    precision: bf16
+    action_dim: 14
+    num_action_chunks: 32
+    openpi:
+      task: eval
+      config_name: pi05_rmbench
+      eval_seed: 100000
+      num_images_in_input: 3
+      action_horizon: 32
+      discrete_state_input: true
+      short_memory: true
+      short_memory_temporal_layers: [3, 7, 11, 15]
+      short_memory_drop_history_layer: 15
+    openpi_data:
+      norm_stats_path: /path/to/norm_stats.json

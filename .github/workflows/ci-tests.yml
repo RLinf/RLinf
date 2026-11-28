@@ -134,6 +134,7 @@ jobs:
               - 'toolkits/realworld_check/**'
               - 'toolkits/replay_buffer/**'
               - 'toolkits/lerobot/**'
+              - 'toolkits/rmbench/**'
               - 'toolkits/dual_franka/**'
               - 'toolkits/cosmos3/**'
               - 'toolkits/supermimic/**'
@@ -241,8 +242,9 @@ jobs:
               - 'rlinf/workers/agent/**'
               - 'rlinf/workers/rollout_buffer/**'
               - 'rlinf/runners/async_agent_runner.py'
-              # test_data.py loads this script to test reward split preprocessing.
+              # test_data.py loads these scripts to test dataset preparation.
               - 'examples/reward/preprocess_reward_dataset.py'
+              - 'toolkits/rmbench/**'
               - 'tests/unit_tests/**'
               - 'tests/conftest.py'
               - '.github/workflows/unit-tests.yml'

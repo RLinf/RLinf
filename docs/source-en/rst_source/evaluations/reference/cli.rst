@@ -79,6 +79,9 @@ Supported Benchmark Prefixes
    * - ``realworld_*`` / ``realworld-*``
      - ``realworld``
      - Skips simulator environment setup
+   * - ``rmbench_*`` / ``rmbench-*``
+     - ``rmbench``
+     - RMBench
    * - ``robocasa365_*`` / ``robocasa365-*``
      - ``robocasa365``
      - Sets ``NUMBA_DISABLE_JIT=1`` by default
@@ -141,6 +144,7 @@ Full launch examples per benchmark:
 - :doc:`../guides/maniskill_ood`
 - :doc:`../guides/polaris`
 - :doc:`../guides/realworld`
+- :doc:`../guides/rmbench`
 - :doc:`../guides/robolab`
 - :doc:`../guides/robotwin`
 - :doc:`../guides/simple`

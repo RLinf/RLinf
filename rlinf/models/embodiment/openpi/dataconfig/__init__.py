@@ -512,6 +512,19 @@ _CONFIGS = [
         num_train_steps=20_000,
     ),
     TrainConfig(
+        name="pi05_rmbench",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            discrete_state_input=True,
+            action_horizon=32,
+        ),
+        data=LeRobotAlohaDataConfig(
+            repo_id="rmbench",
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        num_train_steps=11_642,
+    ),
+    TrainConfig(
         name="pi0_behavior",
         model=pi0_config.Pi0Config(),
         data=LeRobotBehaviorDataConfig(

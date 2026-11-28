@@ -52,6 +52,10 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - ``behavior_r1pro``\ （50 个家居任务）
      - ``behavior/behavior_openpi_pi05_eval.yaml``
      - :doc:`BEHAVIOR-1K <../examples/embodied/behavior>`
+   * - :doc:`RMBench <guides/rmbench>`
+     - ``observe_and_pickup``
+     - ``rmbench/rmbench_openpi_pi05_eval.yaml``
+     - :doc:`RMBench <../examples/embodied/rmbench>`
    * - :doc:`RoboTwin <guides/robotwin>`
      - ``robotwin_place_empty_cup``、``robotwin_adjust_bottle``、``robotwin_place_shoe``、``robotwin_click_bell``
      - ``robotwin/robotwin_place_empty_cup_openvlaoft_eval.yaml`` 等
@@ -155,6 +159,8 @@ SGLang 服务评测指南
         - PolaRiS 桌面操作评测配置。
       * - ``evaluations/realworld/``
         - Franka 单臂、Dual Franka RTC 与 Dual YAM 真机评测配置。
+      * - ``evaluations/rmbench/``
+        - RMBench 双臂 Aloha 评测配置。
       * - ``evaluations/robocasa365/``
         - RoboCasa365 pretrain 任务切片评测配置。
       * - ``evaluations/robodojo/``

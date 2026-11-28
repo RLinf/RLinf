@@ -19,6 +19,7 @@ infer_benchmark() {
         behavior_*|behavior-* ) echo "behavior" ;;
         libero_*|libero-* ) echo "libero" ;;
         robotwin_*|robotwin-* ) echo "robotwin" ;;
+        rmbench_*|rmbench-* ) echo "rmbench" ;;
         robodojo_*|robodojo-* ) echo "robodojo" ;;
         realworld_*|realworld-* ) echo "realworld" ;;
         maniskill_*|maniskill-* ) echo "maniskill" ;;

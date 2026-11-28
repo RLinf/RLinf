@@ -52,6 +52,10 @@ The matrix below covers benchmarks with ready-to-run configs under ``evaluations
      - ``behavior_r1pro`` (50 household tasks)
      - ``behavior/behavior_openpi_pi05_eval.yaml``
      - :doc:`BEHAVIOR-1K <../examples/embodied/behavior>`
+   * - :doc:`RMBench <guides/rmbench>`
+     - ``observe_and_pickup``
+     - ``rmbench/rmbench_openpi_pi05_eval.yaml``
+     - :doc:`RMBench <../examples/embodied/rmbench>`
    * - :doc:`RoboTwin <guides/robotwin>`
      - ``robotwin_place_empty_cup``, ``robotwin_adjust_bottle``, ``robotwin_place_shoe``, ``robotwin_click_bell``
      - ``robotwin/robotwin_place_empty_cup_openvlaoft_eval.yaml``, etc.
@@ -155,6 +159,8 @@ The evaluation runner coordinates env workers and rollout workers over channels 
         - PolaRiS tabletop manipulation evaluation configs.
       * - ``evaluations/realworld/``
         - Franka single-arm, Dual Franka RTC, and Dual YAM real-robot evaluation configs.
+      * - ``evaluations/rmbench/``
+        - RMBench bimanual Aloha evaluation configs.
       * - ``evaluations/robocasa365/``
         - RoboCasa365 pretrain task-slice evaluation configs.
       * - ``evaluations/robodojo/``

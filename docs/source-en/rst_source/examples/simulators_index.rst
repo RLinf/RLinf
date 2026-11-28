@@ -130,6 +130,14 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
 
       Inject observation delay and network emulation into simulated training to test deployment robustness.
 
+   .. grid-item-card:: RMBench
+      :img-top: https://rmbench.github.io/images/rmbench_tasks.jpg
+      :img-alt: RMBench
+      :link: embodied/rmbench
+      :link-type: doc
+
+      Fine-tune π₀.₅ with Short Memory and run closed-loop evaluation on bimanual tasks.
+
    .. grid-item-card:: RoboCasa
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg
       :img-alt: RoboCasa benchmark
@@ -198,6 +206,7 @@ For model-centric workflows (π₀ / π₀.₅, GR00T, …), see :doc:`vla_wam_i
    MuJoCo Warp <embodied/mujoco_warp>
    PolaRiS <embodied/polaris>
    Real-World Simulator <embodied/real_simulator>
+   RMBench <embodied/rmbench>
    RoboCasa <embodied/robocasa>
    RoboCasa365 <embodied/robocasa365>
    RoboDojo (Eval Only) <embodied/robodojo>

@@ -67,10 +67,8 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
             "prompt": prompt,
         }
 
-    @override
-    def create(
-        self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig
-    ) -> DataConfig:  # Apply Aloha-specific policy transforms (e.g. normalization).
+    def policy_transforms(self) -> _transforms.Group:
+        """Build the Aloha input and output transforms before normalization."""
         data_transforms = _transforms.Group(
             inputs=[aloha_policy.AlohaInputs(adapt_to_pi=self.adapt_to_pi)],
             outputs=[aloha_policy.AlohaOutputs(adapt_to_pi=self.adapt_to_pi)],
@@ -90,7 +88,12 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
                 inputs=[_transforms.DeltaActions(delta_action_mask)],
                 outputs=[_transforms.AbsoluteActions(delta_action_mask)],
             )
+        return data_transforms
 
+    @override
+    def create(
+        self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig
+    ) -> DataConfig:
         # Apply model-specific transforms (e.g., Tokenization, Resizing).
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(
             model_config
@@ -100,7 +103,7 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
         return dataclasses.replace(
             self.create_base_config(assets_dirs, model_config),
             repack_transforms=self.repack_transforms,
-            data_transforms=data_transforms,
+            data_transforms=self.policy_transforms(),
             model_transforms=model_transforms,
             action_sequence_keys=("action",),
         )

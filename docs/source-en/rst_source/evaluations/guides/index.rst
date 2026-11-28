@@ -36,6 +36,12 @@ Pick a benchmark below for its end-to-end installation, checkpoint download, lau
 
       Franka PnP, custom ``FrankaEnv-v1`` tasks, and Dual Franka RTC real-robot evaluation.
 
+   .. grid-item-card:: RMBench
+      :link: rmbench
+      :link-type: doc
+
+      Evaluate π₀.₅ with Short Memory on bimanual tasks that require past observations.
+
    .. grid-item-card:: RoboLab
       :link: robolab
       :link-type: doc
@@ -93,6 +99,7 @@ Dedicated guides for world-action models served through RLinf's SGLang embodied 
    ManiSkill OOD <maniskill_ood>
    PolaRiS <polaris>
    RealWorld <realworld>
+   RMBench <rmbench>
    RoboLab <robolab>
    RoboTwin <robotwin>
    SIMPLE <simple>
