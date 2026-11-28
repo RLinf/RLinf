@@ -335,7 +335,7 @@ OpenPI 监督微调
       * - 混合精度（FSDP1）
         - 使用 ``hybrid_engines/openpi_fsdp`` 可在主干 BF16 计算时，保留 projection、RMSNorm、视觉 embedding 与 RLT Stage 1 权重为 FP32。
       * - 分片策略
-        - OpenPI 支持 ``no_shard``、``shard_grad_op`` 和 ``full_shard``，且需开启 ``use_orig_params: true``。
+        - OpenPI 支持 ``no_shard``、``shard_grad_op``、``full_shard`` 和 ``hybrid_shard``，且需开启 ``use_orig_params: true``。
       * - 激活显存与学习率
         - 开启 ``gradient_checkpointing: true`` 与 ``gradient_checkpointing_use_reentrant: false`` 可降低激活显存。BEHAVIOR 与 RoboTwin 使用 ``openpi_cosine`` 学习率调度。
       * - Tokenizer
@@ -361,6 +361,25 @@ OpenPI 监督微调
             param_dtype: bf16
             reduce_dtype: fp32
             buffer_dtype: fp32
+
+.. dropdown:: 跨节点混合分片
+
+   选择 ``hybrid_shard`` 后，训练状态在节点内分片、在节点间复制。用 ``hybrid_shard_size`` 指定每个分片组的 actor rank 数（至少为 2，且须整除 actor rank 总数）。以下配置适用于 2 个节点、每节点 4 个 actor rank 的情况，精度设置沿用上面的配置：
+
+   .. code-block:: yaml
+
+      actor:
+        fsdp_config:
+          strategy: fsdp
+          sharding_strategy: hybrid_shard
+          hybrid_shard_size: 4
+          use_orig_params: true
+
+   这组配置会创建 2 个副本，每个副本分布在连续的 4 个 actor rank 上。OpenPI 的 RL 和 DAgger actor 训练也适用这套配置。
+
+   .. warning::
+
+      将每组连续的 ``hybrid_shard_size`` 个 actor rank 放在同一节点，才能让参数的 all-gather 和 reduce-scatter 通信都限制在节点内。按 actor 的实际 placement 设置组大小；actor 可能只占用节点上的部分 GPU。
 
 .. dropdown:: 支持的数据集与自定义 LeRobot 配置
 

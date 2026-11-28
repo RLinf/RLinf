@@ -457,7 +457,7 @@ NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 
    **LoRA 与 FSDP 分片**
 
    - 对 VLM 做 LoRA 微调时，设置 ``actor.model.is_lora: True`` 与 ``actor.model.lora_rank: 8``。OpenPI 暂不支持梯度检查点，保持 ``gradient_checkpointing: False``。
-   - OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op`` 和 ``full_shard``。设置 ``actor.fsdp_config.sharding_strategy: full_shard`` 与 ``actor.fsdp_config.use_orig_params: true`` 可在 actor 各 rank 间分片训练状态，同时保留配方原有的混合精度配置。
+   - OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op``、``full_shard`` 和 ``hybrid_shard``。设置 ``actor.fsdp_config.sharding_strategy: full_shard`` 与 ``actor.fsdp_config.use_orig_params: true`` 可以在 actor 各 rank 间分片训练状态，同时保留配方原有的混合精度配置；跨节点混合分片配置见 :doc:`sft_openpi`。
 
    **最小测试配置与 OOM 排查**
 

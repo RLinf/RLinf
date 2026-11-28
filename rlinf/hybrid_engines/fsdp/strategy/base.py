@@ -43,6 +43,31 @@ if TYPE_CHECKING:
     from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
 
 
+def _build_sync_local_meta(
+    state_dict: dict[str, torch.Tensor], rank: int, world_size: int
+) -> dict[str, tuple[int, int]]:
+    local_meta: dict[str, tuple[int, int]] = {}
+    for name, param in state_dict.items():
+        if isinstance(param, DTensor):
+            if param.device_mesh.ndim != 1:
+                raise NotImplementedError(
+                    "Disaggregated actor-to-inference weight sync only supports 1-D FSDP meshes; "
+                    f"got mesh_dim_names={param.device_mesh.mesh_dim_names!r}."
+                )
+            full_tensor_size = param.numel()
+            shard_size = (full_tensor_size + world_size - 1) // world_size
+            global_start = rank * shard_size
+            # Last rank may hold a smaller shard.
+            global_end = min(global_start + shard_size, full_tensor_size)
+            needed_size = global_end - global_start
+            if needed_size > 0:
+                local_meta[name] = (global_start, needed_size)
+        elif torch.is_tensor(param):
+            full_tensor_size = param.numel()
+            local_meta[name] = (0, full_tensor_size)
+    return local_meta
+
+
 class FSDPStrategyBase(ABC):
     def __init__(
         self,
@@ -432,29 +457,13 @@ class FSDPStrategyBase(ABC):
         Args:
             - inference (FSDPInference): The FSDP inference worker.
         """
-        # param name -> (global_start, needed_size)
-        local_meta: list[str, tuple[int, int]] = {}
         inference_model_state_dict = inference.get_model_state_dict(
             cpu_offload=False, full_state_dict=False
         )
-        inference_world_size = inference._world_size
-        inference_rank = inference._rank
-        for name, param in inference_model_state_dict.items():
-            if isinstance(param, DTensor):
-                full_tensor_size = param.numel()
-
-                shard_size = (
-                    full_tensor_size + inference_world_size - 1
-                ) // inference_world_size
-                global_start = inference_rank * shard_size
-                # last rank may have smaller shard
-                global_end = min(global_start + shard_size, full_tensor_size)
-                needed_size = global_end - global_start
-                if needed_size > 0:
-                    local_meta[name] = (global_start, needed_size)
-            elif torch.is_tensor(param):
-                full_tensor_size = param.numel()
-                local_meta[name] = (0, full_tensor_size)
+        # param name -> (global_start, needed_size)
+        local_meta = _build_sync_local_meta(
+            inference_model_state_dict, inference._rank, inference._world_size
+        )
 
         actor_group = inference._actor_group_name
         for actor_rank in range(inference._actor_world_size):
@@ -497,27 +506,12 @@ class FSDPStrategyBase(ABC):
 
         inference_requests: list[dict] = [job.wait() for job in jobs]
 
-        actor_world_size = actor._world_size
-        actor_rank = actor._rank
-
-        local_meta = {}
         actor_model_state_dict = actor.get_model_state_dict(
             cpu_offload=False, full_state_dict=False
         )
-        for name, param in actor_model_state_dict.items():
-            if isinstance(param, DTensor):
-                full_tensor_size = param.numel()
-                shard_size = (
-                    full_tensor_size + actor_world_size - 1
-                ) // actor_world_size
-                global_start = actor_rank * shard_size
-                global_end = min(global_start + shard_size, full_tensor_size)
-                size = global_end - global_start
-                if size > 0:
-                    local_meta[name] = (global_start, size)
-            elif torch.is_tensor(param):
-                full_tensor_size = param.numel()
-                local_meta[name] = (0, full_tensor_size)
+        local_meta = _build_sync_local_meta(
+            actor_model_state_dict, actor._rank, actor._world_size
+        )
 
         for inference_rank, inference_param_metadata in enumerate(inference_requests):
             resp = {}

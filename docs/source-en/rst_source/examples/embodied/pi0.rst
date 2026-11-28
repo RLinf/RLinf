@@ -461,7 +461,7 @@ NVIDIA CUDA supports all four environments listed above (select **π₀** or **�
    **LoRA and FSDP sharding**
 
    - Set ``actor.model.is_lora: True`` and ``actor.model.lora_rank: 8`` to fine-tune the VLM with LoRA. Keep ``gradient_checkpointing: False``, as gradient checkpointing is not supported for OpenPI.
-   - OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard``. Set ``actor.fsdp_config.sharding_strategy: full_shard`` and ``actor.fsdp_config.use_orig_params: true`` to shard training state across actor ranks while keeping the recipe's mixed-precision settings.
+   - OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, ``full_shard``, and ``hybrid_shard``. Set ``actor.fsdp_config.sharding_strategy: full_shard`` and ``actor.fsdp_config.use_orig_params: true`` to shard training state across actor ranks while keeping the recipe's mixed-precision settings; for multi-node hybrid sharding, see :doc:`sft_openpi`.
 
    **Minimum test case and OOM tuning**
 

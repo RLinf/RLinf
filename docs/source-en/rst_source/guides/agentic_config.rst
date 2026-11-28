@@ -361,6 +361,7 @@ actor
     fsdp_config:
       strategy: "fsdp"
       sharding_strategy: "no_shard"
+      hybrid_shard_size: null
 
       cpu_offload: False
       offload_pin_memory: False
@@ -608,6 +609,10 @@ Used when ``actor.training_backend`` is ``fsdp``.
    * - ``actor.fsdp_config.sharding_strategy``
      - Sharding strategy: ``full_shard``, ``shard_grad_op``, ``hybrid_shard``, or
        ``no_shard``.
+   * - ``actor.fsdp_config.hybrid_shard_size``
+     - FSDP1: number of actor ranks per sharding group when
+       ``sharding_strategy`` is ``hybrid_shard`` (integer >= 2; must divide the
+       actor world size).
    * - ``actor.fsdp_config.cpu_offload``
      - FSDP2: keep parameters on CPU, moving them to GPU only when needed.
    * - ``actor.fsdp_config.offload_pin_memory``
