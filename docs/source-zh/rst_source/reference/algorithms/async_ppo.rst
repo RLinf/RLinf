@@ -176,7 +176,7 @@ RLinf 的 Async PPO 使用 ``decoupled_actor_critic`` 损失，将“近端约�
 
 为了进一步提高稳定性，RLinf 还叠加了两层保护：
 
-- ``clip_ratio_c``：dual-clip，上界限制极端优势值对梯度的冲击。
+- ``algorithm.use_dual_clip``\ （默认 ``true``）控制是否启用 dual-clip，并配合上界 ``algorithm.clip_ratio_c``\ （默认 ``3.0``）限制极端优势值对梯度的冲击。
 - ``behave_weight_threshold``：行为权重过大时，直接将这部分样本屏蔽。
 
 如果训练中出现明显震荡，优先检查这两个参数和样本陈旧度指标，而不是直接增大学习率或 batch size。

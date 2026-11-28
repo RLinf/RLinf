@@ -274,6 +274,8 @@ class EnvTransition:
         auto_reset: bool,
         bootstrap_type: str,
         gamma: float,
+        previous_dones: torch.Tensor | None = None,
+        bootstrap_non_reset_truncations: bool = False,
     ) -> torch.Tensor | None:
         """Build the reward tensor consumed by trajectory training.
 
@@ -296,10 +298,31 @@ class EnvTransition:
             rewards = rewards.clone()
         if reward_scale != 1.0:
             rewards = rewards * reward_scale
-        if bootstrap_values is None or not auto_reset or self.dones is None:
+        if bootstrap_values is None or self.dones is None:
             return rewards
 
         terminal = self.truncations if bootstrap_type == "standard" else self.dones
+        if not auto_reset:
+            if (
+                not bootstrap_non_reset_truncations
+                or bootstrap_type != "standard"
+                or terminal is None
+            ):
+                return rewards
+            # Non-reset environments retain done flags in later padding chunks.
+            indices = self.dones.long().argmax(dim=-1)
+            mask = self.dones.any(dim=-1) & terminal.gather(
+                1, indices[:, None]
+            ).squeeze(1)
+            if self.terminations is not None:
+                mask &= ~self.terminations.gather(1, indices[:, None]).squeeze(1)
+            if previous_dones is not None:
+                mask &= ~previous_dones[:, -1]
+            rewards[mask, indices[mask]] += gamma * bootstrap_values[mask].reshape(
+                -1
+            ).to(rewards.dtype)
+            return rewards
+
         if terminal is None or not terminal[:, -1].any():
             return rewards
 
@@ -644,6 +667,8 @@ class EnvPart:
         auto_reset: bool,
         bootstrap_type: str,
         gamma: float,
+        previous_dones: torch.Tensor | None = None,
+        bootstrap_non_reset_truncations: bool = False,
     ) -> torch.Tensor | None:
         """Return the training rewards represented by this environment part."""
         return self.transition.compute_rewards(
@@ -654,6 +679,8 @@ class EnvPart:
             auto_reset=auto_reset,
             bootstrap_type=bootstrap_type,
             gamma=gamma,
+            previous_dones=previous_dones,
+            bootstrap_non_reset_truncations=bootstrap_non_reset_truncations,
         )
 
 
@@ -1785,7 +1812,7 @@ class EnvOutput:
         prepared = {key: obs.get(key) for key in PolicyObsSpec.KEYS}
         if obs.get("active_mask") is not None:
             prepared["active_mask"] = obs["active_mask"]
-        for key in ("reset_mask", "history"):
+        for key in ("extra_obs", "reset_mask", "history"):
             if key in obs:
                 prepared[key] = obs[key]
         task_descriptions = prepared["task_descriptions"]

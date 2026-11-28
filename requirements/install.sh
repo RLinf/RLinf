@@ -139,7 +139,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "supermimic" "simple" "robolab" "dexjoco")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "bench2dex" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "supermimic" "simple" "robolab" "dexjoco")
 
 #=======================Utility Functions=======================
 
@@ -1188,6 +1188,7 @@ apply_env_default_torch() {
             esac
             ;;
         robolab) env_torch="2.7.1" ;;
+        bench2dex) env_torch="2.7.0" ;;
         simple) env_torch="2.7.0" ;;
         robodojo) env_torch="2.7.0" ;;
     esac
@@ -2668,6 +2669,13 @@ install_openvla_oft_model() {
 
 install_openpi_model() {
     case "$ENV_NAME" in
+        bench2dex)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install "rlinf-openpi==0.1.1"
+            install_bench2dex_env
+            install_flash_attn
+            ;;
         geniesim)
             create_and_sync_venv
             install_common_embodied_deps
@@ -3620,6 +3628,10 @@ install_env_only() {
         d4rl)
             install_d4rl_env
             ;;
+        bench2dex)
+            install_common_embodied_deps
+            install_bench2dex_env
+            ;;
         mujoco_warp)
             install_common_embodied_deps
             install_mujoco_warp_env
@@ -4029,6 +4041,36 @@ install_robolab_env() {
     materialize_package_files isaacsim-kernel
     materialize_package_files omniverse-kit
     uv pip install openpi-client
+}
+
+install_bench2dex_env() {
+    local isaaclab_dir bench2dex_dir
+    local revision="fd90dcc625b66c2e535a8b25bcf75bc81c7b080d"
+    local checkout_exists=0
+    [ -d "${BENCH2DEX_PATH:-$VENV_DIR/bench2dex}" ] && checkout_exists=1
+    isaaclab_dir=$(clone_or_reuse_repo ISAAC_LAB_PATH "$VENV_DIR/isaaclab" https://github.com/isaac-sim/IsaacLab.git -b v2.3.0 --depth 1)
+    bench2dex_dir=$(clone_or_reuse_repo BENCH2DEX_PATH "$VENV_DIR/bench2dex" https://github.com/Bench2Dex/Bench2Dex.git)
+    if [ "$checkout_exists" -eq 0 ]; then
+        git -C "$bench2dex_dir" checkout --detach "$revision" >&2
+    elif [ "$(git -C "$bench2dex_dir" rev-parse HEAD)" != "$revision" ]; then
+        echo "Bench2Dex expects revision $revision. Use a separate matching checkout via BENCH2DEX_PATH." >&2
+        return 1
+    fi
+    # Install only the scene runtime; teleoperation and upstream model training
+    # have separate dependency stacks and are not used by this adapter.
+    uv pip install "isaacsim[all,extscache]==5.1.0" --extra-index-url https://pypi.nvidia.com
+    uv pip install "flatdict==4.0.1" --no-build-isolation
+    uv pip install -e "$isaaclab_dir/source/isaaclab"
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/bench2dex.txt"
+    export ACCEPT_EULA=Y
+    export OMNI_KIT_ACCEPT_EULA=YES
+    if ! grep -q '^export ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export ACCEPT_EULA=Y" >> "$VENV_DIR/bin/activate"
+    fi
+    if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
+    fi
+    printf '\nexport BENCH2DEX_PATH=%q\n' "$bench2dex_dir" >> "$VENV_DIR/bin/activate"
 }
 
 install_simple_env() {
@@ -4956,6 +4998,14 @@ main() {
         setup_mirror
         install_docs
         return 0
+    fi
+    if [ "$ENV_NAME" = "bench2dex" ]; then
+        if [[ "$PYTHON_VERSION" != 3.11* || "$PLATFORM" != "nvidia" ]]; then
+            echo "Bench2Dex uses Isaac Sim 5.1.0: select --python 3.11.14 --platform nvidia." >&2
+            exit 1
+        fi
+        # Match Bench2Dex's published CUDA 12.8 / torch 2.7 installation.
+        export UV_TORCH_BACKEND="${UV_TORCH_BACKEND:-cu128}"
     fi
     validate_engine
     apply_model_default_torch

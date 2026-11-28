@@ -26,6 +26,7 @@ from rlinf.data.schema.embodied_trajectory import (
     select_trajectory_collector,
     select_trajectory_dispatcher,
 )
+from rlinf.envs.layout import EnvLayout
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
@@ -507,6 +508,12 @@ class EmbodiedRunner:
         if self.cfg.runner.get("use_training_pipeline", False):
             return self.run_pipeline()
 
+        wait_for_offload = any(
+            env_cfg.get("enable_offload", False)
+            for env_cfg in EnvLayout.env_cfgs(
+                self.cfg.env.get("train"), "env.train"
+            ).values()
+        )
         start_step = self.global_step
         start_time = time.time()
         for _step in range(start_step, self.max_steps):
@@ -550,6 +557,9 @@ class EmbodiedRunner:
                     rollout_handle.wait()
                     if self.reward is not None:
                         reward_handle.wait()
+                    if wait_for_offload:
+                        # Environment resources must be released before actor onload.
+                        env_handle.wait()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):

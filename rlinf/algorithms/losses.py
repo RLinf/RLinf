@@ -184,6 +184,7 @@ def compute_ppo_actor_loss(
     clip_log_ratio_max: Optional[float] = None,
     fast_path_zero_loss_mask: Optional[bool] = False,
     log_logprob_diagnostics: bool = False,
+    log_dual_clip_fraction: bool = False,
     rollout_logprobs: Optional[torch.Tensor] = None,
     importance_sampling_clip: Optional[float] = None,
     **kwargs,
@@ -219,7 +220,7 @@ def compute_ppo_actor_loss(
         and loss_mask is not None
         and not loss_mask.any()
     ):
-        return logprobs.masked_fill(~loss_mask, 0.0).sum(), {
+        metrics_data = {
             "actor/policy_loss": torch.tensor(0.0, device=logprobs.device),
             "actor/policy_loss_abs": torch.tensor(0.0, device=logprobs.device),
             "actor/ratio": torch.tensor(0.0, device=logprobs.device),
@@ -229,6 +230,11 @@ def compute_ppo_actor_loss(
             "actor/approx_kl": torch.tensor(0.0, device=logprobs.device),
             "actor/clip_fraction": torch.tensor(0.0, device=logprobs.device),
         }
+        if log_dual_clip_fraction:
+            metrics_data["actor/dual_clip_fraction"] = torch.zeros_like(
+                metrics_data["actor/ratio"]
+            )
+        return logprobs.masked_fill(~loss_mask, 0.0).sum(), metrics_data
 
     if loss_mask_ratio is not None:
         loss_agg_func = masked_mean_ratio
@@ -359,6 +365,10 @@ def compute_ppo_actor_loss(
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
     }
+    if log_dual_clip_fraction:
+        metrics_data["actor/dual_clip_fraction"] = masked_mean(
+            dual_clip_mask.float(), loss_mask_for_metrics
+        )
     if log_logprob_diagnostics:
         with torch.no_grad():
             valid = loss_mask_for_metrics

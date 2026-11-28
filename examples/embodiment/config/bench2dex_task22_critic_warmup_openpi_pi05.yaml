@@ -1,0 +1,24 @@
+defaults:
+  - bench2dex_task22_ppo_openpi_pi05
+  - _self_
+
+runner:
+  logger:
+    experiment_name: bench2dex_task22_critic_warmup_openpi_pi05
+  max_epochs: 10
+  save_interval: 10
+
+algorithm:
+  update_epoch: 4
+
+actor:
+  micro_batch_size: 2
+  global_batch_size: 128
+  optim:
+    lr: 5.0e-6
+    value_lr: 1.0e-4
+    critic_warmup_steps: 1400
+    total_training_steps: 200
+    lr_warmup_steps: -1
+    lr_scheduler: cosine
+    num_cycles: 0.5

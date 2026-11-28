@@ -125,6 +125,25 @@ This mode requires synchronous, non-pipelined embodied training with
 ``actor/behav_approx_kl``, and ``actor/recomputed_logprob_abs_diff`` to measure
 rollout-actor divergence.
 
+Dual-Clip PPO
+^^^^^^^^^^^^^
+
+Dual-clip PPO bounds the policy loss for negative-advantage samples when the importance ratio exceeds ``clip_ratio_c``. Configure it under ``algorithm`` for synchronous embodied PPO (for asynchronous PPO defaults, see :doc:`Async PPO <async_ppo>`):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 50
+
+   * - Setting
+     - Default
+     - Behavior
+   * - ``algorithm.use_dual_clip``
+     - ``false`` (most models; see note)
+     - Enables or disables dual clipping. When omitted, most synchronous PPO models default to disabled, while ``gr00t_n1d6``, ``gr00t_n1d7``, ``pi0_fast``, and ``lingbotvlav2`` still default ``clip_ratio_c`` to ``3.0``. Explicitly setting ``algorithm.use_dual_clip`` also logs ``train/actor/dual_clip_fraction``.
+   * - ``algorithm.clip_ratio_c``
+     - ``3.0`` (when enabled)
+     - Finite upper bound greater than ``1``. Set to ``null`` to disable the bound.
+
 3.2. LLM Reasoning Tasks
 ~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -47,6 +47,7 @@ That launches ManiSkill3 PPO MLP training on one GPU. Next, read the [RLinf Walk
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports [Bench2Dex](https://github.com/Bench2Dex/Bench2Dex) for parallel π₀.₅ dexterous manipulation training (PPO, Async PPO, GRPO) and four-channel generalization evaluation in Isaac Sim, reaching 4.59×–5.78× evaluation throughput on Task64 with 4 GPUs (16 envs) over the single-GPU reference and 100% evaluation success on fixed-scene Task22 PPO. Doc: [Bench2Dex](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/bench2dex.html).
 - [2026/11] 🔥 RLinf supports SuperMimic for Unitree G1 whole-body motion tracking with a differentiable world model in MuJoCo Warp, including multi-GPU FSDP2 scaling, CUDA graphs, and bf16 mixed precision. On NVIDIA A800, it reaches **1.34×** throughput on 1 GPU (0.383 s vs. 0.515 s/update) and **2.27×** on 4 GPUs (0.227 s/update, 6000 updates in ~23 min) over the official single-GPU code, and reaches **0.856** normalized return on 40 LAFAN1 clips (paper: 0.82) with **0** falls. Doc: [SuperMimic](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/supermimic.html).
 - [2026/11] 🔥 RLinf supports FlexRLT: train a compact actor-critic from frozen VLA features, with configurable heads, AC/TD3 updates, and STEAM routing. Doc: [FlexRLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/flexrlt.html).
 - [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. PPO raises the π₀.₅ success rate on `water_plant` from 78.1% after SFT to 98.4%. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
@@ -354,6 +355,7 @@ The components below cover simulators, real-world environments, and training alg
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robodojo.html">RoboDojo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/bench2dex.html">Bench2Dex</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robolab.html">RoboLab (evaluation only)</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/g1_mimic.html">G1 Motion Tracking (MuJoCo Warp)</a> ✅</li>
           <li>More...</li>

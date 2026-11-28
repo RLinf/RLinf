@@ -58,6 +58,9 @@ Hydra 参数覆盖
    * - ``behavior_*`` / ``behavior-*``
      - ``behavior``
      - BEHAVIOR-1K
+   * - ``bench2dex_*`` / ``bench2dex-*``
+     - ``bench2dex``
+     - Bench2Dex
    * - ``calvin_*`` / ``calvin-*``
      - ``calvin``
      - CALVIN（配置回退）

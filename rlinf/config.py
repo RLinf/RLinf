@@ -1303,7 +1303,7 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
     """Require per-step observations when online LeRobot collection is enabled.
 
     The collector stores one observation/action pair per environment step.
-    RoboTwin, LIBERO, and Behavior envs share the field
+    RoboTwin, LIBERO, Behavior, and Bench2Dex envs share the field
     ``skip_intermediate_renders``; online LeRobot requires it to be false on
     every train env. Eval does not write the dataset.
     """
@@ -1325,6 +1325,7 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
         SupportedEnvType.ROBOTWIN: True,
         SupportedEnvType.LIBERO: False,
         SupportedEnvType.BEHAVIOR: False,
+        SupportedEnvType.BENCH2DEX: False,
     }
     train_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
     for path, train_env in train_env_cfgs.items():
@@ -1559,6 +1560,61 @@ def validate_refl_cfg(cfg: DictConfig) -> None:
         )
 
 
+def validate_openpi_rl_cfg(
+    model_cfg: DictConfig, rollout_override: Optional[DictConfig] = None
+) -> None:
+    """Validate OpenPI RL options and matching training-time rollout settings."""
+    from rlinf.models.embodiment.openpi import resolve_num_steps
+    from rlinf.models.embodiment.openpi.rl_config import Pi0RLConfig
+
+    if model_cfg.openpi.get("task", "sft") != "rl":
+        return
+    rollout_cfg = (
+        None
+        if rollout_override is None
+        else OmegaConf.merge(model_cfg, rollout_override)
+    )
+    for cfg in (model_cfg, rollout_cfg):
+        if cfg is not None and (
+            cfg.openpi.get("stochastic_step_range") is not None
+            or cfg.openpi.get("frozen_vision_mode", "follow_model") != "follow_model"
+        ):
+            break
+    else:
+        return
+
+    actor = Pi0RLConfig.from_model_config(model_cfg)
+    num_steps = resolve_num_steps(model_cfg)
+    actor.validate(num_steps)
+    if rollout_cfg is None:
+        return
+    rollout = Pi0RLConfig.from_model_config(rollout_cfg)
+    rollout_steps = resolve_num_steps(rollout_cfg)
+    rollout.validate(rollout_steps)
+    if rollout_cfg.openpi.get("task", "sft") != "rl" or rollout_steps != num_steps:
+        raise ValueError(
+            "Expected matching actor/rollout OpenPI task='rl' and num_steps "
+            "when stochastic_step_range or frozen_vision_mode is configured"
+        )
+    for field in (
+        "stochastic_step_range",
+        "frozen_vision_mode",
+        "noise_method",
+        "noise_level",
+        "joint_logprob",
+        "ignore_last",
+        "is_nft",
+        "train_expert_only",
+    ):
+        actor_value = getattr(actor, field)
+        rollout_value = getattr(rollout, field)
+        if actor_value != rollout_value:
+            raise ValueError(
+                f"Expected matching actor/rollout openpi.{field}, "
+                f"got {actor_value!r} and {rollout_value!r}"
+            )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1603,6 +1659,7 @@ def validate_embodied_cfg(cfg):
         if not only_eval:
             build_prefix_off_policy_algorithm(cfg)
     if model_type == SupportedModel.OPENPI:
+        validate_openpi_rl_cfg(model_cfg, None if only_eval else cfg.rollout.model)
         if only_eval and model_cfg.openpi.get("short_memory", False):
             eval_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("eval", None), "env.eval")
             for env_path, env_cfg in eval_env_cfgs.items():
@@ -2134,6 +2191,33 @@ def validate_embodied_cfg(cfg):
         assert stage_num == 1, (
             "enable_decoupled_mode requires rollout.pipeline_stage_num to be 1"
         )
+
+    for split in ("eval",) if only_eval else ("train", "eval"):
+        path = f"env.{split}"
+        mode_cfg = cfg.env.get(split)
+        env_cfgs = EnvLayout.env_cfgs(mode_cfg, path)
+        if not any(
+            env_cfg.env_type == SupportedEnvType.BENCH2DEX.value
+            for env_cfg in env_cfgs.values()
+        ):
+            continue
+
+        from rlinf.envs.sim.bench2dex.spec import validate_bench2dex_env_cfg
+
+        for spec in EnvLayout(mode_cfg, env_world_size, path).specs:
+            if spec.cfg.env_type == SupportedEnvType.BENCH2DEX.value:
+                validate_bench2dex_env_cfg(
+                    cfg,
+                    spec.cfg,
+                    model_cfg,
+                    len(spec.ranks),
+                    split,
+                    actor_world_size=(
+                        None
+                        if only_eval
+                        else component_placement.get_world_size("actor")
+                    ),
+                )
 
     if enable_eval:
         assert cfg.env.get("eval", None) is not None, (

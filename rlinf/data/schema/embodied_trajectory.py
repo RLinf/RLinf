@@ -474,6 +474,17 @@ class AccumulatorOutput(TrajectoryOutput):
     ) -> None:
         """Resolve and retain one joined chunk without inspecting its fields."""
         spec = self._geometry.spec(chunk.key.env_rank)
+        bootstrap_non_reset_truncations = spec.cfg.get(
+            "bootstrap_non_reset_truncations", False
+        )
+        previous_dones = None
+        if bootstrap_non_reset_truncations and not spec.cfg.auto_reset:
+            previous = (
+                chunk.env.initial_transition
+                if chunk.key.chunk_id == 0
+                else accumulator.steps[-1]
+            )
+            previous_dones = previous.dones if previous is not None else None
         rewards = chunk.env.compute_rewards(
             env_reward_weight=self._env_reward_weight,
             reward_weight=self._reward_weight,
@@ -481,6 +492,8 @@ class AccumulatorOutput(TrajectoryOutput):
             auto_reset=spec.cfg.auto_reset,
             bootstrap_type=self._cfg.algorithm.get("bootstrap_type", "standard"),
             gamma=self._env_algorithm_cfgs[spec.name].get("gamma", 1.0),
+            previous_dones=previous_dones,
+            bootstrap_non_reset_truncations=bootstrap_non_reset_truncations,
         )
         step = TrajectoryStep.from_parts(
             chunk.policy,

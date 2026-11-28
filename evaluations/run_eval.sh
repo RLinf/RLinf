@@ -17,6 +17,7 @@ infer_benchmark() {
     local config_name="$1"
     case "${config_name}" in
         behavior_*|behavior-* ) echo "behavior" ;;
+        bench2dex_*|bench2dex-* ) echo "bench2dex" ;;
         libero_*|libero-* ) echo "libero" ;;
         robotwin_*|robotwin-* ) echo "robotwin" ;;
         robodojo_*|robodojo-* ) echo "robodojo" ;;

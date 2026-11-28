@@ -194,7 +194,7 @@ Operationally:
 
 RLinf adds two additional stabilizers:
 
-- ``clip_ratio_c`` applies dual clipping to cap extreme advantage-driven gradients,
+- ``algorithm.use_dual_clip`` (default ``true``) toggles dual clipping with upper bound ``algorithm.clip_ratio_c`` (default ``3.0``) to cap extreme advantage-driven gradients,
 - ``behave_weight_threshold`` filters out samples with excessively large behavior weights.
 
 If training becomes unstable, these controls and the staleness metrics should be checked before changing high-level learning settings.

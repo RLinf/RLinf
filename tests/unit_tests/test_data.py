@@ -1481,6 +1481,80 @@ def test_infer_obs_batch_size_raises_when_unbatched():
         infer_obs_batch_size({"obs": {}})
 
 
+@pytest.mark.parametrize("auto_reset", [False, True])
+@pytest.mark.parametrize("has_value", [False, True])
+@pytest.mark.parametrize("bootstrap_non_reset", [False, True])
+def test_standard_bootstrap_preserves_terminal_and_nonterminal_rewards(
+    auto_reset, has_value, bootstrap_non_reset
+):
+    transition = EnvTransition(
+        rewards=torch.ones(3, 2),
+        dones=torch.tensor([[False, True], [False, True], [False, False]]),
+        truncations=torch.tensor([[False, True], [False, False], [False, False]]),
+        terminations=torch.tensor([[False, False], [False, True], [False, False]]),
+    )
+    rewards = transition.compute_rewards(
+        bootstrap_values=torch.full((3, 1), 4.0) if has_value else None,
+        env_reward_weight=1.0,
+        reward_weight=1.0,
+        reward_scale=1.0,
+        auto_reset=auto_reset,
+        bootstrap_type="standard",
+        gamma=0.5,
+        previous_dones=torch.zeros(3, 2, dtype=torch.bool),
+        bootstrap_non_reset_truncations=bootstrap_non_reset,
+    )
+    expected = torch.ones(3, 2)
+    if has_value and (auto_reset or bootstrap_non_reset):
+        expected[0, -1] = 3.0
+    assert torch.equal(rewards, expected)
+    assert torch.equal(transition.rewards, torch.ones(3, 2))
+
+
+@pytest.mark.parametrize("bootstrap_non_reset", [False, True])
+def test_nonreset_bootstrap_uses_first_terminal_action_and_skips_padding(
+    bootstrap_non_reset,
+):
+    truncations = torch.tensor(
+        [
+            [False, True, True, True],
+            [True, True, True, True],
+            [True, True, True, True],
+            [False, True, True, True],
+        ]
+    )
+    transition = EnvTransition(
+        rewards=torch.zeros(4, 4),
+        dones=truncations.clone(),
+        truncations=truncations,
+        terminations=torch.tensor(
+            [
+                [False, False, False, False],
+                [False, False, False, False],
+                [False, False, False, False],
+                [False, True, True, True],
+            ]
+        ),
+    )
+    previous = torch.zeros(4, 4, dtype=torch.bool)
+    previous[2] = True
+    rewards = transition.compute_rewards(
+        bootstrap_values=torch.tensor([[4.0], [6.0], [8.0], [10.0]]),
+        env_reward_weight=1.0,
+        reward_weight=1.0,
+        reward_scale=1.0,
+        auto_reset=False,
+        bootstrap_type="standard",
+        gamma=0.5,
+        previous_dones=previous,
+        bootstrap_non_reset_truncations=bootstrap_non_reset,
+    )
+    expected = torch.zeros(4, 4)
+    if bootstrap_non_reset:
+        expected[0, 1], expected[1, 0] = 2.0, 3.0
+    assert torch.equal(rewards, expected)
+
+
 def test_env_output_composes_one_transition_object():
     transition = EnvTransition(
         rewards=torch.ones(2, 1),
@@ -1505,6 +1579,7 @@ def test_env_output_preserves_nested_observations():
             "states": torch.full((2, 3), value),
             "depth_images": torch.full((2, 2, 2), value),
             "reset_mask": torch.tensor([False, True]),
+            "extra_obs": {"sensor_metadata": {"frame_index": torch.full((2,), value)}},
             "history": {
                 "main_images": torch.full((2, 3, 2, 2, 3), value),
                 "wrist_images": torch.full((2, 3, 2, 2, 3), value + 1),
@@ -1518,7 +1593,7 @@ def test_env_output_preserves_nested_observations():
 
     for name, original in (("obs", output.obs), ("final_obs", output.final_obs)):
         assert "depth_images" not in payload[name]
-        for key in ("states", "reset_mask", "history"):
+        for key in ("states", "extra_obs", "reset_mask", "history"):
             torch.testing.assert_close(payload[name][key], original[key])
     assert (
         "history" not in EnvOutput(obs={"states": torch.zeros(2, 3)}).to_dict()["obs"]
@@ -1566,6 +1641,9 @@ def test_env_worker_restores_terminal_observations(array_type, later_reset):
     def observation(value):
         return {
             "states": array_type([[value], [value + 1]]),
+            "extra_obs": {
+                "sensor_metadata": {"frame_index": array_type([value, value + 1])}
+            },
             "task_descriptions": [f"task {value}", f"task {value + 1}"],
             "history": {
                 "main_images": array_type([[[value]], [[value + 1]]]),
@@ -1598,7 +1676,10 @@ def test_env_worker_restores_terminal_observations(array_type, later_reset):
     expected["task_descriptions"][1] = second["task_descriptions"][1]
     for key in expected["history"]:
         expected["history"][key][1] = second["history"][key][1]
-    for key in ("states", "history"):
+    expected["extra_obs"]["sensor_metadata"]["frame_index"][1] = second["extra_obs"][
+        "sensor_metadata"
+    ]["frame_index"][1]
+    for key in ("states", "extra_obs", "history"):
         torch.testing.assert_close(merged[key], expected[key])
         torch.testing.assert_close(current[key], original[key])
     assert merged["task_descriptions"] == expected["task_descriptions"]
@@ -2517,6 +2598,41 @@ def test_rollout_materializes_each_epoch_boundary_and_final_value_in_order():
     )
 
 
+@pytest.mark.parametrize("env_type", [None, "bench2dex", "geniesim", "robotwin"])
+def test_nonreset_collector_bootstraps_once_per_episode_after_reset(env_type):
+    cfg = _config(
+        env={
+            "train": {
+                "auto_reset": False,
+                "env_type": env_type,
+                "bootstrap_non_reset_truncations": env_type == "bench2dex",
+                "rollout_epoch": 2,
+                "max_steps_per_rollout_epoch": 3,
+            }
+        }
+    )
+    collector = _make(cfg)
+    outputs = []
+    for epoch in range(2):
+        for chunk in range(3):
+            key = TrajectoryKey(3, epoch, 0, 0, chunk)
+            initial = EnvTransition(dones=torch.zeros(1, 1, dtype=torch.bool))
+            env = _env_part(key, initial_transition=initial if chunk == 0 else None)
+            env.transition.rewards = torch.tensor([[1.0, 2.0, 0.0][chunk]]).reshape(
+                1, 1
+            )
+            env.transition.dones[:] = chunk > 0
+            env.transition.truncations[:] = chunk > 0
+            env.bootstrap_values = torch.tensor([[4.0 if chunk == 1 else 9.0]])
+            outputs.extend(_collect(collector, _policy(key), env))
+    [(_, trajectory)] = outputs
+    terminal_reward = 4.0 if env_type == "bench2dex" else 2.0
+    assert torch.equal(
+        trajectory.rewards[:, 0, 0],
+        torch.tensor([1.0, terminal_reward, 0.0, 1.0, terminal_reward, 0.0]),
+    )
+
+
 def test_rollout_omits_policy_statistics_when_collection_is_disabled():
     collector = _make(_config(rollout={"collect_prev_infos": False}))
     key = TrajectoryKey(3, 0, 0, 0, 0)
@@ -2570,6 +2686,38 @@ def test_history_reward_assignment_matches_main_across_chunks():
 
     # Current reward: 1 + 2 * 3. History assignment adds 2 * 3 to step 0.
     assert torch.equal(trajectory.rewards, torch.tensor([[[7.0]], [[7.0]]]))
+
+
+def test_bench2dex_history_reward_assignment_includes_timeout_bootstrap():
+    cfg = _config(
+        env={
+            "train": {
+                "auto_reset": False,
+                "env_type": "bench2dex",
+                "bootstrap_non_reset_truncations": True,
+                "max_steps_per_rollout_epoch": 2,
+            }
+        },
+        reward={
+            "env_reward_weight": 1.0,
+            "history_reward_assign": True,
+            "reward_mode": "history_buffer",
+            "reward_weight": 2.0,
+        },
+    )
+    collector = _make(cfg)
+    first_key = TrajectoryKey(3, 0, 0, 0, 0)
+    second_key = TrajectoryKey(3, 0, 0, 0, 1)
+    initial = EnvTransition(dones=torch.zeros(1, 1, dtype=torch.bool))
+    first_env = _env_part(first_key, initial_transition=initial)
+    first_env.transition.dones[:] = False
+    first_env.transition.truncations[:] = False
+    second_env = _env_part(second_key)
+    second_env.transition.reward_model_output = torch.tensor([[3.0]])
+    second_env.transition.reward_assign_lengths = [2]
+    assert _collect(collector, _policy(first_key), first_env) == []
+    [(_, trajectory)] = _collect(collector, second_env, _policy(second_key))
+    assert torch.equal(trajectory.rewards, torch.tensor([[[7.0]], [[9.0]]]))
 
 
 @pytest.mark.parametrize(

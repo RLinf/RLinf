@@ -1,0 +1,19 @@
+defaults:
+  - pi0_5
+  - _self_
+
+model_path: ${oc.env:BENCH2DEX_PI05_PATH}
+precision: bf16
+action_dim: 32
+num_action_chunks: 20
+num_steps: 10
+
+openpi:
+  config_name: pi05_bench2dex
+  action_horizon: 20
+  model_action_dim: 32
+  max_token_len: 280
+  discrete_state_input: true
+  num_images_in_input: 4
+  image_keys: [base_0_rgb, base_1_rgb, left_wrist_0_rgb, right_wrist_0_rgb]
+  torch_compile: false

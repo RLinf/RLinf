@@ -218,8 +218,8 @@ Async PPO 样本陈旧度
      - 被 ``behave_weight_threshold`` 过滤掉的样本比例。
      - 过高说明大量陈旧样本被丢弃、有效吞吐下降。
    * - ``train/actor/dual_clip_fraction``
-     - 触发双重裁剪上界 ``clip_ratio_c`` 的比例。
-     - 持续偏高说明单步策略偏移过大。
+     - 触发双重裁剪上界 ``clip_ratio_c`` 的比例（异步 PPO 默认记录，同步 PPO 在配置 ``algorithm.use_dual_clip`` 时记录，配置见 :doc:`PPO <algorithms/ppo>`）。
+     - 持续偏高说明单步策略偏移或负 Advantage 样本的概率比偏移过大。
    * - ``train/actor/average_version`` / ``train/actor/current_version``
      - 训练批次的平均行为 policy 版本与当前 actor 版本。
      - 差值 ``current_version - average_version`` 直接量化样本滞后步数。

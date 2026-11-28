@@ -19,6 +19,8 @@ fi
 export HYDRA_FULL_ERROR=1
 export EMBODIED_PATH=${REPO_PATH}/examples/embodiment
 export EVALUATIONS_PATH=${REPO_PATH}/evaluations
+source "${EMBODIED_PATH}/sim_env.sh"
+setup_isaac_runtime
 
 export LIBERO_TYPE=${LIBERO_TYPE:-"standard"}
 if [ "$LIBERO_TYPE" == "pro" ]; then

@@ -52,6 +52,11 @@ The matrix below covers benchmarks with ready-to-run configs under ``evaluations
      - ``behavior_r1pro`` (50 household tasks)
      - ``behavior/behavior_openpi_pi05_eval.yaml``
      - :doc:`BEHAVIOR-1K <../examples/embodied/behavior>`
+   * - Bench2Dex
+     - Task22 and Task64
+     - | ``bench2dex/bench2dex_task22_openpi_pi05_eval.yaml``
+       | ``bench2dex/bench2dex_task64_openpi_pi05_eval.yaml``
+     - :doc:`Bench2Dex <../examples/embodied/bench2dex>`
    * - :doc:`RoboTwin <guides/robotwin>`
      - ``robotwin_place_empty_cup``, ``robotwin_adjust_bottle``, ``robotwin_place_shoe``, ``robotwin_click_bell``
      - ``robotwin/robotwin_place_empty_cup_openvlaoft_eval.yaml``, etc.
@@ -145,6 +150,8 @@ The evaluation runner coordinates env workers and rollout workers over channels 
         - Unified launcher with benchmark inference, log setup, and simulator env setup.
       * - ``evaluations/behavior/``
         - BEHAVIOR-1K household evaluation configs.
+      * - ``evaluations/bench2dex/``
+        - Bench2Dex Task22 and Task64 configs (single-channel runs via ``evaluations/run_eval.sh``; four-channel batch evaluation via ``evaluations/bench2dex/run_all_channels.py``).
       * - ``evaluations/geniesim/``
         - GenieSim server-backed evaluation configs.
       * - ``evaluations/libero/``

@@ -114,6 +114,25 @@ Rollout 与 Actor 的重要性采样修正
 
 该模式要求使用同步、非流水线的具身训练，``loss_type`` 为 ``actor`` 或 ``actor_critic``。通过 ``actor/importance_sampling_weight``、``actor/importance_sampling_clip_fraction``、``actor/behav_approx_kl`` 和 ``actor/recomputed_logprob_abs_diff`` 监控 rollout 与 actor 的差异。
 
+Dual-Clip PPO
+^^^^^^^^^^^^^
+
+Dual-Clip PPO 在负 Advantage 样本的概率比超过 ``clip_ratio_c`` 时限制 policy loss 上界。同步具身 PPO 可在 ``algorithm`` 下配置（异步 PPO 的默认行为见 :doc:`Async PPO <async_ppo>`）：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 50
+
+   * - 配置项
+     - 默认值
+     - 说明
+   * - ``algorithm.use_dual_clip``
+     - 大多数模型为 ``false``\ （见说明）
+     - 启用或关闭双重裁剪。省略时，大多数同步 PPO 模型默认关闭，但 ``gr00t_n1d6``、``gr00t_n1d7``、``pi0_fast`` 和 ``lingbotvlav2`` 仍默认启用 ``clip_ratio_c=3.0``；显式设置 ``algorithm.use_dual_clip`` 时会记录 ``train/actor/dual_clip_fraction``。
+   * - ``algorithm.clip_ratio_c``
+     - 启用时为 ``3.0``
+     - 大于 ``1`` 的有限上界；设为 ``null`` 可禁用该上界。
+
 3.2. LLM 推理任务
 ~~~~~~~~~~~~~~~~~
 LLM 推理任务的配置与具身任务的配置有相似之处。

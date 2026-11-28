@@ -218,8 +218,8 @@ Logged by ``compute_decoupled_ppo_actor_loss`` during :doc:`Async PPO <algorithm
      - Fraction of samples filtered by ``behave_weight_threshold``.
      - High drop rates mean stale samples are being discarded instead of trained on.
    * - ``train/actor/dual_clip_fraction``
-     - Fraction of entries hitting the dual-clip bound ``clip_ratio_c``.
-     - Persistent high fraction signals overly large policy shifts.
+     - Fraction of entries hitting the dual-clip bound ``clip_ratio_c`` (always logged in Async PPO; logged in sync PPO when ``algorithm.use_dual_clip`` is set; see :doc:`PPO <algorithms/ppo>`).
+     - Persistent high fraction signals overly large policy shifts or negative-advantage importance ratios.
    * - ``train/actor/average_version`` / ``train/actor/current_version``
      - Mean behavior-policy version of the training batch vs. current actor version.
      - Gap ``current_version - average_version`` directly measures policy staleness in steps.

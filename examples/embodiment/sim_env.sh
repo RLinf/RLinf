@@ -3,6 +3,13 @@
 # Derived paths are exported only when the corresponding base path is set.
 # ROBOTWIN_PATH and DREAMZERO_PATH are added to PYTHONPATH only when set.
 
+setup_isaac_runtime() {
+    if [ -n "${ISAAC_PATH:-}" ]; then
+        export EXP_PATH="${EXP_PATH:-${ISAAC_PATH}/apps}"
+        export CARB_APP_PATH="${CARB_APP_PATH:-${ISAAC_PATH}/kit}"
+    fi
+}
+
 setup_sim_env() {
     export MUJOCO_GL="${MUJOCO_GL:-egl}"
     export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
@@ -16,10 +23,7 @@ setup_sim_env() {
     fi
     export OMNIGIBSON_HEADLESS="${OMNIGIBSON_HEADLESS:-1}"
 
-    if [ -n "${ISAAC_PATH:-}" ]; then
-        export EXP_PATH="${EXP_PATH:-${ISAAC_PATH}/apps}"
-        export CARB_APP_PATH="${CARB_APP_PATH:-${ISAAC_PATH}/kit}"
-    fi
+    setup_isaac_runtime
 
     if [ -n "${ROBOTWIN_PATH:-}" ]; then
         export PYTHONPATH="${REPO_PATH}:${ROBOTWIN_PATH}${PYTHONPATH:+:${PYTHONPATH}}"

@@ -52,6 +52,11 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - ``behavior_r1pro``\ （50 个家居任务）
      - ``behavior/behavior_openpi_pi05_eval.yaml``
      - :doc:`BEHAVIOR-1K <../examples/embodied/behavior>`
+   * - Bench2Dex
+     - Task22 和 Task64
+     - | ``bench2dex/bench2dex_task22_openpi_pi05_eval.yaml``
+       | ``bench2dex/bench2dex_task64_openpi_pi05_eval.yaml``
+     - :doc:`Bench2Dex <../examples/embodied/bench2dex>`
    * - :doc:`RoboTwin <guides/robotwin>`
      - ``robotwin_place_empty_cup``、``robotwin_adjust_bottle``、``robotwin_place_shoe``、``robotwin_click_bell``
      - ``robotwin/robotwin_place_empty_cup_openvlaoft_eval.yaml`` 等
@@ -145,6 +150,8 @@ SGLang 服务评测指南
         - 统一启动脚本，负责推断 benchmark、准备日志目录与初始化仿真环境。
       * - ``evaluations/behavior/``
         - BEHAVIOR-1K 家居任务评测配置。
+      * - ``evaluations/bench2dex/``
+        - Bench2Dex Task22 与 Task64 评测配置（单通道通过 ``evaluations/run_eval.sh`` 运行，四通道批量评测通过 ``evaluations/bench2dex/run_all_channels.py`` 运行）。
       * - ``evaluations/geniesim/``
         - GenieSim 服务化仿真评测配置。
       * - ``evaluations/libero/``
