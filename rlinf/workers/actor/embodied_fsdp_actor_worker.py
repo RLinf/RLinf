@@ -14,8 +14,9 @@
 
 import math
 from collections import defaultdict
+from collections.abc import Callable, Iterator
 from functools import cached_property
-from typing import Any, Callable, Iterator
+from typing import Any
 
 import numpy as np
 import torch
@@ -1071,7 +1072,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "loss_mask": loss_mask,
             "loss_mask_ratio": loss_mask_ratio,
             "task_type": self.cfg.runner.task_type,
-            "critic_warmup": self.optimizer_steps < self.critic_warmup_steps,
+            "critic_warmup": self.optimizer_warmup.active,
             "logprob_mask": output_dict.get("logprob_mask", None),
             "log_logprob_diagnostics": self.cfg.algorithm.get(
                 "log_logprob_diagnostics", False

@@ -14,7 +14,7 @@
 
 import os
 import warnings
-from typing import ContextManager, Union
+from contextlib import AbstractContextManager
 
 import torch
 import torch.nn as nn
@@ -39,10 +39,12 @@ from rlinf.hybrid_engines.fsdp import (
     FSDP,
     FSDPModule,
 )
+from rlinf.hybrid_engines.fsdp.checkpoint import Checkpoint
 from rlinf.hybrid_engines.fsdp.optim import (
     build_adamw,
     validate_adam_mixed_precision,
 )
+from rlinf.hybrid_engines.fsdp.optimizer_warmup import OptimizerWarmup
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
     create_device_mesh,
@@ -96,13 +98,10 @@ class FSDPModelManager:
                 "convert fp32 to fp16 during operator execution."
             )
 
-        self.optimizer_steps = 0
-        self.critic_warmup_steps = 0
-        if self._cfg.get("optim", {}).get(
-            "critic_warmup_steps", None
-        ) and self._cfg.model.get("add_value_head", False):
-            self.critic_warmup_steps = self._cfg.optim.critic_warmup_steps
-        self.store_requires_grad_param_name = []
+        warmup_steps = self._cfg.get("optim", {}).get("critic_warmup_steps") or 0
+        self.optimizer_warmup = OptimizerWarmup(
+            warmup_steps if self._cfg.model.get("add_value_head", False) else 0
+        )
 
         if cfg.get("tokenizer", {}).get("tokenizer_model", None) is not None:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
@@ -137,7 +136,7 @@ class FSDPModelManager:
 
         self.param_names_need_sync: list[str] = None
 
-    def _create_amp_context(self) -> ContextManager:
+    def _create_amp_context(self) -> AbstractContextManager:
         """
         Create AMP context manager based on configuration.
 
@@ -328,10 +327,11 @@ class FSDPModelManager:
         self.model = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
         )
-        self.optimizer = self.build_optimizer(
-            model=self.model, enable_critic_warmup=self.critic_warmup_steps > 0
-        )
-
+        if self.optimizer_warmup.active:
+            if torch.distributed.get_rank() == 0:
+                self._logger.info("[FSDP] Enable critic warmup for value head.")
+            self.optimizer_warmup.apply(self.model)
+        self.optimizer = self.build_optimizer(self.model)
         self.lr_scheduler = self.build_lr_scheduler(
             optimizer=self.optimizer, optim_config=self._cfg.optim
         )
@@ -394,9 +394,29 @@ class FSDPModelManager:
             self.load_optimizer(self.device)
             self.is_optimizer_offloaded = False
 
-        self._strategy.load_checkpoint(
-            self.model, self.optimizer, self.lr_scheduler, load_path
-        )
+        checkpoint = Checkpoint(load_path, self._strategy.get_fsdp_version())
+        progress = checkpoint.read_optimizer_progress()
+        warmup = self.optimizer_warmup
+        if progress is None:
+            if warmup.active and torch.distributed.get_rank() == 0:
+                self._logger.warning(
+                    "[FSDP] Checkpoint has no optimizer progress. Critic warmup "
+                    "restarts from step 0. If the checkpoint was saved after "
+                    "warmup, the actor stays frozen and saved actor optimizer "
+                    "state may be skipped. Set actor.optim.critic_warmup_steps=0 "
+                    "when resuming a checkpoint known to have finished warmup."
+                )
+        elif warmup.restore(
+            self.model,
+            optimizer_steps=progress["optimizer_steps"],
+            steps=progress["critic_warmup_steps"],
+        ):
+            self.optimizer = self.build_optimizer(self.model)
+            self.lr_scheduler = self.build_lr_scheduler(
+                optimizer=self.optimizer, optim_config=self._cfg.optim
+            )
+
+        checkpoint.load(self.model, self.optimizer, self.lr_scheduler)
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         """
@@ -414,14 +434,17 @@ class FSDPModelManager:
         if restore_optimizer_offload:
             self.load_optimizer(self.device)
 
-        self._strategy.save_checkpoint(
+        Checkpoint(save_path, self._strategy.get_fsdp_version()).save(
             self.model,
             self.optimizer,
             self.lr_scheduler,
-            save_path,
             save_full_model_weights=self._cfg.fsdp_config.get(
                 "save_full_model_weights", True
             ),
+            optimizer_progress={
+                "optimizer_steps": self.optimizer_warmup.optimizer_steps,
+                "critic_warmup_steps": self.optimizer_warmup.steps,
+            },
         )
 
         if restore_weight_offload:
@@ -474,7 +497,8 @@ class FSDPModelManager:
         Returns:
             A tuple of (grad_norm, lr_list), lr_list contains learning rates for all param groups.
         """
-        self.optimizer_steps += 1
+        was_in_warmup = self.optimizer_warmup.active
+        self.optimizer_warmup.optimizer_steps += 1
         self.grad_scaler.unscale_(self.optimizer)
         grad_norm = self._strategy.clip_grad_norm_(
             model=self.model,
@@ -489,14 +513,13 @@ class FSDPModelManager:
 
         self.grad_scaler.update()
 
-        if self.critic_warmup_steps > 0:
+        if was_in_warmup:
             lr_list = [0.0 for _ in self.optimizer.param_groups]
-            if self.optimizer_steps >= self.critic_warmup_steps:
-                self.optimizer = self.build_optimizer(model=self.model)
-                self.critic_warmup_steps = 0
+            if not self.optimizer_warmup.active:
+                self.optimizer_warmup.apply(self.model)
+                self.optimizer = self.build_optimizer(self.model)
                 self.lr_scheduler = self.build_lr_scheduler(
-                    optimizer=self.optimizer,
-                    optim_config=self._cfg.optim,
+                    optimizer=self.optimizer, optim_config=self._cfg.optim
                 )
         else:
             lr_list = [group["lr"] for group in self.optimizer.param_groups]
@@ -541,15 +564,13 @@ class FSDPModelManager:
 
     def build_optimizer(
         self,
-        model: Union[nn.Module, FSDPModule, FSDP],
-        enable_critic_warmup: bool = False,
+        model: nn.Module | FSDPModule | FSDP,
     ) -> Optimizer:
         """
         Build the optimizer based on the configuration, currently only support Adam optimizer.
 
         Args:
             model: The model to optimize, can be nn.Module, FSDPModule (used in FSDP2) or FSDP.
-            enable_critic_warmup: Whether to enable critic warmup used for value network.
 
         Returns:
             Optimizer: The constructed optimizer.
@@ -562,26 +583,14 @@ class FSDPModelManager:
         params_critic = []
         actor_params_names = []
 
-        if enable_critic_warmup:
-            self._logger.info("[FSDP] Enable critic warmup for value head.")
-            for name, param in model.named_parameters():
-                if param.requires_grad:
-                    self.store_requires_grad_param_name.append(name)
-                    if "value_head" in name or "model.value_head" in name:
-                        params_critic.append(param)
-                        continue
-                    param.requires_grad = False
-
-        else:
-            for name, param in model.named_parameters():
-                if name in self.store_requires_grad_param_name:
-                    param.requires_grad = True
-                if param.requires_grad:
-                    if "value_head" in name or "model.value_head" in name:
-                        params_critic.append(param)
-                    else:
-                        params_actor.append(param)
-                        actor_params_names.append(name)
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            if "value_head" in name:
+                params_critic.append(param)
+            else:
+                params_actor.append(param)
+                actor_params_names.append(name)
 
         lr_multipliers = getattr(model, "lr_multipliers", None)
 
@@ -686,7 +695,7 @@ class FSDPModelManager:
 
     def build_optimizers(
         self,
-        model: Union[nn.Module, FSDPModule, FSDP],
+        model: nn.Module | FSDPModule | FSDP,
         main_optim_config: DictConfig,
         param_filters: dict[str, list[str]],
         filtered_optim_config: dict[str, DictConfig],
@@ -753,8 +762,8 @@ class FSDPModelManager:
         return ShardedGradScaler(enabled=enabled, **kwargs)
 
     def before_micro_batch(
-        self, model: Union[FSDP, FSDPModule], is_last_micro_batch: bool
-    ) -> ContextManager:
+        self, model: FSDP | FSDPModule, is_last_micro_batch: bool
+    ) -> AbstractContextManager:
         """
             Setup context manager before processing a micro-batch.
             This is used to control gradient synchronization behavior.

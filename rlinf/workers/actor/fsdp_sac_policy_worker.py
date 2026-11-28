@@ -30,6 +30,7 @@ from rlinf.data.storage.replay import (
     TrajectoryReplayBuffer,
     replay_buffer_collate_fn,
 )
+from rlinf.hybrid_engines.fsdp.checkpoint import Checkpoint
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
 from rlinf.scheduler import Worker
@@ -806,25 +807,27 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             self.is_optimizer_offloaded = False
 
         # Save model
-        self._strategy.save_checkpoint(
-            model=self.model,
-            optimizers=[self.optimizer, self.qf_optimizer],
-            lr_schedulers=[self.lr_scheduler, self.qf_lr_scheduler],
-            save_path=save_base_path,
+        fsdp_version = self._strategy.get_fsdp_version()
+        Checkpoint(
+            save_base_path,
+            fsdp_version,
             checkpoint_format="local_shard"
             if self.cfg.actor.fsdp_config.use_orig_params
             else "dcp",
+        ).save(
+            model=self.model,
+            optimizers=[self.optimizer, self.qf_optimizer],
+            lr_schedulers=[self.lr_scheduler, self.qf_lr_scheduler],
         )
 
         # Save sac components
         # save alpha
         if self.alpha_optimizer is not None:
             alpha_save_path = os.path.join(save_base_path, "sac_components/alpha")
-            self._strategy.save_checkpoint(
+            Checkpoint(alpha_save_path, fsdp_version).save(
                 model=self.entropy_temp,
                 optimizers=self.alpha_optimizer,
                 lr_schedulers=self.alpha_lr_scheduler,
-                save_path=alpha_save_path,
                 save_full_model_weights=False,
             )
 
@@ -849,24 +852,26 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
     def load_checkpoint(self, load_base_path):
         # load model
-        self._strategy.load_checkpoint(
-            model=self.model,
-            optimizers=[self.optimizer, self.qf_optimizer],
-            lr_schedulers=[self.lr_scheduler, self.qf_lr_scheduler],
-            load_path=load_base_path,
+        fsdp_version = self._strategy.get_fsdp_version()
+        Checkpoint(
+            load_base_path,
+            fsdp_version,
             checkpoint_format="local_shard"
             if self.cfg.actor.fsdp_config.use_orig_params
             else "dcp",
+        ).load(
+            model=self.model,
+            optimizers=[self.optimizer, self.qf_optimizer],
+            lr_schedulers=[self.lr_scheduler, self.qf_lr_scheduler],
         )
 
         # load alpha
         if self.alpha_optimizer is not None:
             alpha_load_path = os.path.join(load_base_path, "sac_components/alpha")
-            self._strategy.load_checkpoint(
+            Checkpoint(alpha_load_path, fsdp_version).load(
                 model=self.entropy_temp,
                 optimizers=self.alpha_optimizer,
                 lr_schedulers=self.alpha_lr_scheduler,
-                load_path=alpha_load_path,
             )
 
         # load target model
