@@ -85,7 +85,7 @@ Open a model page for the full workflow and its supported environments.
       :link: embodied/lingbotvla_index
       :link-type: doc
 
-      Train LingbotVLA 1.0 (GRPO) and 2.0 (PPO) on RoboTwin manipulation tasks.
+      Train LingbotVLA 1.0 (GRPO) and 2.0 (PPO, GRPO) on RoboTwin manipulation tasks.
 
    .. grid-item-card:: MLP Policy
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg

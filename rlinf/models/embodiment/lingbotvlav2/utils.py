@@ -19,9 +19,19 @@ sample, where it draws from the flow-SDE transition. PPO scores only that step,
 as RLinf's LingBot-VLA and OpenPI policies do.
 """
 
+from pathlib import Path
 from typing import Callable, Optional
 
 import torch
+from omegaconf import DictConfig, OmegaConf
+
+_REQUIRED_PATHS = (
+    "model_path",
+    "tokenizer_path",
+    "lingbotvlav2.training_config_path",
+    "lingbotvlav2.robot_config_path",
+    "lingbotvlav2.stats_path",
+)
 
 _TRAINABLE_PARTS = (
     ".qwen_expert.",
@@ -43,8 +53,46 @@ def is_rl_trainable(name: str) -> bool:
     )
 
 
+def check_required_paths(config: DictConfig) -> None:
+    """Fail at startup when a checkpoint or asset path is unset or missing."""
+    for key in _REQUIRED_PATHS:
+        value = OmegaConf.select(config, key)
+        if not value or not Path(str(value)).expanduser().exists():
+            raise FileNotFoundError(
+                f"Expected an existing path in model.{key}, got {value!r}."
+            )
+
+
 # Maps a latent [batch, horizon, dim] and per-sample times [batch] to a velocity.
 VelocityFn = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+
+
+class EvalNoiseSampler:
+    """Keep evaluation noise independent of model initialization and training RNGs.
+
+    The initial flow-matching latent changes the actions, and the global RNG
+    state depends on prior work such as value-head initialization, so global
+    ``torch.randn`` gives checkpoints different noise on the same environment
+    seeds. Each device has a private generator seeded by
+    ``rollout.model.eval_seed``: draws advance within a run and repeat exactly
+    across runs. Noise is drawn per device in batch order, so paired comparisons
+    also need the same worker placement and batch size. Training and rollout
+    keep the global RNG for exploration.
+    """
+
+    def __init__(self, seed: int):
+        self.seed = seed
+        self.generators: dict[torch.device, torch.Generator] = {}
+
+    def sample(self, shape: tuple[int, ...], device: torch.device) -> torch.Tensor:
+        device = torch.device(device)
+        if device not in self.generators:
+            self.generators[device] = torch.Generator(device=device).manual_seed(
+                self.seed
+            )
+        return torch.randn(
+            shape, device=device, dtype=torch.float32, generator=self.generators[device]
+        )
 
 
 def flow_sde_transition(

@@ -13,9 +13,11 @@ hydra:
 
 cluster:
   num_nodes: 1
+  # The 64 fixed seeds behind the reported results, with the rollout and the
+  # environments on one GPU.
   component_placement:
     rollout: 0
-    env: 1
+    env: 0
 
 runner:
   task_type: embodied_eval
@@ -37,7 +39,7 @@ env:
   group_name: EnvGroup
   eval:
     rollout_epoch: 1
-    total_num_envs: 2
+    total_num_envs: 64
     auto_reset: true
     ignore_terminations: true
     max_episode_steps: 400
@@ -70,6 +72,17 @@ rollout:
   rollout_backend: huggingface
   enable_offload: false
   pipeline_stage_num: 1
-  # Retain the value head so RLinf PPO checkpoints reload without key changes.
   model:
+    model_path: /path/to/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
+    tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
+    precision: bf16
+    forward_micro_batch_size: 1
+    # Seeds the initial evaluation noise, so checkpoints are compared on the
+    # same noise as well as the same environment seeds.
+    eval_seed: 0
+    # Retain the value head so RLinf PPO checkpoints reload without key changes.
     add_value_head: true
+    lingbotvlav2:
+      training_config_path: /path/to/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
+      robot_config_path: /path/to/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
+      stats_path: /path/to/lingbot-vla-v2/assets/norm_stats/robotwin.json

@@ -1653,28 +1653,11 @@ def validate_embodied_cfg(cfg):
                 "algorithm.reward_type=chunk_level, got "
                 f"{algorithm_cfg.reward_type!r}."
             )
-        fsdp_cfg = cfg.actor.fsdp_config
-        if fsdp_cfg.strategy != "fsdp2":
-            raise ValueError(
-                "Expected actor.fsdp_config.strategy=fsdp2 for LingBot-VLA V2, "
-                f"got {fsdp_cfg.strategy!r}."
-            )
-        param_dtype = fsdp_cfg.mixed_precision.get("param_dtype", None)
-        if (
-            torch_dtype_from_precision(model_cfg.precision) != torch.float32
-            or torch_dtype_from_precision(param_dtype) != torch.bfloat16
-        ):
-            raise ValueError(
-                "LingBot-VLA V2 PPO keeps trainable weights in fp32 and computes "
-                "in bf16; expected actor.model.precision=fp32 and "
-                "actor.fsdp_config.mixed_precision.param_dtype=bf16, got "
-                f"{model_cfg.precision!r} and {param_dtype!r}."
-            )
-        if fsdp_cfg.mixed_precision.get("cast_forward_inputs", True):
-            raise ValueError(
-                "Expected actor.fsdp_config.mixed_precision.cast_forward_inputs="
-                "false for LingBot-VLA V2, which keeps its SDE samples in fp32."
-            )
+        from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_config import (
+            validate_actor_fsdp,
+        )
+
+        validate_actor_fsdp(cfg.actor)
 
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
         # The actor-side recompute reshapes flat logprobs by ``action_dim`` for
@@ -1944,6 +1927,18 @@ def validate_embodied_cfg(cfg):
     component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
+    if (
+        model_type == SupportedModel.LINGBOTVLAV2
+        and not only_eval
+        and algorithm_cfg.get("recompute_logprobs", False)
+    ):
+        from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_config import (
+            validate_batch_shape,
+        )
+
+        validate_batch_shape(
+            cfg, component_placement.get_world_size("rollout"), stage_num
+        )
     if model_type == SupportedModel.PSI0:
         assert component_placement.get_world_size("rollout") == env_world_size, (
             "Psi0 SIMPLE requires equal env and rollout worker counts: "

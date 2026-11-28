@@ -40,12 +40,14 @@ from lingbotvla.models.vla.lingbot_vla.qwen2_action_expert import (
 from lingbotvla.models.vla.lingbot_vla.qwen3vl_in_vla import (
     apply_lingbot_qwen3_vl_patch,
 )
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from safetensors.torch import load_model
 from transformers.modeling_utils import load_sharded_checkpoint
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.lingbotvlav2.utils import (
+    EvalNoiseSampler,
+    check_required_paths,
     is_rl_trainable,
     sample_with_one_sde_step,
     score_sde_step,
@@ -59,13 +61,6 @@ from rlinf.utils.logging import get_logger
 # are not rounded away, and bf16 in the rollout. FSDP2 casts the actor's fp32
 # weights to bf16 for compute, which matches the rollout's bf16 copy.
 _COMPUTE_DTYPE = torch.bfloat16
-_REQUIRED_PATHS = (
-    "model_path",
-    "tokenizer_path",
-    "lingbotvlav2.training_config_path",
-    "lingbotvlav2.robot_config_path",
-    "lingbotvlav2.stats_path",
-)
 
 
 class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
@@ -101,15 +96,14 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
                 "Expected model.precision bf16 (rollout) or fp32 (actor), "
                 f"got {torch_dtype}."
             )
-        for key in _REQUIRED_PATHS:
-            if not OmegaConf.select(config, key):
-                raise ValueError(f"Expected an absolute path in model.{key}, got none.")
+        check_required_paths(config)
         self.config = config
         self.num_steps = int(config.num_steps)
         self.forward_micro_batch_size = int(config.forward_micro_batch_size)
         if self.forward_micro_batch_size < 1:
             raise ValueError("forward_micro_batch_size must be positive")
         self.noise_level = float(config.noise_level)
+        self.eval_noise_sampler = EvalNoiseSampler(int(config.get("eval_seed", 0)))
         if self.num_steps < 2 or not self.noise_level > 0:
             raise ValueError("V2 flow-SDE requires num_steps >= 2 and noise_level > 0")
         if config.is_lora:
@@ -374,7 +368,11 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         context = self._prefix(inputs)
         device = inputs["state"].device
         shape = (len(inputs["state"]), self.horizon, self.latent_dim)
-        noise = torch.randn(shape, device=device, dtype=torch.float32)
+        noise = (
+            self.eval_noise_sampler.sample(shape, device)
+            if mode == "eval"
+            else torch.randn(shape, device=device, dtype=torch.float32)
+        )
         sde_steps = None
         if mode == "train":
             sde_steps = torch.randint(self.num_steps, (shape[0],), device=device)

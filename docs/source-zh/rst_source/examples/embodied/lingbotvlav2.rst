@@ -7,12 +7,12 @@ LingbotVLA 2.0 强化学习
 
    LingbotVLA 2.0 框架（图片来源：`Robbyant <https://github.com/robbyant/lingbot-vla-v2>`__）。
 
-用 PPO 在 RoboTwin 2.0 上微调 `LingbotVLA 2.0 <https://huggingface.co/robbyant/lingbot-vla-v2-6b-robotwin>`__ 的动作专家。RLinf **原生**\ 加载官方发布的 RoboTwin checkpoint，并以它作为训练起点。LingbotVLA 2.0 是基于 Qwen3-VL 底座的视觉-语言-动作模型：它的混合专家（MoE）动作专家通过 flow matching 在 55 维的 latent 动作空间中生成 50 步动作块，再由机器人配置映射为 RoboTwin 的 14 维关节指令。PPO 只更新动作专家，Qwen3-VL 底座和动作专家的 MoE 路由器保持冻结。
+用 PPO 或 GRPO 在 RoboTwin 2.0 上微调 `LingbotVLA 2.0 <https://huggingface.co/robbyant/lingbot-vla-v2-6b-robotwin>`__ 的动作专家。RLinf **原生**\ 加载官方发布的 RoboTwin checkpoint，并以它作为训练起点。LingbotVLA 2.0 是基于 Qwen3-VL 底座的视觉-语言-动作模型：它的混合专家（MoE）动作专家通过 flow matching 在 55 维的 latent 动作空间中生成 50 步动作块，再由机器人配置映射为 RoboTwin 的 14 维关节指令。两种算法都只更新动作专家，Qwen3-VL 底座和动作专家的 MoE 路由器保持冻结。
 
 概览
 ----------------------------------------
 
-用 PPO 训练 LingbotVLA 2.0，完成 RoboTwin 2.0 的 ``click_bell`` 任务。
+用 PPO 或 GRPO 训练 LingbotVLA 2.0，完成 RoboTwin 2.0 的 ``click_bell`` 任务。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -25,7 +25,7 @@ LingbotVLA 2.0 强化学习
    .. grid-item-card:: 算法
       :text-align: center
 
-      PPO
+      PPO / GRPO
 
    .. grid-item-card:: 任务
       :text-align: center
@@ -37,7 +37,7 @@ LingbotVLA 2.0 强化学习
 
       1 节点 · 4 GPU（48 GB）
 
-| **你将完成：** 原生安装 → 克隆 RoboTwin 与资产 → 下载检查点 → 填写模型路径 → PPO → 观察 ``env/success_once``。
+| **你将完成：** 原生安装 → 克隆 RoboTwin 与资产 → 下载检查点 → 填写模型路径 → PPO / GRPO → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · RoboTwin 仓库与资产 · LingbotVLA 2.0 与 Qwen3-VL 检查点（见下文步骤）。
 
 任务
@@ -55,6 +55,10 @@ LingbotVLA 2.0 强化学习
      - Click Bell
      - ``robotwin_click_bell_ppo_lingbotvlav2``
      - 从官方 RoboTwin checkpoint 出发，用 PPO 训练动作专家。
+   * - RoboTwin
+     - Click Bell
+     - ``robotwin_click_bell_grpo_lingbotvlav2``
+     - 每组采样 8 条轨迹，使用 GRPO 训练动作专家，无需价值头。
 
 观测与动作
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -117,10 +121,12 @@ LingbotVLA 1.0 与 2.0 安装的 Python 包都叫 ``lingbotvla``，需要各自�
            - 配置文件
          * - PPO（Click Bell）
            - ``examples/embodiment/config/robotwin_click_bell_ppo_lingbotvlav2.yaml``
+         * - GRPO（Click Bell）
+           - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvlav2.yaml``
          * - 模型默认配置（与评测共用）
            - ``examples/embodiment/config/model/lingbotvlav2.yaml``
 
-      在 ``examples/embodiment/config/model/lingbotvlav2.yaml`` 中填写空白的路径字段（训练与独立评测共用，任何路径留空时启动会报错并提示字段名）：
+      在 PPO 或 GRPO 实验配置的 ``actor.model`` 和独立评测配置的 ``rollout.model`` 下填写以下路径：
 
       .. code-block:: yaml
 
@@ -135,9 +141,18 @@ LingbotVLA 1.0 与 2.0 安装的 Python 包都叫 ``lingbotvla``，需要各自�
 
       .. code-block:: bash
 
+         export ROBOT_PLATFORM=ALOHA
          export ROBOTWIN_PATH=$PWD/RoboTwin
          export ROBOTWIN_ASSETS_PATH=$ROBOTWIN_PATH
          bash examples/embodiment/run_embodiment.sh robotwin_click_bell_ppo_lingbotvlav2
+
+      使用相同环境启动 GRPO 训练
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvlav2
+
+      评测 GRPO checkpoint 时传入 ``rollout.model.add_value_head=false``。
 
       .. dropdown:: 进阶配置（可选）
 
@@ -145,7 +160,7 @@ LingbotVLA 1.0 与 2.0 安装的 Python 包都叫 ``lingbotvla``，需要各自�
          - **Flow-SDE PPO 与价值头预热**：rollout 在每个动作块中随机选一个去噪步按 flow-SDE 采样，其余步沿 ODE 推进。PPO 对该步解码出的 14 个 latent 坐标以 ``logprob_type: token_level`` 和 ``clip_ratio_c: 3.0`` 计算更新，配合 chunk 级奖励与 ``actor.optim.critic_warmup_steps: 20``。
          - **混合精度**：actor 以 ``fp32`` 保存可训练的动作专家权重以避免小学习率更新被舍入，FSDP2 仍以 ``bf16`` 计算，rollout 保留 ``bf16`` 权重副本。
          - **log-prob 漂移保护**：每次更新前 actor 重新计算每个采样 SDE 步的概率。若样本在 rollout 与 actor 间的总 log-probability 差值超过 ``algorithm.max_recompute_logprob_gap: 1.0e-3``，训练停止；最大差值记录在 ``actor/rollout_train_joint_logprob_gap_max``。
-         - **独立评测**：按 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行独立评测，配置为 ``robotwin_click_bell_lingbotvlav2_eval``\ （在新终端中评测前先导出上方两个环境变量）。如需评测 PPO checkpoint，传入其完整权重文件：
+         - **独立评测**：按 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行独立评测，配置为 ``robotwin_click_bell_lingbotvlav2_eval``\ （在新终端中评测前先导出上方三个环境变量）。如需评测 PPO checkpoint，传入其完整权重文件：
 
            .. code-block:: bash
 
@@ -156,3 +171,32 @@ LingbotVLA 1.0 与 2.0 安装的 Python 包都叫 ``lingbotvla``，需要各自�
 ----------------------------------------
 
 执行 ``tensorboard --logdir ./logs --port 6006`` 启动 TensorBoard，关注任务成功率指标 ``env/success_once``。传入 ``env.eval.video_cfg.save_video=True`` 可保存评估视频，完整指标与日志后端说明见 :doc:`训练指标 <../../reference/metrics>`。
+
+训练曲线
+~~~~~~~~~~~~
+
+在 RoboTwin 的 ``click_bell`` 任务上，PPO 和 GRPO 各使用 4 张 H20 GPU 训练 100 步。
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvlav2_robotwin_click_bell_ppo_grpo_success_once.png
+   :align: center
+
+   GRPO（绿色）与 PPO（蓝色）的训练成功率（``env/success_once``）随 TensorBoard 步数的变化。浅色线为每步记录值，深色线为平滑曲线。
+
+Checkpoint 评测
+~~~~~~~~~~~~~~~~~~
+
+在四张 A100 80 GB GPU 上，所有 checkpoint 使用相同的 64 个固定环境 seeds 评测，每条轨迹最多 400 步，``rollout.model.eval_seed=0``：
+
+.. list-table:: LingbotVLA 2.0 在 RoboTwin 任务上的评测结果（n=64）
+   :header-rows: 1
+
+   * - 任务
+     - 官方权重
+     - RLinf-GRPO（第 100 步）
+     - RLinf-PPO（第 100 步）
+   * - ``click_bell``
+     - 76.56%
+     - **100.00%**
+     - **100.00%**
+
+比较 checkpoint 时，保持环境 seeds、worker 放置、batch size 和 ``rollout.model.eval_seed`` 一致。评测的初始噪声由 ``eval_seed`` 决定，不受模型初始化影响。

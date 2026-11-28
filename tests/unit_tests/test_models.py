@@ -5369,6 +5369,20 @@ def test_lingbotvlav2_replay_reproduces_the_sampled_sde_step():
     assert weight.grad is not None and torch.isfinite(weight.grad)
 
 
+def test_lingbotvlav2_eval_noise_is_independent_of_global_rng_and_advances():
+    from rlinf.models.embodiment.lingbotvlav2.utils import EvalNoiseSampler
+
+    first, second = EvalNoiseSampler(7), EvalNoiseSampler(7)
+    shape, device = (2, 50, 55), torch.device("cpu")
+    initial = first.sample(shape, device)
+    torch.randn(1000)
+    torch.testing.assert_close(initial, second.sample(shape, device), rtol=0, atol=0)
+    following = first.sample(shape, device)
+    assert not torch.equal(initial, following)
+    torch.testing.assert_close(following, second.sample(shape, device), rtol=0, atol=0)
+    assert not torch.equal(initial, EvalNoiseSampler(8).sample(shape, device))
+
+
 def test_lingbotvlav2_rl_trains_the_action_expert_but_not_its_routers():
     from rlinf.models.embodiment.lingbotvlav2.utils import is_rl_trainable
 
@@ -7381,3 +7395,89 @@ def test_prefix_eval_config_validates_without_actor(monkeypatch, config_name):
     del cfg.actor
     validate_embodied_cfg(cfg)
     assert isinstance(get_model(cfg.rollout.model), PrefixPolicy)
+
+
+def test_lingbotvlav2_grpo_smoke_config_composes(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.config import validate_embodied_cfg
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(root))
+    monkeypatch.setenv("ROBOTWIN_ASSETS_PATH", "/explicit/asset")
+    monkeypatch.setenv("LINGBOT_VLA_V2_PATH", "/explicit/lingbot-vla-v2")
+    with initialize_config_dir(
+        config_dir=str(root / "tests/e2e_tests/embodied"), version_base="1.1"
+    ):
+        cfg = compose(config_name="robotwin_grpo_lingbotvlav2")
+    OmegaConf.resolve(cfg)
+    assert cfg.algorithm.adv_type == "grpo" and cfg.algorithm.loss_type == "actor"
+    assert not cfg.actor.model.add_value_head
+    assert cfg.env.train.group_size == cfg.algorithm.group_size == 2
+    assert cfg.env.train.total_num_envs % cfg.algorithm.group_size == 0
+    assert (
+        cfg.actor.model.forward_micro_batch_size
+        == cfg.actor.micro_batch_size
+        == cfg.env.train.total_num_envs // 2
+    )
+    # Two ranks, one pipeline stage: neither pass may split a rollout worker's
+    # envs into chunks of unequal shape.
+    assert (
+        cfg.env.eval.total_num_envs // 2
+    ) % cfg.actor.model.forward_micro_batch_size == 0
+    validate_embodied_cfg(cfg)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"actor.model.forward_micro_batch_size": 4}, "micro_batch_size"),
+        ({"rollout.model.forward_micro_batch_size": 1}, "rollout.model"),
+        (
+            {"actor.micro_batch_size": 3, "actor.model.forward_micro_batch_size": 3},
+            "envs per rollout worker",
+        ),
+    ],
+)
+def test_lingbotvlav2_rejects_rollout_and_replay_batch_shapes_that_differ(
+    monkeypatch, overrides, message
+):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.config import validate_embodied_cfg
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(root))
+    monkeypatch.setenv("ROBOTWIN_ASSETS_PATH", "/explicit/asset")
+    monkeypatch.setenv("LINGBOT_VLA_V2_PATH", "/explicit/lingbot-vla-v2")
+    with initialize_config_dir(
+        config_dir=str(root / "tests/e2e_tests/embodied"), version_base="1.1"
+    ):
+        cfg = compose(
+            config_name="robotwin_grpo_lingbotvlav2",
+            overrides=[f"++{key}={value}" for key, value in overrides.items()],
+        )
+    OmegaConf.resolve(cfg)
+    with pytest.raises(ValueError, match=message):
+        validate_embodied_cfg(cfg)
+
+
+def test_lingbotvlav2_names_the_placeholder_path_it_cannot_find(tmp_path):
+    from rlinf.models.embodiment.lingbotvlav2.utils import check_required_paths
+
+    config = OmegaConf.create(
+        {
+            "model_path": str(tmp_path),
+            "tokenizer_path": "/path/to/Qwen3-VL-4B-Instruct",
+            "lingbotvlav2": {
+                "training_config_path": str(tmp_path),
+                "robot_config_path": str(tmp_path),
+                "stats_path": "",
+            },
+        }
+    )
+    with pytest.raises(FileNotFoundError, match="model.tokenizer_path"):
+        check_required_paths(config)
+    config.tokenizer_path = str(tmp_path)
+    with pytest.raises(FileNotFoundError, match="model.lingbotvlav2.stats_path"):
+        check_required_paths(config)
