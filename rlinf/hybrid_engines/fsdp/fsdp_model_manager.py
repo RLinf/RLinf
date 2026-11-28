@@ -625,16 +625,43 @@ class FSDPModelManager:
             model, use_fp32_master_params=use_fp32_master_params
         )
 
-        # Fused AdamW avoids a large foreach temp buffer during optimizer warmup
-        # for NO_SHARD models. Sharded scalar parameters cannot use this path.
         all_params = [p for group in param_groups for p in group["params"]]
-        use_fused_adamw = (
-            not use_fp32_master_params
+        has_scalar_params = any(p.dim() == 0 for p in all_params)
+        cuda_available = (
+            Worker.torch_device_type == "cuda" and Worker.torch_platform.is_available()
+        )
+        cpu_offload = bool(self._cfg.fsdp_config.get("cpu_offload", False))
+        can_fuse_adamw = (
+            not use_fp32_master_params and cuda_available and not has_scalar_params
+        )
+        fused_adamw = self._cfg.optim.get("fused_adamw", False)
+        if fused_adamw and (
+            not can_fuse_adamw or not isinstance(model, FSDPModule) or cpu_offload
+        ):
+            failures = []
+            if not cuda_available:
+                failures.append(
+                    f"device_type={Worker.torch_device_type!r} "
+                    f"(available={Worker.torch_platform.is_available()})"
+                )
+            if not isinstance(model, FSDPModule):
+                failures.append(f"expected FSDPModule, got {type(model).__name__}")
+            if use_fp32_master_params:
+                failures.append(f"use_fp32_master_params={use_fp32_master_params!r}")
+            if cpu_offload:
+                failures.append(f"cpu_offload={cpu_offload!r}")
+            if has_scalar_params:
+                failures.append("scalar (0-d) parameters present")
+            raise ValueError(
+                "actor.optim.fused_adamw requires CUDA FSDP2, native AdamW, "
+                "non-scalar parameters, and fsdp_config.cpu_offload=false; "
+                f"failed: {'; '.join(failures)}."
+            )
+        # Keep the existing automatic choice for NO_SHARD configurations.
+        use_fused_adamw = fused_adamw or (
+            can_fuse_adamw
             and self._cfg.fsdp_config.get("sharding_strategy", "full_shard")
             == "no_shard"
-            and Worker.torch_device_type == "cuda"
-            and Worker.torch_platform.is_available()
-            and not any(p.dim() == 0 for p in all_params)
         )
         optimizer = build_adamw(
             param_groups,
@@ -643,6 +670,8 @@ class FSDPModelManager:
             use_fp32_master_params=use_fp32_master_params,
             fused=use_fused_adamw,
         )
+        if fused_adamw and not all(g.get("fused") for g in optimizer.param_groups):
+            raise RuntimeError("This PyTorch build does not support fused AdamW.")
 
         # run optimizer empty step to initialize optimizer.state
         # to avoid KeyError during get_state_dict/set_state_dict

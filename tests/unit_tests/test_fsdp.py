@@ -2169,3 +2169,158 @@ def test_prefix_async_replay_drains_without_rank_collectives(tmp_path):
         nprocs=2,
         join=True,
     )
+
+
+def _make_fsdp2_model(*, with_scalar_param: bool = False) -> nn.Module:
+    model = nn.Sequential(nn.Linear(2, 2))
+    model._no_split_modules = ["Linear"]
+    sharded = apply_fsdp2_to_model(
+        model,
+        {},
+        create_device_mesh(1),
+        MixedPrecisionPolicy(),
+        OffloadPolicy(),
+        reshard_after_forward=True,
+    )
+    if with_scalar_param:
+        sharded.scale = nn.Parameter(torch.tensor(1.0))
+    return sharded
+
+
+def _make_fsdp_optimizer_manager(
+    *,
+    fused_adamw: bool,
+    use_fp32_master_params: bool = False,
+    cpu_offload: bool = False,
+    sharding_strategy: str = "full_shard",
+):
+    from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+
+    manager = object.__new__(FSDPModelManager)
+    manager._cfg = OmegaConf.create(
+        {
+            "optim": {
+                "lr": 1e-4,
+                "adam_beta1": 0.9,
+                "adam_beta2": 0.999,
+                "adam_eps": 1e-8,
+                "weight_decay": 0.0,
+                "use_fp32_master_params": use_fp32_master_params,
+                "fused_adamw": fused_adamw,
+            },
+            "fsdp_config": {
+                "cpu_offload": cpu_offload,
+                "sharding_strategy": sharding_strategy,
+            },
+        }
+    )
+    manager._logger = logging.getLogger("test_fused_adamw")
+    manager.store_requires_grad_param_name = []
+    return manager
+
+
+def test_fused_adamw_accepts_cuda_fsdp2_and_passes_fused_flag(
+    single_rank_env, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from rlinf.hybrid_engines.fsdp import fsdp_model_manager as manager_mod
+
+    model = _make_fsdp2_model()
+    assert isinstance(model, FSDPModule)
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cuda", raising=False)
+    monkeypatch.setattr(
+        Worker,
+        "torch_platform",
+        SimpleNamespace(is_available=lambda: True),
+        raising=False,
+    )
+
+    seen: dict[str, object] = {}
+
+    def fake_build_adamw(
+        params, *, eps, weight_decay, use_fp32_master_params=False, fused=False
+    ):
+        seen["fused"] = fused
+        seen["use_fp32_master_params"] = use_fp32_master_params
+        opt = torch.optim.AdamW(params, eps=eps, weight_decay=weight_decay)
+        for group in opt.param_groups:
+            group["fused"] = fused
+        return opt
+
+    monkeypatch.setattr(manager_mod, "build_adamw", fake_build_adamw)
+    manager = _make_fsdp_optimizer_manager(fused_adamw=True)
+    optimizer = manager.build_optimizer(model)
+
+    assert seen == {"fused": True, "use_fp32_master_params": False}
+    assert all(group.get("fused") for group in optimizer.param_groups)
+
+
+@pytest.mark.parametrize(
+    "case,expected_fragment",
+    [
+        ("non_cuda", "device_type='cpu'"),
+        ("not_fsdp2", "expected FSDPModule, got Linear"),
+        ("fp32_master", "use_fp32_master_params=True"),
+        ("cpu_offload", "cpu_offload=True"),
+        ("scalar_param", "scalar (0-d) parameters present"),
+    ],
+)
+def test_fused_adamw_rejects_failing_prerequisites_with_specific_reasons(
+    single_rank_env, monkeypatch, case, expected_fragment
+):
+    from types import SimpleNamespace
+
+    if case == "not_fsdp2":
+        model: nn.Module = nn.Linear(2, 2)
+    else:
+        model = _make_fsdp2_model(with_scalar_param=(case == "scalar_param"))
+
+    monkeypatch.setattr(
+        Worker,
+        "torch_device_type",
+        "cpu" if case == "non_cuda" else "cuda",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        Worker,
+        "torch_platform",
+        SimpleNamespace(is_available=lambda: case != "non_cuda"),
+        raising=False,
+    )
+
+    manager = _make_fsdp_optimizer_manager(
+        fused_adamw=True,
+        use_fp32_master_params=(case == "fp32_master"),
+        cpu_offload=(case == "cpu_offload"),
+    )
+
+    with pytest.raises(ValueError, match="actor.optim.fused_adamw requires") as exc:
+        manager.build_optimizer(model)
+    assert expected_fragment in str(exc.value)
+
+
+def test_fused_adamw_raises_when_build_adamw_falls_back(single_rank_env, monkeypatch):
+    from types import SimpleNamespace
+
+    model = _make_fsdp2_model()
+    monkeypatch.setattr(Worker, "torch_device_type", "cuda", raising=False)
+    monkeypatch.setattr(
+        Worker,
+        "torch_platform",
+        SimpleNamespace(is_available=lambda: True),
+        raising=False,
+    )
+
+    real_adamw = torch.optim.AdamW
+
+    def reject_fused_adamw(*args, **kwargs):
+        if kwargs.get("fused"):
+            raise RuntimeError("fused AdamW unsupported in this build")
+        return real_adamw(*args, **kwargs)
+
+    monkeypatch.setattr(torch.optim, "AdamW", reject_fused_adamw)
+    manager = _make_fsdp_optimizer_manager(fused_adamw=True)
+    with pytest.raises(RuntimeError, match="does not support fused AdamW"):
+        manager.build_optimizer(model)

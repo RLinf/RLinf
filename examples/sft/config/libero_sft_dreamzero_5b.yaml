@@ -71,6 +71,7 @@ actor:
     relative_action_per_horizon: False
 
   optim:
+    fused_adamw: False # Opt in on CUDA FSDP2 with a compatible PyTorch build.
     lr: 1.0e-5
     adam_beta1: 0.95
     adam_beta2: 0.999

@@ -213,6 +213,8 @@ class WanVideoVAE(nn.Module):
             dtype=video.dtype,
             device=video.device,
         )
+        # Match the encoder's dtype without changing tile blending precision.
+        video = video.to(dtype=self.model.encoder.conv1.weight.dtype)
 
         scale = float(self.upsampling_factor)
         bw_h = max(0, int(round((size_h - stride_h) / scale)))
@@ -228,7 +230,7 @@ class WanVideoVAE(nn.Module):
                 hidden_states_batch,
                 is_bound=(h == 0, h_ >= H, w == 0, w_ >= W),
                 border_width=(bw_h, bw_w),
-            ).to(dtype=video.dtype)
+            ).to(dtype=values.dtype)
 
             target_h = h // self.upsampling_factor
             target_w = w // self.upsampling_factor
@@ -250,6 +252,7 @@ class WanVideoVAE(nn.Module):
         return values
 
     def single_encode(self, video):
+        video = video.to(dtype=self.model.encoder.conv1.weight.dtype)
         x = self.model.encode(video, self._scale_on(video.device))
         x = x.clone()
         return x

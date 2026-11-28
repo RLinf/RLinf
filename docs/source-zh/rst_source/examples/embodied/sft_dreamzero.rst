@@ -172,6 +172,44 @@ DreamZero 监督微调
 
       其他配方替换配置后缀即可：``libero_sft_dreamzero_5b``、``droid_sft_dreamzero_14b`` 或 ``libero_franka_mix_sft_dreamzero_5b``。
 
+      .. dropdown:: 加速 CUDA 上的 WAN2.2 5B SFT
+
+         在 CUDA 上使用 FSDP2 微调 WAN2.2 5B 时，先按 **2. 下载模型与数据** 中 **从头训练（WAN2.2 5B 冷启动）** 配好数据集与冷启动路径（或将 ``actor.model.model_path`` 指向已有权重），再向 ``run_vla_sft.sh`` 传入 Hydra 命令行覆盖参数启用加速选项：
+
+         .. code-block:: bash
+
+            bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b \
+              actor.micro_batch_size=2 \
+              actor.global_batch_size=16 \
+              actor.model.checkpoint_every_n_blocks=2 \
+              actor.model.sft_prompt_cache_size=64 \
+              actor.model.sft_skip_unused_condition_vae=true \
+              actor.optim.fused_adamw=true
+
+         上述 batch size 适用于 8 张 80 GB GPU；换用其他卡数时，保证 ``actor.global_batch_size`` 能被 ``actor.micro_batch_size`` 与 GPU 数量之积整除。首次试跑可追加 ``runner.max_steps=12 runner.save_interval=-1``\ ，快速验证指标且不保存 checkpoint。在 8 张 A800 GPU 上训练 LIBERO 时，完成编译与缓存预热后，稳态 ``time/step`` 从 1.73 秒降至 1.23 秒（约 1.4 倍加速）。
+
+         .. list-table::
+            :header-rows: 1
+            :widths: 32 16 52
+
+            * - 配置项
+              - 默认值
+              - 作用与用法
+            * - ``actor.model.checkpoint_every_n_blocks``
+              - ``1``
+              - 启用梯度检查点后，设为 ``2`` 会每隔一个 transformer block 做一次检查点，用更多显存换取更快的反向传播；显存不足时改回 ``1``。
+            * - ``actor.model.sft_prompt_cache_size``
+              - ``0``
+              - 每个训练 rank 在 CPU 内存中缓存冻结 T5 文本特征的条数（64 条约占 256 MiB）。所有 rank 缓存预热后能加快重复 prompt 的数据集训练；prompt 很少重复时保持 ``0``。
+            * - ``actor.model.sft_skip_unused_condition_vae``
+              - ``false``
+              - WAN2.2 模型不拼接首帧潜变量时，SFT 阶段跳过未使用的首帧条件 VAE 编码，CLIP 与训练视频编码保持不变。
+            * - ``actor.optim.fused_adamw``
+              - ``false``
+              - 在 CUDA FSDP2 上启用 PyTorch 原生 fused AdamW（须关闭 FSDP CPU offload 与 ``actor.optim.use_fp32_master_params``\ ）。默认 ``install.sh`` 环境安装 PyTorch 2.11.0；如果当前 PyTorch 构建不支持在分片张量上运行 fused AdamW，训练会在启动时报错，此时保持 ``false`` 即可（8 卡 A800 实测环境为 PyTorch 2.13.0 与 CUDA 12.9）。
+
+         使用 ``runner.resume_dir`` 续训会沿用 checkpoint 中保存的优化器配置。需要基于已有模型权重重新启用 fused AdamW 时，保留 ``runner.resume_dir`` 为空即可。
+
    .. tab-item:: 华为昇腾 CANN
       :sync: ascend
 
@@ -272,8 +310,6 @@ DreamZero 监督微调
         - 数据变换填充与文本序列上限。
       * - ``target_video_height`` / ``target_video_width``
         - WAN 策略头在 **多视角拼接后** 的目标分辨率（5B 预设如 176×320；LIBERO 常用 160×320）。仅作用于模型内部 resize，**不要** 用于单视角 resize。
-      * - ``droid_view_height`` / ``droid_view_width``
-        - 可选的 DROID 各视角 resize 覆盖。
       * - ``relative_action`` / ``relative_action_keys`` / ``relative_action_per_horizon``
         - 是否使用相对动作及作用维度；DROID 常对 ``joint_position`` 等开启 ``relative_action: True``。
 
@@ -511,7 +547,7 @@ DreamZero 监督微调
    * - ``action_loss`` 异常偏高
      - 检查归一化统计是否匹配当前数据集、``relative_action`` 是否与数据一致，并核对 ``action_horizon``、``max_chunk_size`` 与 ``sampling_mode``。
    * - DROID 视频尺寸错误
-     - ``target_video_height`` / ``target_video_width`` 仅用于拼接后的模型内 resize；单视角尺寸请通过 ``droid_view_height`` / ``droid_view_width`` 或 ``oxe_droid`` 变换调整。
+     - ``target_video_height`` / ``target_video_width`` 仅用于拼接后的模型内 resize；单视角尺寸请通过 ``oxe_droid`` 变换调整。
    * - ``multi_anchor`` 报错要求 ``lazy_load``
      - 设置 ``data.lazy_load: True``。
    * - ``AttributeError: GR1_UNIFIED_SEGMENTATION`` 或未知具身标签

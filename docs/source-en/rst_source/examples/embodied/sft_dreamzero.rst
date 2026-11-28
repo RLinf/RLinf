@@ -174,6 +174,44 @@ Reference SFT configs under ``examples/sft/config/``:
 
       Swap the config suffix for other recipes: ``libero_sft_dreamzero_5b``, ``droid_sft_dreamzero_14b``, or ``libero_franka_mix_sft_dreamzero_5b``.
 
+      .. dropdown:: Speed Up WAN2.2 5B SFT on CUDA
+
+         For WAN2.2 5B SFT on CUDA with FSDP2, configure the dataset and cold-start paths from **Cold-start from scratch (WAN2.2 5B)** under **2. Download** (or set ``actor.model.model_path`` to a checkpoint), then pass the speedup options as Hydra CLI overrides to ``run_vla_sft.sh``:
+
+         .. code-block:: bash
+
+            bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b \
+              actor.micro_batch_size=2 \
+              actor.global_batch_size=16 \
+              actor.model.checkpoint_every_n_blocks=2 \
+              actor.model.sft_prompt_cache_size=64 \
+              actor.model.sft_skip_unused_condition_vae=true \
+              actor.optim.fused_adamw=true
+
+         The batch sizes above target eight 80 GB GPUs; for other GPU counts, keep ``actor.global_batch_size`` divisible by ``actor.micro_batch_size`` times the number of GPUs. Add ``runner.max_steps=12 runner.save_interval=-1`` for a quick check without saving checkpoints. On 8× A800 GPUs on LIBERO, steady-state ``time/step`` (after compilation and cache warmup) dropped from 1.73 s to 1.23 s/step (~1.4× speedup).
+
+         .. list-table::
+            :header-rows: 1
+            :widths: 32 16 52
+
+            * - Setting
+              - Default
+              - Effect and usage
+            * - ``actor.model.checkpoint_every_n_blocks``
+              - ``1``
+              - Under gradient checkpointing, ``2`` checkpoints every second transformer block to trade extra GPU memory for faster backward passes; restore ``1`` if out of memory.
+            * - ``actor.model.sft_prompt_cache_size``
+              - ``0``
+              - Number of frozen T5 prompt embeddings cached in CPU memory per rank (about 256 MiB for 64 entries). Helps datasets with repeated prompts once all ranks fill their cache; leave ``0`` if prompts rarely repeat.
+            * - ``actor.model.sft_skip_unused_condition_vae``
+              - ``false``
+              - Skips the unused first-frame condition VAE pass during WAN2.2 SFT while keeping CLIP and video encoding active.
+            * - ``actor.optim.fused_adamw``
+              - ``false``
+              - Uses PyTorch fused AdamW on CUDA FSDP2 (keep FSDP CPU offload and ``actor.optim.use_fp32_master_params`` disabled). The default ``install.sh`` build uses PyTorch 2.11.0; if your PyTorch build does not support fused AdamW on sharded tensors, training fails at startup and you should keep ``false`` (the 8× A800 run used PyTorch 2.13.0 with CUDA 12.9).
+
+         When resuming with ``runner.resume_dir``, RLinf restores the saved optimizer settings from the checkpoint. To start a fresh fused-AdamW optimizer from existing weights, leave ``runner.resume_dir`` unset.
+
    .. tab-item:: Huawei Ascend CANN
       :sync: ascend
 
@@ -274,8 +312,6 @@ Reference SFT configs under ``examples/sft/config/``:
         - Padding limits and max text sequence length.
       * - ``target_video_height`` / ``target_video_width``
         - WAN policy head target resolution **after multi-view concat** (5B preset e.g. 176×320; LIBERO often 160×320). Model-internal resize only; **do not** use for per-view data transform resize.
-      * - ``droid_view_height`` / ``droid_view_width``
-        - Optional per-view resize overrides for DROID.
       * - ``relative_action`` / ``relative_action_keys`` / ``relative_action_per_horizon``
         - Relative action settings; DROID often uses ``relative_action: True`` on keys like ``joint_position``.
 
@@ -513,7 +549,7 @@ Troubleshooting
    * - Abnormally high ``action_loss``
      - Verify normalization stats match the current dataset, check ``relative_action`` against the data, and align ``action_horizon``, ``max_chunk_size``, and ``sampling_mode``.
    * - DROID video size errors
-     - Keep ``target_video_height`` / ``target_video_width`` for post-concat WAN resize only; adjust per-view DROID sizes with ``droid_view_height`` / ``droid_view_width`` or the ``oxe_droid`` transform.
+     - Keep ``target_video_height`` / ``target_video_width`` for post-concat WAN resize only; adjust per-view DROID sizes with the ``oxe_droid`` transform.
    * - ``multi_anchor`` requires ``lazy_load``
      - Set ``data.lazy_load: True``.
    * - ``AttributeError: GR1_UNIFIED_SEGMENTATION`` or unknown embodiment tag
