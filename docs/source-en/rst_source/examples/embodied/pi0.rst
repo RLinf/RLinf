@@ -286,11 +286,20 @@ NVIDIA CUDA supports all four environments listed above (select **π₀** or **�
 
       .. include:: _amd_libero.rst
 
-      Inside the container, or directly on a host with ROCm installed, create the OpenPI LIBERO environment (omit ``--rocm`` to detect the installed version):
+      In the ROCm 7.2 container above or on a host with ROCm 6.x or 7.x, let the installer detect the installed version:
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env libero && source .venv/bin/activate
+         bash requirements/install.sh --platform amd embodied --model openpi --env libero && source .venv/bin/activate
+
+      For ROCm 10.0, install a compatible AMD GPU driver on the host. The installer gets PyTorch and the ROCm runtime from AMD's wheel index and skips flash-attn. Set ``PYTORCH_ROCM_ARCH`` to your GPU's architecture:
+
+      .. code-block:: bash
+
+         PYTORCH_ROCM_ARCH=gfx1201 bash requirements/install.sh --platform amd --rocm 10.0 embodied --model openpi --env libero
+         source .venv/bin/activate
+
+      π₀.₅ on LIBERO was tested separately on two Radeon AI PRO R9700 GPUs (``gfx1201``) and two Instinct MI300X GPUs (``gfx942``). To install packages for several architectures, quote the list, for example ``'gfx942;gfx950'``. ManiSkill and runs combining GPU architectures are untested on ROCm 10.0.
 
       **2. Download**
 

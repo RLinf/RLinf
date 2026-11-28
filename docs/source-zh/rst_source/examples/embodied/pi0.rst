@@ -282,11 +282,20 @@ NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 
 
       .. include:: _amd_libero.rst
 
-      进入容器后，或直接在已安装 ROCm 的宿主机上，创建 OpenPI LIBERO 环境（省略 ``--rocm`` 可自动检测已安装版本）：
+      在上述 ROCm 7.2 容器或装有 ROCm 6.x、7.x 的宿主机上，运行以下命令，安装脚本会自动检测 ROCm 版本：
 
       .. code-block:: bash
 
-         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model openpi --env libero && source .venv/bin/activate
+         bash requirements/install.sh --platform amd embodied --model openpi --env libero && source .venv/bin/activate
+
+      使用 ROCm 10.0 时，在宿主机上装好兼容的 AMD GPU 驱动。安装脚本从 AMD 的 wheel 索引安装 PyTorch 和 ROCm 运行时，并跳过 flash-attn。将 ``PYTORCH_ROCM_ARCH`` 设为显卡对应的架构：
+
+      .. code-block:: bash
+
+         PYTORCH_ROCM_ARCH=gfx1201 bash requirements/install.sh --platform amd --rocm 10.0 embodied --model openpi --env libero
+         source .venv/bin/activate
+
+      π₀.₅ 的 LIBERO 训练已分别在两张 Radeon AI PRO R9700（gfx1201）和两张 Instinct MI300X（gfx942）上验证。为多种架构安装软件包时，用引号括起列表，例如 ``'gfx942;gfx950'``\ 。ROCm 10.0 下的 ManiSkill 和混合架构训练尚未验证。
 
       **2. 下载模型**
 
