@@ -290,7 +290,9 @@ actor:
     ckpt_convertor:
       model: Qwen3.5-4B
       hf_model_path: ${rollout.model.model_path}
-  multimodal: {}
+  multimodal:
+    prefetch_batches: 2
+    prefetch_bytes: 4294967296
   expect_multi_modal_inputs: true
   trim_right_padding: true
   env_vars:

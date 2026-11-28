@@ -647,7 +647,7 @@ class RPentGRPORunner(AgentRunner):
                     self.cfg.runner.val_check_interval,
                     self.cfg.runner.save_interval,
                     1.0,
-                    run_time_exceeded=not self.run_timer.is_finished(),
+                    run_time_exceeded=self.run_timer.is_finished(),
                 )
                 if save_model:
                     self._save_checkpoint()

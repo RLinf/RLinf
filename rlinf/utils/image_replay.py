@@ -40,7 +40,7 @@ def store_pixels(entry: dict, directory: Path) -> None:
     pixels = entry["pixel_values"]
     references = []
     for image in pixels.split(entry["image_grid_thw"].prod(dim=1).tolist()):
-        data = save({"pixels": image.contiguous()})
+        data = save({"pixels": image.to(torch.bfloat16).contiguous()})
         digest = hashlib.sha256(data).hexdigest()
         target = directory / (digest + ".safetensors")
         if not target.exists():

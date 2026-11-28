@@ -1004,3 +1004,71 @@ def test_robolab_episode_uses_native_outcome(mixed_robolab_cfg, outcome) -> None
         ]
 
     asyncio.run(run())
+
+
+def test_store_pixels_saves_bfloat16_and_prefetches_identically(tmp_path) -> None:
+    import torch
+    from safetensors.torch import load_file
+
+    from rlinf.utils.image_replay import REPLAY_FORMAT, replay_pixels, store_pixels
+    from rlinf.utils.multimodal import MultimodalBatchPreparer
+
+    fp32_pixels = torch.randn(320 + 64, 1536, dtype=torch.float32)
+    grid = torch.tensor([[1, 16, 20], [1, 8, 8]], dtype=torch.long)
+    prompt_ids = [10, 11, 12, 13, 14, 15]
+    mrope = torch.arange(len(prompt_ids), dtype=torch.long).expand(3, -1).clone()
+    entry = {
+        "format": REPLAY_FORMAT,
+        "pixel_values": fp32_pixels.clone(),
+        "image_grid_thw": grid,
+        "image_spans": [(1, 3), (4, 5)],
+        "prompt_token_ids": prompt_ids,
+        "mrope_positions": mrope,
+        "mrope_position_delta": 0,
+    }
+
+    store_pixels(entry, tmp_path)
+
+    assert "pixel_values" not in entry
+    assert entry["pixel_values_bytes"] == fp32_pixels.numel() * 2
+    assert len(entry["pixel_refs"]) == 2
+    for ref in entry["pixel_refs"]:
+        saved = load_file(ref["path"])["pixels"]
+        assert saved.dtype == torch.bfloat16
+
+    expected_bf16 = fp32_pixels.to(torch.bfloat16)
+    replayed = replay_pixels(entry)
+    assert replayed.dtype == torch.bfloat16
+    assert torch.equal(replayed, expected_bf16)
+
+    # Verify MultimodalBatchPreparer prefetch produces bit-identical tensors
+    batches = [
+        {
+            "input_ids": [torch.tensor(prompt_ids + [99], dtype=torch.long)],
+            "attention_mask": [torch.ones(len(prompt_ids) + 1, dtype=torch.bool)],
+            "multi_modal_inputs": [entry],
+        },
+        {
+            "input_ids": [torch.zeros(1, dtype=torch.long)],
+            "attention_mask": [torch.ones(1, dtype=torch.bool)],
+            "multi_modal_inputs": [None],
+        },
+    ]
+    sync_prep = MultimodalBatchPreparer("unused", prefetch_batches=0, prefetch_bytes=0)
+    async_prep = MultimodalBatchPreparer(
+        "unused", prefetch_batches=2, prefetch_bytes=64 * 1024 * 1024
+    )
+    sync_out = [
+        sync_prep.for_forward(sync_prep.dense_token_inputs(b), "cpu") for b in batches
+    ]
+    with async_prep.iterator_context(iter(batches)) as prefetched:
+        async_out = [
+            async_prep.for_forward(async_prep.dense_token_inputs(b), "cpu")
+            for b in prefetched
+        ]
+
+    assert len(sync_out) == len(async_out) == 2
+    for s, a in zip(sync_out, async_out, strict=True):
+        assert s.keys() == a.keys()
+        for k in s:
+            assert torch.equal(s[k], a[k])
