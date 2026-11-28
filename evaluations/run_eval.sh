@@ -16,7 +16,7 @@ source "${EMBODIED_PATH}/sim_env.sh"
 infer_benchmark() {
     local config_name="$1"
     case "${config_name}" in
-        behavior_*|behavior-* ) echo "behavior" ;;
+        behavior_*|behavior-*|behavior2026_* ) echo "behavior" ;;
         libero_*|libero-* ) echo "libero" ;;
         robotwin_*|robotwin-* ) echo "robotwin" ;;
         robodojo_*|robodojo-* ) echo "robodojo" ;;
@@ -45,18 +45,31 @@ run_eval_cmd() {
     local log_dir="$3"
     local log_file="$4"
     shift 4
-    local extra_args=("$@")
 
     mkdir -p "${log_dir}"
     local cmd=(
         python "${SRC_FILE}"
         --config-path "${config_path}/"
         --config-name "${config_name}"
-        "runner.logger.log_path=${log_dir}"
     )
-    if [ ${#extra_args[@]} -gt 0 ]; then
-        cmd+=("${extra_args[@]}")
+    local log_override="runner.logger.log_path=${log_dir}"
+    local extra_args=()
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -m|--multirun)
+                cmd+=("$arg")
+                continue
+                ;;
+            runner.logger.log_path=*|+runner.logger.log_path=*|++runner.logger.log_path=*|'~runner.logger.log_path'|'~runner.logger.log_path='*)
+                log_override="" ;;
+        esac
+        extra_args+=("$arg")
+    done
+    if [[ -n "$log_override" ]]; then
+        extra_args+=("$log_override")
     fi
+    cmd+=("${extra_args[@]}")
 
     echo "${cmd[*]}" | tee "${log_file}"
     "${cmd[@]}" 2>&1 | tee -a "${log_file}"
@@ -133,6 +146,25 @@ if [ "$1" = "mani-ood" ]; then
     exit 0
 fi
 
+# Keep existing commands that pass the previous preset names explicitly.
+if [[ $1 == behavior && ( ${2:-} == behavior_openpi_pi05_eval || ${2:-} == behavior2026_openpi_pi05_eval ) ]]; then
+    shift
+fi
+# Year shortcuts use the OpenPI preset and forward all Hydra overrides.
+case "$1" in
+    behavior_openpi_pi05_eval) shift; set -- behavior behavior_openpi_pi05_eval_2025 "$@" ;;
+    behavior2026_openpi_pi05_eval) shift; set -- behavior behavior_openpi_pi05_eval_2026 "$@" ;;
+    behavior|behavior2025|behavior2026)
+        BEHAVIOR_YEAR=2025
+        if [[ "$1" == behavior2026 ]]; then BEHAVIOR_YEAR=2026; fi
+        shift
+        if [[ $# == 0 || "$1" == -* || "$1" == *=* || "$1" == '~'* ]]; then
+            set -- "behavior_openpi_pi05_eval_${BEHAVIOR_YEAR}" "$@"
+        fi
+        set -- behavior "$@"
+        ;;
+esac
+
 if [ $# -ge 2 ] && [ -f "${EVALUATIONS_PATH}/$1/$2.yaml" ]; then
     BENCHMARK="$1"
     CONFIG_NAME="$2"
@@ -151,7 +183,6 @@ else
     fi
 fi
 
-EXTRA_ARGS=("$@")
 CONFIG_PATH="${EVALUATIONS_PATH}/${BENCHMARK}"
 if [ ! -f "${CONFIG_PATH}/${CONFIG_NAME}.yaml" ]; then
     CONFIG_PATH="${EMBODIED_PATH}/config"
@@ -189,4 +220,4 @@ LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}"
 
 MEGA_LOG_FILE="${LOG_DIR}/eval_embodiment.log"
 
-run_eval_cmd "${CONFIG_PATH}" "${CONFIG_NAME}" "${LOG_DIR}" "${MEGA_LOG_FILE}" "${EXTRA_ARGS[@]}"
+run_eval_cmd "${CONFIG_PATH}" "${CONFIG_NAME}" "${LOG_DIR}" "${MEGA_LOG_FILE}" "$@"

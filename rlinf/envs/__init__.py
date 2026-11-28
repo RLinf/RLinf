@@ -53,13 +53,15 @@ class SupportedEnvType(Enum):
 
     @classmethod
     def _missing_(cls, value: object) -> "SupportedEnvType | None":
-        """Accept the spellings this enum used to have.
+        """Resolve environment aliases to their shared implementation.
 
         The real-world package was ``envs/realworld`` and is now ``envs/real``;
         world-model backend names (and their retired ``env_type`` spellings)
         resolve to ``world_model``. Configs that named the old values keep
         working and say so.
         """
+        if value in ("behavior2025", "behavior2026"):
+            return cls.BEHAVIOR
         if value == "realworld":
             warnings.warn(
                 "env_type 'realworld' is retired. Use 'real'.",

@@ -1,9 +1,10 @@
 CLI 参考
 ========
 
-在仓库根目录激活虚拟环境后，使用 ``evaluations/run_eval.sh`` 启动评测。支持以下三种调用形式：
+在仓库根目录激活虚拟环境后，使用 ``evaluations/run_eval.sh`` 启动评测。支持以下调用形式：
 
 - **显式指定 benchmark：** ``bash evaluations/run_eval.sh <benchmark> <config_name> [hydra_overrides...]``
+- **BEHAVIOR 年份预设**：``bash evaluations/run_eval.sh behavior2025|behavior2026 [config_name] [hydra_overrides...]``
 - **自动推断 benchmark：** ``bash evaluations/run_eval.sh <config_name> [hydra_overrides...]``
 - **ManiSkill OOD 批量模式：** ``bash evaluations/run_eval.sh mani-ood [config_name]``\ （需先导出 ``EVAL_NAME``、``CKPT_PATH``、``TOTAL_NUM_ENVS`` 与 ``EVAL_ROLLOUT_EPOCH``）
 
@@ -17,7 +18,8 @@ CLI 参考
    source .venv/bin/activate
    bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval
    bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval_2025
+   bash evaluations/run_eval.sh behavior2026 behavior_openpi_pi05_eval_2026
    bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos
    bash evaluations/run_eval.sh simple simple_psi0_eval
 
@@ -55,9 +57,9 @@ Hydra 参数覆盖
    * - 配置前缀
      - 推断出的 benchmark
      - 说明
-   * - ``behavior_*`` / ``behavior-*``
+   * - ``behavior_*`` / ``behavior-*`` / ``behavior2026_*``
      - ``behavior``
-     - BEHAVIOR-1K
+     - BEHAVIOR-1K 2025 / 2026
    * - ``calvin_*`` / ``calvin-*``
      - ``calvin``
      - CALVIN（配置回退）
@@ -120,8 +122,8 @@ Benchmark 环境变量
      - ``ROBOTWIN_PATH=/path/to/RoboTwin``、``ROBOT_PLATFORM=ALOHA``
      - RoboTwin 仓库路径
    * - BEHAVIOR-1K
-     - ``OMNIGIBSON_DATA_PATH``
-     - 详见 :doc:`../../examples/embodied/behavior`
+     - ``OMNIGIBSON_DATA_PATH``\ ；2025 版还需 ``ISAAC_PATH``
+     - 详见 :doc:`../guides/behavior`
    * - DreamZero
      - ``DREAMZERO_PATH=/path/to/DreamZero``
      - DreamZero 仓库路径

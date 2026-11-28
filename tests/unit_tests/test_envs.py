@@ -14,6 +14,11 @@
 
 """Heterogeneous env modes, and the observations env workers send the policy."""
 
+import json
+import sys
+from types import SimpleNamespace
+from unittest import mock
+
 import numpy as np
 import pytest
 import torch
@@ -722,3 +727,121 @@ def test_config_needs_grpo_envs_to_stop_trajectories_at_their_first_done():
 
     with pytest.raises(AssertionError, match=r"env.train.envs.maniskill needs"):
         validate_env_training_cfg(cfg, layout, stage_num=1, actor_world_size=2)
+
+
+@pytest.mark.parametrize("batched", [False, True], ids=["3.7.2", "3.9.4"])
+def test_behavior_stage_routes_only_selected_actions(batched):
+    from rlinf.envs.sim.behavior.behavior_env import BehaviorProcess
+
+    cls = BehaviorProcess.__ray_metadata__.modified_class
+    worker = cls.__new__(cls)
+    worker.env = mock.Mock()
+    worker.batched = batched
+    worker.use_legacy_proprio = False
+    worker.skip_intermediate_renders = True
+    worker.step_supports_get_obs = True
+    worker.step_supports_render = True
+    worker.step_supports_env_indices = True
+    worker.env.step.return_value = (["obs"], [1.0], [False], [False], [{}])
+    actions = torch.arange(4).reshape(2, 2, 1)
+
+    obs, rewards, *_ = worker.chunk_step(actions, [1])
+    assert obs == (None, ["obs"])
+    assert [reward.tolist() for reward in rewards] == [[1.0], [1.0]]
+    for timestep, call in enumerate(worker.env.step.call_args_list):
+        active_actions = call.args[0]
+        assert isinstance(active_actions, torch.Tensor if batched else list)
+        assert active_actions[0].tolist() == [2 + timestep]
+        assert call.kwargs == {
+            "env_indices": [1],
+            "get_obs": timestep == 1,
+            "render": timestep == 1,
+        }
+
+
+def test_behavior_2026_resets_missing_pose_to_selected_scene_template(
+    monkeypatch, tmp_path
+):
+    from rlinf.envs.sim.behavior import instance_loader as il
+
+    monkeypatch.setitem(
+        sys.modules,
+        "omnigibson.utils.python_utils",
+        SimpleNamespace(recursively_convert_to_torch=lambda value: value),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "omnigibson.tasks.behavior_task",
+        SimpleNamespace(
+            get_presampled_robot_poses=lambda poses, model, key: poses[model]
+        ),
+    )
+    settle = mock.Mock()
+    monkeypatch.setattr(il, "_settle_instance_scenes", settle)
+    pose = {"position": [1, 2, 3], "orientation": [0, 0, 0, 1]}
+    path = tmp_path / "instance.json"
+    instance = il.ActivityInstanceFile(301, str(path), "tro_state")
+    loader = il.BatchedActivityInstanceLoader(
+        {}, "turning_on_radio", 301, "disabled", (instance,)
+    )
+    scenes = [mock.Mock(), mock.Mock()]
+    robots = [mock.Mock(), mock.Mock(model="R1Pro", n_joints=0)]
+    template = ([4, 5, 0], [0, 0, 1, 0])
+    robots[1].get_position_orientation.side_effect = [template]
+    task = mock.Mock(object_scopes=[{}, {}])
+    task.get_agent.side_effect = lambda env, idx: robots[idx]
+    env = SimpleNamespace(scenes=scenes, task=task, num_envs=2)
+
+    for state in ({"robot_poses": {"R1Pro": [pose]}}, {}, {}):
+        path.write_text(json.dumps(state))
+        loader.prepare_reset(env, [1])
+    assert robots[1].set_position_orientation.call_args_list == [
+        mock.call(pose["position"], pose["orientation"], frame="scene"),
+        mock.call(*template, frame="scene"),
+        mock.call(*template, frame="scene"),
+    ]
+    robots[0].reset.assert_not_called()
+    scenes[0].write_task_metadata.assert_not_called()
+    scenes[1].write_task_metadata.assert_called_with(key="robot_poses", data=None)
+    assert settle.call_args_list == [mock.call(env, [1])] * 3
+
+
+@pytest.mark.parametrize("listed", [False, True], ids=["single", "heterogeneous"])
+@pytest.mark.parametrize(
+    "episode,budget,expected",
+    [(None, None, (3226, 3232)), (33, None, (33, 64)), (65, 32, (65, 32))],
+)
+def test_behavior_step_limits_are_resolved_by_eval_config_validation(
+    monkeypatch, tmp_path, listed, episode, budget, expected
+):
+    metadata = tmp_path / "2026-challenge-task-instances/metadata"
+    metadata.mkdir(parents=True)
+    (metadata / "task.jsonl").write_text(
+        json.dumps({"task_name": "turning_on_radio", "length": 2150}) + "\n"
+    )
+    monkeypatch.setenv("OMNIGIBSON_DATA_PATH", str(tmp_path))
+    behavior = _env(
+        "behavior2026",
+        4,
+        max_episode_steps=episode,
+        max_steps_per_rollout_epoch=budget,
+        omni_config={"task": {"activity_name": "turning_on_radio"}},
+    )
+    legacy = _env(
+        "behavior2025", 4, max_episode_steps=4096, max_steps_per_rollout_epoch=4096
+    )
+    mode = {"envs": {"behavior": behavior, "legacy": legacy}} if listed else behavior
+    cfg = OmegaConf.create({"env": {"eval": mode}})
+    OmegaConf.set_struct(cfg, True)
+
+    validate_eval_env_cfg(cfg, env_world_size=2, stage_num=1, num_action_chunks=32)
+
+    configs = EnvLayout.env_cfgs(cfg.env.eval, "env.eval")
+    behavior_cfg = configs["env.eval.envs.behavior" if listed else "env.eval"]
+    assert (
+        behavior_cfg.max_episode_steps,
+        behavior_cfg.max_steps_per_rollout_epoch,
+    ) == expected
+    if listed:
+        assert cfg.env.eval.envs.legacy.max_episode_steps == 4096
+        assert cfg.env.eval.envs.legacy.max_steps_per_rollout_epoch == 4096

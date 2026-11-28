@@ -10,7 +10,7 @@ Pick a benchmark below for its end-to-end installation, checkpoint download, lau
       :link: behavior
       :link-type: doc
 
-      50 household tasks on OmniGibson and Isaac Sim 4.5 with OpenPI π₀.₅.
+      50 tasks in 2025 and 100 in 2026, using Isaac Sim 4.5 and 5.1 respectively, with OpenPI π₀.₅.
 
    .. grid-item-card:: LIBERO
       :link: libero

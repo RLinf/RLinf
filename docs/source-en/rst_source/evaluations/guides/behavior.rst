@@ -4,7 +4,7 @@ BEHAVIOR-1K Evaluation
 Overview
 --------
 
-BEHAVIOR-1K is a household scene simulation benchmark built on OmniGibson and Isaac Sim 4.5, tasking a dual-arm R1 Pro robot with pick-and-place, stacking, and tidying across 50 tasks. RLinf runs parallel evaluation of OpenPI and other VLA policies in BEHAVIOR environments and reports task-level metrics such as ``eval/success_once``.
+BEHAVIOR-1K is a household scene simulation benchmark built on OmniGibson and Isaac Sim, tasking a dual-arm R1 Pro robot with pick-and-place, stacking, and tidying across 50 tasks in 2025 and 100 in 2026. RLinf runs parallel evaluation of OpenPI and other VLA policies in BEHAVIOR environments and reports task-level metrics such as ``eval/success_once``.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -12,7 +12,7 @@ BEHAVIOR-1K is a household scene simulation benchmark built on OmniGibson and Is
    .. grid-item-card:: Benchmark
       :text-align: center
 
-      BEHAVIOR-1K (50 household tasks, ``behavior_r1pro``)
+      BEHAVIOR-1K (50 household tasks in 2025, 100 in 2026, ``behavior_r1pro``)
 
    .. grid-item-card:: Models
       :text-align: center
@@ -36,7 +36,9 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
 .. tab-set::
 
-   .. tab-item:: OpenPI π₀.₅
+   .. tab-item:: 2025 · OpenPI π₀.₅
+
+      OmniGibson 3.7.2 uses a standalone Isaac Sim 4.5 installation. Both ``--env behavior`` and ``--env behavior2025`` select this version.
 
       **1. Install**
 
@@ -63,14 +65,62 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
       .. code-block:: bash
 
-         bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+         bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval_2025 \
            rollout.model.model_path=./RLinf-Pi0-Behavior
 
-``run_eval.sh`` fills ``OMNIGIBSON_DATASET_PATH``, ``OMNIGIBSON_KEY_PATH``, ``OMNIGIBSON_ASSET_PATH``, ``EXP_PATH``, and ``CARB_APP_PATH`` from ``ISAAC_PATH`` and ``OMNIGIBSON_DATA_PATH``. Convert third-party OpenPI checkpoints (such as OpenPI-Comet) to PyTorch format before setting ``rollout.model.model_path``; for OpenVLA-OFT, derive an eval YAML from ``examples/embodiment/config/`` (see :doc:`../reference/configuration`).
+   .. tab-item:: 2026 · OpenPI π₀.₅
+
+      Open a fresh shell in the repository root. The installer sets up the OmniGibson 3.9.4 adapter and Isaac Sim 5.1 in a separate Python 3.11 environment. The `RLinf/v3.9 branch <https://github.com/RLinf/BEHAVIOR-1K/tree/RLinf/v3.9>`__ is the upstream home for the 2026 adapter. See the `BEHAVIOR-1K integration PR <https://github.com/RLinf/BEHAVIOR-1K/pull/4>`__ for the simulator changes.
+
+      **1. Install**
+
+      The Isaac Sim download needs about 20 GB of temporary space. If ``/tmp`` is too small, set ``TMPDIR`` to a directory on a larger volume before installing. For example, run ``mkdir -p ./tmp`` and ``export TMPDIR="$PWD/tmp"``.
+
+      .. code-block:: bash
+
+         unset ISAAC_PATH EXP_PATH CARB_APP_PATH
+         bash requirements/install.sh embodied --model openpi --env behavior2026
+         source .venv-behavior2026/bin/activate
+
+      **2. Download Assets and Checkpoint**
+
+      Choose a separate asset directory for 2026 and download the robot assets.
+
+      .. code-block:: bash
+
+         export OMNIGIBSON_DATA_PATH="$PWD/behavior-2026-data"
+         mkdir -p "$OMNIGIBSON_DATA_PATH"
+         python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
+
+      Run the following command separately and answer the asset license prompt before continuing.
+
+      .. code-block:: bash
+
+         python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets()"
+
+      Download the public instances and PT50 checkpoint after accepting the license.
+
+      .. code-block:: bash
+
+         python -c "from omnigibson.utils.asset_utils import download_2026_challenge_task_instances; download_2026_challenge_task_instances()"
+         hf download RLinf/RLinf-Pi05-BEHAVIOR-1K-PT50-CS32 --local-dir ./RLinf-Pi05-BEHAVIOR-1K-PT50-CS32
+
+      **3. Evaluate**
+
+      .. code-block:: bash
+
+         bash evaluations/run_eval.sh behavior2026 \
+           rollout.model.model_path=./RLinf-Pi05-BEHAVIOR-1K-PT50-CS32
+
+      This evaluates the base layout for ``turning_on_radio``. For a public instance, use the command under Advanced Usage below.
+
+For 2025, the launcher derives the remaining OmniGibson and Isaac Sim paths from ``ISAAC_PATH`` and ``OMNIGIBSON_DATA_PATH``.
+
+Convert third-party OpenPI checkpoints (such as OpenPI-Comet) to PyTorch format before setting ``rollout.model.model_path``; for OpenVLA-OFT, derive an eval YAML from ``examples/embodiment/config/`` (see :doc:`../reference/configuration`).
 
 .. dropdown:: Hardware, Isaac Sim, and Example Configs
 
-   BEHAVIOR requires Isaac Sim 4.5 (`requirements <https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html>`_):
+   The 2025 benchmark uses Isaac Sim 4.5 (`requirements <https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html>`__); 2026 uses Isaac Sim 5.1 (`requirements <https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/requirements.html>`__).
 
    - Use a ray-tracing GPU (RTX 30/40 series or newer); non-RT GPUs (A100, H100) show rendering artifacts.
    - Hopper and later GPUs require NVIDIA driver 570 or newer.
@@ -83,7 +133,10 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
       * - Config file
         - Env preset
         - Model
-      * - ``behavior_openpi_pi05_eval.yaml``
+      * - ``behavior_openpi_pi05_eval_2025.yaml``
+        - ``behavior_r1pro``
+        - π₀.₅ (``openpi``)
+      * - ``behavior_openpi_pi05_eval_2026.yaml``
         - ``behavior_r1pro``
         - π₀.₅ (``openpi``)
 
@@ -99,7 +152,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    - ``disabled`` (default): loads the fixed ``activity_instance_id`` (from ``activity_instance_dir`` if set).
    - ``offline``: picks a cached instance at random from ``activity_instance_dir`` on each reset.
-   - ``online``: resamples object layouts online (requires ``online_object_sampling: True`` and ``use_presampled_robot_pose: False``; slower startup).
+   - ``online``: resamples object layouts online (requires ``online_object_sampling: True`` and ``use_presampled_robot_pose: False``; slower startup). For 2026 online sampling, configure one environment per simulator process.
 
    **Key evaluation fields**
 
@@ -110,15 +163,15 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
       * - Field
         - Guidance
       * - ``total_num_envs``
-        - Global parallel envs. Each env uses ~**10 GiB** GPU memory; ``behavior_openpi_pi05_eval.yaml`` defaults to ``4``.
+        - Global parallel envs; both year presets default to ``4``. Must be divisible by the number of env workers. Each env uses about **10 GiB** GPU memory.
       * - ``rollout_epoch``
-        - Eval rounds averaged into final metrics; ``behavior_openpi_pi05_eval.yaml`` defaults to ``4``.
+        - Eval rounds averaged into final metrics; both year presets default to ``4``.
       * - ``max_episode_steps``
-        - Max steps per trajectory (``4096`` in the π₀.₅ example; preset default ``2000`` can truncate long tasks).
+        - Max steps per trajectory: ``4096`` in the 2025 preset. The 2026 default is ``null``, which uses the selected task's official limit.
       * - ``max_steps_per_rollout_epoch``
-        - Steps per rollout round; **must be divisible by** ``rollout.model.num_action_chunks``.
+        - Steps per rollout round; must be divisible by ``rollout.model.num_action_chunks``. The 2026 default is ``null``, which rounds the episode limit up to a full action chunk.
       * - ``num_env_subprocess``
-        - Isaac Sim subprocesses per env worker (default ``1``). ``total_num_envs`` must divide by ``num_env_subprocess × pipeline_stage_num``.
+        - Isaac Sim subprocesses per env worker (default ``1``). Envs per worker must be divisible by both ``num_env_subprocess`` and ``pipeline_stage_num``. Set the worker count through :doc:`../../concepts/placement`.
       * - ``skip_intermediate_renders``
         - Skips renders inside action chunks when ``True`` for faster stepping; videos keep chunk-boundary frames only.
 
@@ -143,7 +196,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
               scene_model: house_double_floor_lower
               partial_scene_load: true             # load task-relevant rooms only
 
-   For cached instance generation and placement details, see :doc:`../../examples/embodied/behavior`.
+   For 2025 cached instance generation and placement details, see :doc:`../../examples/embodied/behavior`.
 
 .. dropdown:: Advanced Usage
 
@@ -151,16 +204,28 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
    .. code-block:: bash
 
-      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval_2025 \
         rollout.model.model_path=./RLinf-Pi0-Behavior \
         env.eval.omni_config.task.activity_name=picking_up_trash
 
-      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval_2025 \
         rollout.model.model_path=./RLinf-Pi0-Behavior \
         env.eval.total_num_envs=4 \
         env.eval.num_env_subprocess=2
 
-   **Random offline instance sampling**
+   **Evaluate public instance 301 (2026)**
+
+   Set the full scene template and the directory of saved instance states. The task name remains ``turning_on_radio``.
+
+   .. code-block:: bash
+
+      bash evaluations/run_eval.sh behavior2026 \
+        rollout.model.model_path=./RLinf-Pi05-BEHAVIOR-1K-PT50-CS32 \
+        +env.eval.omni_config.scene.scene_instance="$OMNIGIBSON_DATA_PATH/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_0_301_template.json" \
+        env.eval.omni_config.task.activity_instance_dir="$OMNIGIBSON_DATA_PATH/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json" \
+        env.eval.omni_config.task.activity_instance_id=301
+
+   **Random offline instance sampling (2025)**
 
    .. code-block:: yaml
 
@@ -168,7 +233,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
         eval:
           omni_config:
             task:
-              activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2025-challenge-task-instances
+              activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2025-challenge-task-instances/scenes/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
               instance_file_format: tro_state
               instance_resample_mode: offline
           rollout_epoch: 5
@@ -185,8 +250,8 @@ The terminal prints ``eval/success_once``; logs and videos go to ``logs/<timesta
    * - Symptom
      - Fix
    * - Missing BEHAVIOR assets or license errors
-     - Complete Isaac Sim, OmniGibson asset, and license setup per :doc:`../../examples/embodied/behavior` before evaluation.
-   * - ``ISAAC_PATH`` not set
+     - For 2025, complete Isaac Sim, OmniGibson asset, and license setup per :doc:`../../examples/embodied/behavior` before evaluation. For 2026, follow the asset download and license steps above.
+   * - ``ISAAC_PATH`` missing in 2025
      - Export ``ISAAC_PATH`` to your Isaac Sim directory so Isaac Sim can start; ``run_eval.sh`` sets ``OMNIGIBSON_HEADLESS=1`` by default.
    * - Out of GPU memory
      - Lower ``total_num_envs`` or ``num_env_subprocess``; each env uses about 10 GiB GPU memory.

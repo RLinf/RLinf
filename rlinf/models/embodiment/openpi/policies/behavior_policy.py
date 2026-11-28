@@ -29,6 +29,17 @@ R1PRO_PROPRIO_INDICES = {
     "gripper_right_qpos": np.s_[232:234],
 }
 
+# The 2026 R1Pro evaluation configuration requests a compact set of proprio fields.
+# Slices follow OmniGibson's eval.utils.eval_utils.PROPRIOCEPTION_INDICES.
+R1PRO_2026_PROPRIO_INDICES = {
+    "base_qvel": np.s_[0:3],
+    "arm_left_qpos": np.s_[3:10],
+    "gripper_left_qpos": np.s_[24:26],
+    "arm_right_qpos": np.s_[28:35],
+    "gripper_right_qpos": np.s_[49:51],
+    "trunk_qpos": np.s_[53:57],
+}
+
 
 def make_behavior_example() -> dict:
     """Creates a random input example for the Behavior policy."""
@@ -43,17 +54,25 @@ def make_behavior_example() -> dict:
 
 
 def extract_state_from_proprio(proprio_data: np.ndarray) -> np.ndarray:
-    """Extract 23-dim policy state from full proprio vector."""
-    base_qvel = proprio_data[..., R1PRO_PROPRIO_INDICES["base_qvel"]]  # 3
-    trunk_qpos = proprio_data[..., R1PRO_PROPRIO_INDICES["trunk_qpos"]]  # 4
-    arm_left_qpos = proprio_data[..., R1PRO_PROPRIO_INDICES["arm_left_qpos"]]  # 7
-    arm_right_qpos = proprio_data[..., R1PRO_PROPRIO_INDICES["arm_right_qpos"]]  # 7
-    left_gripper_width = proprio_data[
-        ..., R1PRO_PROPRIO_INDICES["gripper_left_qpos"]
-    ].sum(axis=-1, keepdims=True)  # 1
-    right_gripper_width = proprio_data[
-        ..., R1PRO_PROPRIO_INDICES["gripper_right_qpos"]
-    ].sum(axis=-1, keepdims=True)  # 1
+    """Extract the 23 policy features from an R1Pro proprioception vector."""
+    if proprio_data.shape[-1] == 61:
+        indices = R1PRO_2026_PROPRIO_INDICES
+    elif proprio_data.shape[-1] == 256:
+        indices = R1PRO_PROPRIO_INDICES
+    else:
+        raise ValueError(
+            f"Expected 61 or 256 R1Pro state values, got {proprio_data.shape[-1]}."
+        )
+    base_qvel = proprio_data[..., indices["base_qvel"]]  # 3
+    trunk_qpos = proprio_data[..., indices["trunk_qpos"]]  # 4
+    arm_left_qpos = proprio_data[..., indices["arm_left_qpos"]]  # 7
+    arm_right_qpos = proprio_data[..., indices["arm_right_qpos"]]  # 7
+    left_gripper_width = proprio_data[..., indices["gripper_left_qpos"]].sum(
+        axis=-1, keepdims=True
+    )  # 1
+    right_gripper_width = proprio_data[..., indices["gripper_right_qpos"]].sum(
+        axis=-1, keepdims=True
+    )  # 1
     return np.concatenate(
         [
             base_qvel,
