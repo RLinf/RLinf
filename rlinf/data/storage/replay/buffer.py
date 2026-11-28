@@ -653,7 +653,6 @@ class TrajectoryReplayBuffer:
         )
 
         # Convert global sample indices to per-trajectory local indices
-        grouped_indices: dict[str, list[tuple[int, int]]] = {}
         cumulative_ends_tensor = self._window_cache_cumulative_ends_tensor
         if cumulative_ends_tensor is None or cumulative_ends_tensor.numel() == 0:
             return {}
@@ -667,16 +666,6 @@ class TrajectoryReplayBuffer:
             [torch.zeros(1, dtype=torch.long), cumulative_ends_tensor[:-1]]
         )
         local_sample_indices = sample_ids_tensor - starts[bucket_indices]
-
-        for idx_in_batch in range(sample_ids_tensor.numel()):
-            idx = int(bucket_indices[idx_in_batch])
-            if idx >= len(window_ids):
-                continue
-            trajectory_id = window_ids[idx]
-            local_sample_idx = int(local_sample_indices[idx_in_batch])
-            grouped_indices.setdefault(trajectory_id, []).append(
-                (idx_in_batch, local_sample_idx)
-            )
 
         # Vectorized sampling: use cache buffer directly, load misses and gather once.
         batch = None
