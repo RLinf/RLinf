@@ -44,6 +44,19 @@ class OrbbecCamera(BaseCamera):
 
     SDK = "pyorbbecsdk"
 
+    #: ``wait_for_frames`` already blocks on the hardware frame cadence; an
+    #: extra sleep in :meth:`BaseCamera._capture_frames` makes reads slower
+    #: than the stream and fills the SDK's internal FIFO with stale frames.
+    PACE_CAPTURE_WITH_SLEEP: bool = False
+
+    #: Short poll timeout in milliseconds used to drain framesets already
+    #: queued in the Orbbec SDK FIFO after ``wait_for_frames`` returns one.
+    DRAIN_TIMEOUT_MS: int = 1
+
+    #: Upper bound on extra queued framesets drained per capture iteration so a
+    #: non-blocking stream cannot starve frame delivery.
+    MAX_DRAIN_FRAMES: int = 32
+
     def __init__(self, camera_info: CameraInfo) -> None:
         super().__init__(camera_info)
         if not camera_info.serial_number:
@@ -249,23 +262,44 @@ class OrbbecCamera(BaseCamera):
             f"within {timeout:g} seconds. {self._connection_hint()}"
         )
 
+    def _has_required_frames(self, frames: Any) -> bool:
+        """Whether ``frames`` contains every stream required by this camera."""
+        if frames is None or frames.get_color_frame() is None:
+            return False
+        if self._align is not None and frames.get_depth_frame() is None:
+            return False
+        return True
+
+    def _drain_framesets(self, frames: Any) -> Any:
+        """Return the newest complete frameset currently buffered by the SDK.
+
+        ``wait_for_frames`` returns the oldest frameset queued in the Orbbec
+        SDK FIFO. Draining with a short timeout discards any stale backlog
+        before decoding so the capture thread stays at the stream head.
+        """
+        newest = frames
+        for _ in range(self.MAX_DRAIN_FRAMES):
+            candidate = self._pipeline.wait_for_frames(self.DRAIN_TIMEOUT_MS)
+            if candidate is None:
+                break
+            if self._has_required_frames(candidate):
+                newest = candidate
+        return newest
+
     def _poll_frame(self, timeout_ms: int) -> Optional[np.ndarray]:
-        """Return one complete frame, or ``None`` if none arrives in time."""
+        """Return the newest complete frame, or ``None`` if none arrives in time."""
         import cv2
 
         frames = self._pipeline.wait_for_frames(timeout_ms)
-        if frames is None or frames.get_color_frame() is None:
+        if not self._has_required_frames(frames):
             return None
+        frames = self._drain_framesets(frames)
         if self._align is not None:
-            if frames.get_depth_frame() is None:
-                return None
             aligned = self._align.process(frames)
             if aligned is None:
                 return None
             frames = aligned.as_frame_set()
-            if frames is None or frames.get_color_frame() is None:
-                return None
-            if frames.get_depth_frame() is None:
+            if not self._has_required_frames(frames):
                 return None
 
         color = self._color_to_bgr(frames.get_color_frame())
