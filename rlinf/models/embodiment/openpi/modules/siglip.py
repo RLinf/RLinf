@@ -19,7 +19,7 @@ Implements the So400m/14 ViT variant with pool_type="none" used by Pi0.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 
 import torch
@@ -28,6 +28,10 @@ import torch.nn.functional as F
 
 from .short_memory import factorized_space_time_attention, fixed_relative_time_encoding
 from .utils import _str_to_dtype
+
+PatchEmbedding = Callable[
+    [torch.Tensor, torch.Tensor, torch.Tensor | None], torch.Tensor
+]
 
 
 def posemb_sincos_2d(
@@ -50,9 +54,17 @@ def posemb_sincos_2d(
 class Float32Conv2d(nn.Conv2d):
     """Run patch embedding in FP32 through the module's forward boundary."""
 
+    def __init__(self, *args, patch_embedding: PatchEmbedding | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.patch_embedding = patch_embedding
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        image = x.float()
+        weight = self.weight.float()
         bias = None if self.bias is None else self.bias.float()
-        return self._conv_forward(x.float(), self.weight.float(), bias)
+        if self.patch_embedding is not None:
+            return self.patch_embedding(image, weight, bias)
+        return self._conv_forward(image, weight, bias)
 
 
 class MlpBlock(nn.Module):
@@ -258,6 +270,7 @@ class SigLIPViT(nn.Module):
         pytorch_numerics: bool = False,
         temporal_layers: Sequence[int] = (),
         drop_history_layer: int | None = None,
+        patch_embedding: PatchEmbedding | None = None,
     ):
         super().__init__()
 
@@ -280,6 +293,7 @@ class SigLIPViT(nn.Module):
             stride=self.patch_size,
             padding=0,
             bias=True,
+            patch_embedding=patch_embedding,
         )
 
         # Positional embedding — stored as learnable parameter (matching JAX)

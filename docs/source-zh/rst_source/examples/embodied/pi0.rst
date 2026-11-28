@@ -454,6 +454,17 @@ NVIDIA CUDA 支持上方列出的全部四个环境（在下方选择 **π₀** 
             openpi:
               torch_compile: False
 
+   - **Batch-invariant 算子**：rollout 与 actor 使用不同的 batch size 时，即使权重相同，对同一动作也可能算出不同的 log-prob。启用 ``batch_invariant_ops`` 后，SigLIP 的图像 patch 投影与部分 action expert 投影在不同 batch size 下会保持一致的累加顺序（FP32 输入采用 TF32x3 计算，累加使用 FP32）。需要 NVIDIA Ampere 或更新架构的 GPU、PyTorch 2.6 及以上版本以及 Triton：
+
+     .. code-block:: yaml
+
+        actor:
+          model:
+            openpi:
+              batch_invariant_ops: true
+
+     Hugging Face rollout 默认继承 actor 的设置，也可以在 ``rollout.model.openpi`` 下单独覆盖；省略该配置项或设为 ``false`` 时使用标准 PyTorch 算子。验证效果时，保持 rollout 与 actor 的权重、前向精度和注意力实现一致，开启 ``algorithm.recompute_logprobs: True`` 并查看首次优化器更新前的 ``actor/rollout_train_joint_logprob_gap_max``；由于图像 patch 投影会构建一个临时矩阵，还应在常用 batch size 下检查每步耗时与峰值显存。
+
    **LoRA 与 FSDP 分片**
 
    - 对 VLM 做 LoRA 微调时，设置 ``actor.model.is_lora: True`` 与 ``actor.model.lora_rank: 8``。OpenPI 暂不支持梯度检查点，保持 ``gradient_checkpointing: False``。

@@ -350,6 +350,8 @@ actor
      - 动作空间维度。
    * - ``actor.model.num_action_chunks``
      - 环境实际执行的动作块长度。对 OpenPI（``openpi``）而言，这 **不是** 网络 horizon：后者优先用 ``openpi.action_horizon``，否则用 ``openpi.config_name`` 对应官方 OpenPI ``TrainConfig.model.action_horizon``。参见 :doc:`../examples/embodied/pi0`。
+   * - ``actor.model.openpi.batch_invariant_ops``
+     - 为 OpenPI 的 SigLIP 图像 patch 投影与部分 action expert 投影启用 batch-invariant Triton 算子，以减小不同 batch size 下的 log-prob 差异。参见 :doc:`../examples/embodied/pi0`。
    * - ``actor.model.use_proprio``
      - 是否向模型输入本体感受状态。
    * - ``actor.model.use_film``

@@ -458,6 +458,17 @@ NVIDIA CUDA supports all four environments listed above (select **π₀** or **�
             openpi:
               torch_compile: False
 
+   - **Batch-invariant kernels**: Rollout and actor replay can produce different log-probabilities for the same action when they use different batch sizes. Enable ``batch_invariant_ops`` so the SigLIP image patch embedding and selected action-expert projections keep a fixed forward reduction order across batch sizes (FP32 inputs use TF32x3 with FP32 accumulation). Requires an NVIDIA Ampere or newer GPU, PyTorch 2.6 or later, and Triton:
+
+     .. code-block:: yaml
+
+        actor:
+          model:
+            openpi:
+              batch_invariant_ops: true
+
+     Hugging Face rollout inherits the actor setting unless you override ``rollout.model.openpi.batch_invariant_ops``. Omit the key or set it to ``false`` to use standard PyTorch operators. To verify the effect, match weights, forward precision, and attention implementation between rollout and actor, enable ``algorithm.recompute_logprobs: True``, and check ``actor/rollout_train_joint_logprob_gap_max`` before the first optimizer step; also check step time and peak GPU memory at your usual batch sizes because the patch embedding builds a temporary patch matrix.
+
    **LoRA and FSDP sharding**
 
    - Set ``actor.model.is_lora: True`` and ``actor.model.lora_rank: 8`` to fine-tune the VLM with LoRA. Keep ``gradient_checkpointing: False``, as gradient checkpointing is not supported for OpenPI.

@@ -365,6 +365,10 @@ actor
        **not** the network horizon: that comes from ``openpi.action_horizon``
        when set, otherwise the official OpenPI ``TrainConfig.model.action_horizon``
        for ``openpi.config_name``. See :doc:`../examples/embodied/pi0`.
+   * - ``actor.model.openpi.batch_invariant_ops``
+     - Use batch-invariant Triton kernels for OpenPI's SigLIP patch embedding
+       and selected action-expert projections to reduce log-prob differences
+       across batch sizes. See :doc:`../examples/embodied/pi0`.
    * - ``actor.model.use_proprio``
      - Whether to feed proprioceptive state to the model.
    * - ``actor.model.use_film``

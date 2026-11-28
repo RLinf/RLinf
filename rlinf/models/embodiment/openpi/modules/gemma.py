@@ -216,6 +216,7 @@ class Attention(nn.Module):
         self,
         configs: Sequence[Config],
         pytorch_numerics: bool = False,
+        expert_linears: Sequence[type[nn.Linear]] | None = None,
     ):
         super().__init__()
         self.expert_configs = configs
@@ -231,7 +232,8 @@ class Attention(nn.Module):
         self.v_proj = nn.ModuleList()
         self.o_proj = nn.ModuleList()
 
-        for config in configs:
+        for i, config in enumerate(configs):
+            linear = nn.Linear if expert_linears is None else expert_linears[i]
             lora_cfg = config.lora_configs.get("attn")
             # TODO: add lora attn support
             if lora_cfg is not None:
@@ -239,7 +241,7 @@ class Attention(nn.Module):
             if config.num_kv_heads == config.num_heads:
                 # Combined QKV projection
                 self.q_proj.append(
-                    nn.Linear(
+                    linear(
                         config.width, 3 * config.num_heads * config.head_dim, bias=False
                     )
                 )
@@ -247,23 +249,21 @@ class Attention(nn.Module):
                 self.v_proj.append(None)
             else:
                 self.q_proj.append(
-                    nn.Linear(
-                        config.width, config.num_heads * config.head_dim, bias=False
-                    )
+                    linear(config.width, config.num_heads * config.head_dim, bias=False)
                 )
                 self.k_proj.append(
-                    nn.Linear(
+                    linear(
                         config.width, config.num_kv_heads * config.head_dim, bias=False
                     )
                 )
                 self.v_proj.append(
-                    nn.Linear(
+                    linear(
                         config.width, config.num_kv_heads * config.head_dim, bias=False
                     )
                 )
 
             self.o_proj.append(
-                nn.Linear(config.num_heads * config.head_dim, config.width, bias=False)
+                linear(config.num_heads * config.head_dim, config.width, bias=False)
             )
 
         # Initialize weights
@@ -464,6 +464,7 @@ class Block(nn.Module):
         pytorch_numerics: bool = False,
         adarms: Sequence[bool] | bool = False,
         dropout: float = 0.0,
+        expert_linears: Sequence[type[nn.Linear]] | None = None,
     ):
         super().__init__()
         self.configs = configs
@@ -473,7 +474,9 @@ class Block(nn.Module):
             adarms = [adarms] * len(configs)
         self.adarms = list(adarms)
 
-        self.attn = Attention(configs, pytorch_numerics=pytorch_numerics)
+        self.attn = Attention(
+            configs, pytorch_numerics=pytorch_numerics, expert_linears=expert_linears
+        )
         self.pre_attention_norms = nn.ModuleList(
             [RMSNorm(c.width, adaptive=adarms[i]) for i, c in enumerate(configs)]
         )
@@ -588,6 +591,7 @@ class Module(nn.Module):
         adarms: Sequence[bool] | bool = False,
         dropout: float = 0.0,
         use_gradient_checkpointing: bool = True,
+        expert_linears: Sequence[type[nn.Linear]] | None = None,
     ):
         super().__init__()
         self.configs = configs
@@ -608,6 +612,7 @@ class Module(nn.Module):
                     adarms=self.adarms,
                     pytorch_numerics=pytorch_numerics,
                     dropout=dropout,
+                    expert_linears=expert_linears,
                 )
                 for _ in range(configs[0].depth)
             ]

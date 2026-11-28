@@ -112,6 +112,17 @@ class Pi0(model.BaseModel):
         paligemma_config = gemma.get_config(config.paligemma_variant)
         action_expert_config = gemma.get_config(config.action_expert_variant)
 
+        action_linear = nn.Linear
+        patch_embedding = None
+        if config.batch_invariant_ops:
+            from rlinf.models.ops.batch_invariant.linear import TritonLinear
+            from rlinf.models.ops.batch_invariant.patch_embedding import (
+                triton_patch_embedding,
+            )
+
+            action_linear = TritonLinear
+            patch_embedding = triton_patch_embedding
+
         # Gemma LLM with dual experts
         # Expert 0 (PaliGemma) uses regular RMSNorm; Expert 1 (Action Expert) may use adaRMS
         adarms = [False, config.pi05]
@@ -121,6 +132,7 @@ class Pi0(model.BaseModel):
             adarms=adarms,
             use_gradient_checkpointing=False,
             pytorch_numerics=config.pytorch_numerics,
+            expert_linears=(nn.Linear, action_linear),
         )
 
         # SigLIP vision encoder
@@ -131,6 +143,7 @@ class Pi0(model.BaseModel):
             use_gradient_checkpointing=False,
             pytorch_numerics=config.pytorch_numerics,
             dtype_mm=config.dtype,
+            patch_embedding=patch_embedding,
             temporal_layers=(
                 config.short_memory_temporal_layers if config.short_memory else ()
             ),
@@ -149,14 +162,14 @@ class Pi0(model.BaseModel):
             self.time_mlp_out = nn.Linear(action_expert_width, action_expert_width)
         else:
             self.state_proj = nn.Linear(config.action_dim, action_expert_width)
-            self.action_time_mlp_in = nn.Linear(
+            self.action_time_mlp_in = action_linear(
                 2 * action_expert_width, action_expert_width
             )
             self.action_time_mlp_out = nn.Linear(
                 action_expert_width, action_expert_width
             )
 
-        self.action_out_proj = nn.Linear(action_expert_width, config.action_dim)
+        self.action_out_proj = action_linear(action_expert_width, config.action_dim)
 
         # Optional PointNet
         if config.pcd:
