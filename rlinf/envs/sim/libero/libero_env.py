@@ -30,6 +30,7 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.envs.sim.libero.art_state import ART_PHASES, cluster_features
 from rlinf.envs.sim.libero.utils import (
     build_interleaved_eval_reset_state_ids,
     distribute_reset_state_ids_round_robin,
@@ -161,6 +162,7 @@ class LiberoEnv(gym.Env):
         self._is_start = True
         self.num_envs = num_envs
         self.group_size = self.cfg.group_size
+        self.art_cluster_states = cfg.get("art_grouping", "index") == "cluster"
         self.num_group = self.num_envs // self.group_size
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
         self.specific_reset_id = cfg.get("specific_reset_id", None)
@@ -920,7 +922,15 @@ class LiberoEnv(gym.Env):
         if reconfig_env_idx:
             env_fn_params = self.get_env_fn_params(reconfig_env_idx)
             self.env.reconfigure_env_fns(env_fn_params, reconfig_env_idx)
-        self.env.seed(self.seed * len(env_idx))
+        reset_seed = self.seed * len(env_idx)
+        if self.cfg.get("art_grouped_reset", False) and not self.is_eval:
+            # Saved MuJoCo states omit static fixture poses sampled by reset.
+            # Match simulator seeds within each ART group, not policy noise.
+            reset_seed = [
+                reset_seed + (env_id // self.group_size) * self.group_size
+                for env_id in range(self.num_envs)
+            ]
+        self.env.seed(reset_seed)
         self.env.reset(id=env_idx)
         variant = os.environ.get(
             "LIBERO_TYPE",
@@ -983,8 +993,35 @@ class LiberoEnv(gym.Env):
                 self._observation_history[index].clear()
             self._append_history(obs, env_idx)
             obs["history"] = self._get_history_obs()
+        if self.art_cluster_states:
+            self._add_art_cluster_states(obs)
         infos = {}
         return obs, infos
+
+    def _add_art_cluster_states(self, obs: dict) -> None:
+        """Attach ART cluster coordinates and task-phase buckets at a decision."""
+        states = self.env.object_states()
+        remaining = self.cfg.max_episode_steps - self.elapsed_steps
+        features = torch.from_numpy(
+            np.stack(
+                [
+                    cluster_features(state, raw["robot0_gripper_qpos"], steps)
+                    for state, raw, steps in zip(
+                        states, self.current_raw_obs, remaining
+                    )
+                ]
+            )
+        ).float()
+        buckets = torch.tensor(
+            [
+                task_id * len(ART_PHASES) + ART_PHASES.index(state["phase"])
+                for task_id, state in zip(self.task_ids, states)
+            ]
+        )
+        obs["policy_inputs"] = {
+            "art_cluster_features": features,
+            "art_cluster_bucket": buckets,
+        }
 
     def get_camera_meta(
         self, camera_name: str = "agentview", height: int = 256, width: int = 256
@@ -1180,6 +1217,8 @@ class LiberoEnv(gym.Env):
             chunk_truncations = raw_chunk_truncations.clone()
         if not self.is_eval:
             infos_list[-1]["valid_action_mask"] = valid_action_mask
+        if self.art_cluster_states:
+            self._add_art_cluster_states(obs_list[-1])
         return (
             obs_list,
             chunk_rewards,

@@ -172,7 +172,17 @@ def main(cfg) -> None:
             MultiStepRolloutWorker,
         )
 
-        rollout_worker_cls = MultiStepRolloutWorker
+        if (
+            cfg.algorithm.loss_type == "embodied_art"
+            and cfg.actor.model.model_type == "openpi"
+        ):
+            from rlinf.workers.rollout.hf.art_huggingface_worker import (
+                ARTMultiStepRolloutWorker,
+            )
+
+            rollout_worker_cls = ARTMultiStepRolloutWorker
+        else:
+            rollout_worker_cls = MultiStepRolloutWorker
     else:
         raise ValueError(
             "Expected rollout.rollout_backend 'huggingface' or 'phyai' for "

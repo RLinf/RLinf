@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LIBERO observation preprocessing and episode-local history contracts."""
+"""LIBERO observations, episode history, grouped resets, and ART features."""
 
+import importlib
+import sys
 from collections import deque
 from unittest.mock import Mock
 
@@ -45,6 +47,7 @@ def libero_history_env(request):
 
     env = LiberoEnv.__new__(LiberoEnv)
     env.num_envs = 2
+    env.art_cluster_states = False
     env.history_length = 3
     env.history_stride = 2
     env.history_fps = 20.0
@@ -196,6 +199,214 @@ def test_libero_import_limits_fallbacks(monkeypatch, variant, packages):
     assert attempted == [f"{package}.envs" for package in packages]
 
 
+@pytest.fixture(scope="module")
+def libero_reset_env(tmp_path_factory):
+    # Only replace the external simulator and asset package. Physical modules
+    # let spawned workers import the same fake; RLinf's vector path stays real.
+    root = tmp_path_factory.mktemp("libero_vendor")
+    package = root / "libero" / "libero"
+    package.mkdir(parents=True)
+    (package.parent / "__init__.py").write_text("")
+    (package / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        "def get_libero_path(name):\n"
+        "    return str(Path(__file__).parent)\n"
+    )
+    (package / "benchmark.py").write_text(
+        "from types import SimpleNamespace\n"
+        "import numpy as np\n"
+        "class Benchmark:\n"
+        "    def get_task(self, task_id):\n"
+        "        return SimpleNamespace(problem_folder='spatial',\n"
+        "            bddl_file='task.bddl', language='move the object')\n"
+        "    def get_task_init_states(self, task_id):\n"
+        "        return np.arange(6).reshape(3, 2)\n"
+    )
+    (package / "envs.py").write_text(
+        """
+import gym
+import numpy as np
+
+class OffScreenRenderEnv(gym.Env):
+    observation_space = gym.spaces.Box(-np.inf, np.inf, shape=(2,))
+    action_space = gym.spaces.Box(-1.0, 1.0, shape=(1,))
+
+    def __init__(self, **kwargs):
+        self.fixture_pos = np.zeros(3)
+        self.dynamic_state = np.zeros(2)
+
+    def seed(self, seed):
+        self.reset_seed = seed
+        self.rng = np.random.default_rng(seed)
+        return [seed]
+
+    def reset(self):
+        self.fixture_pos = self.rng.uniform(size=3)
+        self.dynamic_state = np.zeros(2)
+        return self.dynamic_state.copy()
+
+    def set_init_state(self, state):
+        # Like LIBERO, restoring dynamic state leaves fixture poses alone.
+        self.dynamic_state = np.array(state, copy=True)
+        return self.dynamic_state.copy()
+"""
+    )
+    module_names = (
+        "libero",
+        "rlinf.envs.sim.libero.libero_env",
+        "rlinf.envs.sim.libero.utils",
+        "rlinf.envs.sim.libero.venv",
+    )
+    original_modules = set(sys.modules)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.syspath_prepend(str(root))
+        patch.setenv("LIBERO_TYPE", "standard")
+        cls = importlib.import_module("rlinf.envs.sim.libero.libero_env").LiberoEnv
+        benchmark = importlib.import_module("libero.libero.benchmark").Benchmark
+        env = cls.__new__(cls)
+        # Supply benchmark metadata without real assets or rendering. All reset
+        # methods, seed expansion and subprocess IPC use the production classes.
+        env.cfg = OmegaConf.create(
+            {"task_suite_name": "libero_spatial", "init_params": {}}
+        )
+        env.num_envs = 4
+        env.group_size = 2
+        env.is_libero_mem = False
+        env.short_memory = None
+        env.seed = 42
+        env.task_ids = np.zeros(env.num_envs, dtype=int)
+        env.trial_ids = np.zeros(env.num_envs, dtype=int)
+        env.cumsum_trial_id_bins = np.array([3])
+        env.task_suite = benchmark()
+        env._init_env()
+        try:
+            yield env
+        finally:
+            env.env.close()
+            for name in set(sys.modules) - original_modules:
+                if any(
+                    name == prefix or name.startswith(prefix + ".")
+                    for prefix in module_names
+                ):
+                    del sys.modules[name]
+
+
+def test_art_grouped_reset_matches_static_fixtures(libero_reset_env):
+    env = libero_reset_env
+    env.cfg.art_grouped_reset = True
+    env.is_eval = False
+    env._reconfigure(np.zeros(4, dtype=int), np.arange(4))
+
+    assert env.env.get_env_attr("reset_seed") == [168, 168, 170, 170]
+    fixtures = env.env.get_env_attr("fixture_pos")
+    np.testing.assert_array_equal(fixtures[0], fixtures[1])
+    np.testing.assert_array_equal(fixtures[2], fixtures[3])
+    assert not np.array_equal(fixtures[0], fixtures[2])
+    for state in env.env.get_env_attr("dynamic_state"):
+        np.testing.assert_array_equal(state, [0, 1])
+
+    # Partial/reordered resets retain absolute environment group membership.
+    env._reconfigure(np.array([1, 1]), np.array([3, 2]))
+    assert env.env.get_env_attr("reset_seed") == [84, 84, 86, 86]
+    fixtures = env.env.get_env_attr("fixture_pos")
+    np.testing.assert_array_equal(fixtures[2], fixtures[3])
+    for state in env.env.get_env_attr("dynamic_state", id=[2, 3]):
+        np.testing.assert_array_equal(state, [2, 3])
+
+
+@pytest.mark.parametrize("grouped,is_eval", [(False, False), (True, True)])
+def test_other_libero_modes_keep_independent_reset_seeds(
+    libero_reset_env, grouped, is_eval
+):
+    env = libero_reset_env
+    env.cfg.art_grouped_reset = grouped
+    env.is_eval = is_eval
+    env._reconfigure(np.zeros(4, dtype=int), np.arange(4))
+
+    assert env.env.get_env_attr("reset_seed") == [168, 169, 170, 171]
+    fixtures = env.env.get_env_attr("fixture_pos")
+    assert not np.array_equal(fixtures[0], fixtures[1])
+
+    env._reconfigure(np.array([1, 1]), np.array([3, 2]))
+    assert env.env.get_env_attr("reset_seed") == [84, 85, 86, 87]
+
+
+def test_art_cluster_features_measure_full_eef_and_object_rotations():
+    from rlinf.envs.sim.libero.art_state import ART_ANGLE_UNIT_RAD, cluster_features
+
+    state = {
+        "object_position": np.zeros(3),
+        "goal_position": np.ones(3) * 0.01,
+        "object_quaternion": np.array([1.0, 0.0, 0.0, 0.0]),
+        "eef_position": np.ones(3) * 0.02,
+        "eef_rotation": np.eye(3),
+    }
+    baseline = cluster_features(state, np.array([0.01, -0.01]), 20)
+    assert baseline.shape == (26,)
+    np.testing.assert_allclose(baseline[:6], [2, 2, 2, -1, -1, -1])
+    np.testing.assert_allclose(baseline[-2:], [2, 1])
+    for angle in np.radians([10, 45, 60, 90, 180]):
+        c, s = np.cos(angle), np.sin(angle)
+        for axis in range(3):
+            rotation = np.eye(3)
+            i, j = (axis + 1) % 3, (axis + 2) % 3
+            rotation[i, i] = rotation[j, j] = c
+            rotation[i, j], rotation[j, i] = -s, s
+            quaternion = np.zeros(4)
+            quaternion[0], quaternion[axis + 1] = np.cos(angle / 2), np.sin(angle / 2)
+            expected = 2 * np.sin(angle / 2) / ART_ANGLE_UNIT_RAD
+            for key, value in (
+                ("eef_rotation", rotation),
+                ("object_quaternion", quaternion),
+            ):
+                feature = cluster_features(
+                    dict(state, **{key: value}), np.array([0.01, -0.01]), 20
+                )
+                np.testing.assert_allclose(np.linalg.norm(feature - baseline), expected)
+                if key == "object_quaternion":
+                    np.testing.assert_allclose(
+                        feature,
+                        cluster_features(
+                            dict(state, object_quaternion=-quaternion),
+                            np.array([0.01, -0.01]),
+                            20,
+                        ),
+                    )
+
+
+def test_art_cluster_observations_carry_policy_owned_inputs():
+    from rlinf.envs.sim.libero.art_state import ART_PHASES
+    from rlinf.envs.sim.libero.libero_env import LiberoEnv
+
+    state = {
+        "phase": "free",
+        "object_position": np.zeros(3),
+        "goal_position": np.ones(3) * 0.01,
+        "object_quaternion": np.array([1.0, 0.0, 0.0, 0.0]),
+        "eef_position": np.ones(3) * 0.02,
+        "eef_rotation": np.eye(3),
+    }
+    env = LiberoEnv.__new__(LiberoEnv)
+    env.env = Mock()
+    env.env.object_states.return_value = [state, state]
+    env.cfg = OmegaConf.create({"max_episode_steps": 240})
+    env._elapsed_steps = np.array([0, 25])
+    env.task_ids = np.array([6, 7])
+    env.current_raw_obs = [
+        {"robot0_gripper_qpos": np.array([0.01, -0.01])} for _ in range(2)
+    ]
+    obs = {"states": torch.zeros(2, 8)}
+    env._add_art_cluster_states(obs)
+    assert set(obs) == {"states", "policy_inputs"}
+    features = obs["policy_inputs"]["art_cluster_features"]
+    assert features.shape == (2, 26)
+    torch.testing.assert_close(features[:, -1], torch.tensor([12.0, 10.75]))
+    assert obs["policy_inputs"]["art_cluster_bucket"].tolist() == [
+        6 * len(ART_PHASES),
+        7 * len(ART_PHASES),
+    ]
+
+
 @pytest.mark.parametrize("num_trials", [2, 3, 4])
 def test_libero_eval_keeps_exhausted_slots_reset_without_recounting(
     monkeypatch, num_trials
@@ -242,6 +453,7 @@ def test_libero_eval_keeps_exhausted_slots_reset_without_recounting(
         }
     )
     env.num_envs = 2
+    env.art_cluster_states = False
     env.seed = env.start_idx = 0
     env.is_eval = env.auto_reset = env.ignore_terminations = True
     env.is_start = env.is_libero_mem = env.use_rel_reward = env.use_step_penalty = False

@@ -1811,7 +1811,8 @@ def validate_embodied_cfg(cfg):
         if enable_eval:
             assert cfg.env.get("eval", None) is not None, (
                 "env.eval config is required when runner.val_check_interval > 0, "
-                "runner.only_eval=True, or runner.task_type=embodied_eval."
+                "runner.only_eval=True, or "
+                "runner.task_type=embodied_eval."
             )
             for eval_env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").values():
                 eval_env_cfg.group_size = eval_env_cfg.get("group_size", 1)
@@ -1979,9 +1980,12 @@ def validate_embodied_cfg(cfg):
         assert not algorithm_cfg.get("filter_rewards", False), (
             "DiffusionART requires algorithm.filter_rewards=False; got True."
         )
-        assert model_type in DIFFUSION_MODELS, (
-            "algorithm.loss_type='embodied_art' requires a diffusion model."
+        assert model_type in DIFFUSION_MODELS or model_type == SupportedModel.OPENPI, (
+            "algorithm.loss_type='embodied_art' requires SD3, Wan, or OpenPi."
         )
+        action_art = model_type == SupportedModel.OPENPI
+        if action_art:
+            validate_openpi_art_cfg(cfg)
         assert cfg.actor.training_backend == "fsdp", (
             "algorithm.loss_type='embodied_art' currently requires actor.training_backend='fsdp'."
         )
@@ -2002,11 +2006,26 @@ def validate_embodied_cfg(cfg):
         assert cfg.env.train.group_size == algorithm_cfg.group_size, (
             "DiffusionART requires env.train.group_size to match algorithm.group_size."
         )
-        assert (
-            cfg.env.train.max_steps_per_rollout_epoch == model_cfg.num_action_chunks
-        ), "DiffusionART requires one generated sample per rollout epoch."
+        decisions = 1
+        if action_art:
+            decisions = (
+                cfg.env.train.max_steps_per_rollout_epoch // model_cfg.num_action_chunks
+            )
+        else:
+            assert (
+                cfg.env.train.max_steps_per_rollout_epoch == model_cfg.num_action_chunks
+            ), (
+                "Image/video DiffusionART requires one generated sample per rollout epoch."
+            )
+            assert algorithm_cfg.get("art_grouping", "index") == "index", (
+                "algorithm.art_grouping='cluster' requires OpenPi; got "
+                f"{algorithm_cfg.get('art_grouping')!r} for {model_type.value}."
+            )
         expected_global_batch_size = (
-            cfg.env.train.total_num_envs * cfg.env.train.rollout_epoch // art_updates
+            cfg.env.train.total_num_envs
+            * cfg.env.train.rollout_epoch
+            * decisions
+            // art_updates
         )
         assert cfg.actor.global_batch_size == expected_global_batch_size, (
             "DiffusionART actor.global_batch_size must equal one disjoint update "
@@ -2014,6 +2033,10 @@ def validate_embodied_cfg(cfg):
         )
         actor_world_size = component_placement.get_world_size("actor")
         shard_count = math.lcm(env_world_size, actor_world_size)
+        if action_art:
+            shard_count = math.lcm(
+                shard_count, component_placement.get_world_size("rollout")
+            )
         assert (
             cfg.env.train.total_num_envs % (shard_count * algorithm_cfg.group_size) == 0
         ), (
@@ -2062,6 +2085,9 @@ def validate_embodied_cfg(cfg):
             "art_timestep_fraction",
             "art_reward_reduction",
             "art_eps",
+            "art_grouping",
+            "art_cluster_radius",
+            "art_cluster_min_size",
         }
         unsupported_art_options = sorted(
             option
@@ -2138,7 +2164,8 @@ def validate_embodied_cfg(cfg):
     if enable_eval:
         assert cfg.env.get("eval", None) is not None, (
             "env.eval config is required when runner.val_check_interval > 0, "
-            "runner.only_eval=True, or runner.task_type=embodied_eval."
+            "runner.only_eval=True, or "
+            "runner.task_type=embodied_eval."
         )
         eval_envs_per_stage = validate_eval_env_cfg(
             cfg, env_world_size, stage_num, model_cfg.num_action_chunks
@@ -2268,6 +2295,78 @@ def validate_embodied_cfg(cfg):
     validate_online_lerobot_env_cfg(cfg)
     validate_weight_sync_overlap_cfg(cfg)
     return cfg
+
+
+def validate_openpi_art_cfg(cfg: DictConfig) -> None:
+    """Validate grouped, finite-horizon LIBERO rollouts for OpenPi ART."""
+    train = cfg.env.train
+    model = cfg.actor.model
+    options = model.openpi
+    assert train.env_type == "libero", (
+        "OpenPi ART currently requires env.train.env_type='libero'."
+    )
+    assert options.get("task", "rl") == "rl", "OpenPi ART requires openpi.task='rl'."
+    assert options.get("rl_mode") == "art", "OpenPi ART requires openpi.rl_mode='art'."
+    assert not options.get("is_nft", False), "OpenPi ART requires openpi.is_nft=False."
+    assert (
+        options.get("noise_method") == "flow_ode"
+        and float(options.get("noise_level", 0)) == 0
+    ), "OpenPi ART requires noise_method='flow_ode' and noise_level=0.0."
+    assert not train.auto_reset and not train.ignore_terminations, (
+        "OpenPi ART requires auto_reset=False and ignore_terminations=False for training."
+    )
+    assert train.get("use_fixed_reset_state_ids", False), (
+        "OpenPi ART requires use_fixed_reset_state_ids=True to group identical initial states."
+    )
+    assert cfg.algorithm.group_size >= 2, (
+        "OpenPi ART requires algorithm.group_size >= 2."
+    )
+    assert cfg.algorithm.get("art_reward_reduction", "sum") == "sum", (
+        "OpenPi ART uses episode returns and requires art_reward_reduction='sum'."
+    )
+    grouping = cfg.algorithm.get("art_grouping", "index")
+    assert grouping in {"index", "cluster"}, (
+        "algorithm.art_grouping must be 'index' (natural_anchor) or 'cluster'."
+    )
+    assert train.rollout_epoch == 1, (
+        "OpenPi ART treats each episode column as one trajectory; rollout_epoch must be 1."
+    )
+    if grouping == "cluster":
+        radius = cfg.algorithm.get("art_cluster_radius", None)
+        assert (
+            isinstance(radius, (int, float))
+            and not isinstance(radius, bool)
+            and math.isfinite(radius)
+            and radius > 0
+        ), "algorithm.art_cluster_radius must be a positive finite number."
+        minimum = cfg.algorithm.get("art_cluster_min_size", None)
+        assert type(minimum) is int and 2 <= minimum <= cfg.algorithm.group_size, (
+            "algorithm.art_cluster_min_size must be an integer between 2 and group_size."
+        )
+    action_chunk = options.get("action_chunk", model.num_action_chunks)
+    assert action_chunk is None or int(action_chunk) == model.num_action_chunks, (
+        "OpenPi ART requires openpi.action_chunk to match num_action_chunks."
+    )
+    action_dim = int(options.get("action_env_dim", model.action_dim))
+    assert action_dim == model.action_dim and action_dim <= int(
+        options.model_action_dim
+    ), "OpenPi ART requires action_env_dim=action_dim <= model_action_dim."
+    assert (
+        train.max_steps_per_rollout_epoch > 0
+        and train.max_steps_per_rollout_epoch % model.num_action_chunks == 0
+    ), (
+        "OpenPi ART requires max_steps_per_rollout_epoch to be a positive multiple of num_action_chunks."
+    )
+    assert train.max_steps_per_rollout_epoch >= train.max_episode_steps, (
+        "OpenPi ART requires complete episodes: max_steps_per_rollout_epoch >= max_episode_steps."
+    )
+    assert not cfg.actor.get("enable_sft_co_train", False), (
+        "OpenPi ART currently requires actor.enable_sft_co_train=False."
+    )
+    # Training starts from aligned reset groups; only cluster needs state features.
+    with open_dict(cfg):
+        train.art_grouping = grouping
+        train.art_grouped_reset = True
 
 
 def validate_offline_cfg(cfg: DictConfig) -> DictConfig:

@@ -1781,11 +1781,11 @@ class EnvOutput:
         return self.transition.rlt_switch_flags
 
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
-        """Select policy inputs and normalize task descriptions."""
+        """Select observations, including optional policy-owned input tensors."""
         prepared = {key: obs.get(key) for key in PolicyObsSpec.KEYS}
         if obs.get("active_mask") is not None:
             prepared["active_mask"] = obs["active_mask"]
-        for key in ("reset_mask", "history"):
+        for key in ("reset_mask", "history", "policy_inputs"):
             if key in obs:
                 prepared[key] = obs[key]
         task_descriptions = prepared["task_descriptions"]

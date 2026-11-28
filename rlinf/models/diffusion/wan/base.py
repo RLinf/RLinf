@@ -111,6 +111,24 @@ class Wan22Model(torch.nn.Module, BasePolicy):
         nft_inputs: dict[str, torch.Tensor],
         **kwargs,
     ) -> dict[str, Any]:
+        """Predict velocities at NFT's explicit noisy states."""
+        return self._velocity_forward(forward_inputs, nft_inputs, **kwargs)
+
+    def art_forward(
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        art_inputs: dict[str, torch.Tensor],
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Predict velocities at ART's cached reverse-rollout states."""
+        return self._velocity_forward(forward_inputs, art_inputs, **kwargs)
+
+    def _velocity_forward(
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        state_inputs: dict[str, torch.Tensor],
+        **kwargs,
+    ) -> dict[str, Any]:
         raise NotImplementedError
 
     def _denoise(
@@ -144,6 +162,8 @@ class Wan22Model(torch.nn.Module, BasePolicy):
             return self.default_forward(**kwargs)
         if forward_type == ForwardType.NFT:
             return self.nft_forward(**kwargs)
+        if forward_type == ForwardType.ART:
+            return self.art_forward(**kwargs)
         raise ValueError(f"Unknown forward_type: {forward_type}")
 
     def default_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
@@ -152,18 +172,18 @@ class Wan22Model(torch.nn.Module, BasePolicy):
             "Wan2.2 flow-grpo is unavailable now. Use rl_mode='nft' or 'art'."
         )
 
-    def _prepare_nft_forward_inputs(
+    def _prepare_velocity_forward_inputs(
         self,
         forward_inputs: dict[str, torch.Tensor],
-        nft_inputs: dict[str, torch.Tensor],
+        state_inputs: dict[str, torch.Tensor],
     ) -> dict[str, torch.Tensor | torch.device | torch.dtype]:
         parameter = next(self.transformer.parameters())
         device = parameter.device
         model_dtype = parameter.dtype
-        x_t = nft_inputs["x_t"].to(device=device, dtype=model_dtype)
+        x_t = state_inputs["x_t"].to(device=device, dtype=model_dtype)
         model_x_t = x_t.movedim(1, 2)
         timesteps = self._scheduler_to_model_timesteps(
-            nft_inputs["timesteps"].to(device=device),
+            state_inputs["timesteps"].to(device=device),
             model_x_t,
         )
         prompt_embeds = forward_inputs["prompt_embeds"].to(

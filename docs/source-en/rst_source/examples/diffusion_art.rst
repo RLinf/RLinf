@@ -11,6 +11,8 @@ Fine-tune SD3 or Wan2.2 with DiffusionART to improve text rendering in images
 and videos using OCR rewards. Complete the :doc:`shared setup <video_models>`,
 then launch the image or video config.
 
+For Pi0 robot policies, see the :ref:`LIBERO Object and Spatial recipes <diffusion-art-libero>`.
+
 Overview
 --------
 
@@ -323,3 +325,199 @@ configurations use ``algorithm.nft_tau=[1.0,0.01,0,70]``.
      - 10
      - -1
      - 10
+
+.. _diffusion-art-libero:
+
+LIBERO Object and Spatial
+-------------------------
+
+Train Pi0 on complete LIBERO trajectories with natural-anchor or state-cluster grouping. Both subtract a state-dependent anchor before computing action–return covariance. The anchor averages two deterministic denoising runs from shared reference noise and its negation; it leaves the sampled actions unchanged.
+
+.. list-table:: LIBERO ART Recipes
+   :header-rows: 1
+
+   * - Suite
+     - Natural Anchor
+     - State Clusters
+   * - Object
+     - ``libero_object_0_art_openpi``
+     - ``libero_object_0_art_cluster_openpi``
+   * - Spatial
+     - ``libero_spatial_0_art_openpi``
+     - ``libero_spatial_0_art_cluster_openpi``
+
+The recipes default to task 0, 128 training environments, four denoising steps, learning rate 5e-7, FP32 master parameters, and 50 training rounds. Episodes last up to 240 environment steps, with five actions per decision. Two updates use disjoint trajectory batches of 3,072 decision rows each; rows after termination are masked. Guidance, restoration, and the trust-region mask use only executed action coordinates.
+
+Choose a Grouping Method
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Natural anchor** (``algorithm.art_grouping=index``) compares eight trajectories with the same reset group and decision index. They start from matching simulator initializations and sample independent actions. Later decisions train on diverged states; subtracting the anchor reduces differences in the states' mean actions.
+
+**State clusters** (``algorithm.art_grouping=cluster``) group nearby live states across actor ranks. Each cluster shares a task and contact phase, contains four to eight members, and includes at most one decision per trajectory. The first decision keeps the exact reset groups; unclustered later rows are masked. Features cover relative gripper/object/goal positions, full orientations, finger opening, and remaining time. ``algorithm.art_cluster_radius=1.0`` specifies a normalized feature-space radius.
+
+Run Training
+~~~~~~~~~~~~
+
+Install the OpenPi/LIBERO environment with :doc:`../start/installation` and use four visible GPUs. Download the SFT checkpoint, including its normalization statistics:
+
+.. tab-set::
+
+   .. tab-item:: Hugging Face
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT \
+           --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+
+In ``examples/embodiment/config/libero_object_0_art_openpi.yaml``, set ``actor.model.model_path`` to the downloaded directory. All four recipes inherit this path, and rollout uses the actor's checkpoint. Set the runtime environment:
+
+.. code-block:: bash
+
+   export PYTHONUNBUFFERED=1 XLA_PYTHON_CLIENT_PREALLOCATE=false
+
+Train Object task 0 with natural-anchor grouping:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_object_0_art_openpi LIBERO
+
+To reproduce the Spatial task 6 cluster run, add the following overrides to ``examples/embodiment/config/libero_spatial_0_art_cluster_openpi.yaml``:
+
+.. code-block:: yaml
+
+   env:
+     train:
+       task_id_filter: [6]
+     eval:
+       task_id_filter: [6]
+
+Launch the selected recipe:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_0_art_cluster_openpi LIBERO
+
+Change both task filters to run another task, or choose the natural-anchor recipe from the table. To reproduce the joint ten-task results, set both filters to ``null`` in the selected Spatial recipe and merge these settings into its existing YAML sections:
+
+.. code-block:: yaml
+
+   runner:
+     max_steps: 200
+     max_epochs: 200
+   env:
+     train:
+       task_id_filter: null
+     eval:
+       task_id_filter: null
+       max_steps_per_rollout_epoch: 2640
+
+Launch natural-anchor training with ``bash examples/embodiment/run_embodiment.sh libero_spatial_0_art_openpi LIBERO``, or use ``libero_spatial_0_art_cluster_openpi`` for clusters. Evaluation runs every ten rounds. Logs are written under ``logs/``.
+
+Results
+~~~~~~~
+
+The runs use four GPUs, actor seed 42, and seed 0 for both training and evaluation environments. Success is measured by ``eval/success_once``. Single-task runs evaluate 50 trajectories per checkpoint; joint Spatial runs evaluate 500. SFT is the step-0 evaluation of the initial policy in the selected run.
+
+All single-task runs train for 50 rounds. For each task and grouping method, the tables report the completed run with the highest round-50 success rate and that run’s SFT baseline.
+
+.. list-table:: Natural-Anchor Single-Task Success Rates
+   :header-rows: 1
+
+   * - Task
+     - SFT
+     - ART, Round 50
+     - Gain (pp)
+   * - Object 0
+     - 32%
+     - 100%
+     - +68
+   * - Spatial 0
+     - 90%
+     - 94%
+     - +4
+   * - Spatial 1
+     - 84%
+     - 100%
+     - +16
+   * - Spatial 2
+     - 100%
+     - 100%
+     - +0
+   * - Spatial 3
+     - 74%
+     - 94%
+     - +20
+   * - Spatial 4
+     - 66%
+     - 88%
+     - +22
+   * - Spatial 5
+     - 2%
+     - 0%
+     - -2
+   * - Spatial 6
+     - 62%
+     - 100%
+     - +38
+   * - Spatial 7
+     - 50%
+     - 86%
+     - +36
+   * - Spatial 8
+     - 68%
+     - 88%
+     - +20
+   * - Spatial 9
+     - 20%
+     - 68%
+     - +48
+
+.. list-table:: State-Cluster Single-Task Success Rates
+   :header-rows: 1
+
+   * - Task
+     - SFT
+     - ART, Round 50
+     - Gain (pp)
+   * - Spatial 6
+     - 56%
+     - 96%
+     - +40
+   * - Spatial 7
+     - 50%
+     - 78%
+     - +28
+   * - Spatial 8
+     - 68%
+     - 86%
+     - +18
+   * - Spatial 9
+     - 18%
+     - 38%
+     - +20
+
+Each joint run trains one policy on all ten Spatial tasks for 200 rounds. The table shows the final success rate, the highest success rate during training, and the round at which it occurs.
+
+.. list-table:: Joint Ten-Task Spatial Success Rates
+   :header-rows: 1
+
+   * - Grouping
+     - SFT
+     - ART, Round 200
+     - Gain (pp)
+     - Best ART
+     - Best Round
+   * - Natural anchor
+     - 61.4%
+     - 74.0%
+     - +12.6
+     - 75.0%
+     - 190
+   * - State clusters
+     - 61.4%
+     - 72.6%
+     - +11.2
+     - 77.6%
+     - 170
+
+Watch ``eval/success_once`` in TensorBoard. For clusters, ``actor/cluster_row_frac`` reports coverage and ``actor/cluster_active_frac`` reports the fraction of clusters with nonzero guidance. See :doc:`../reference/metrics` for training metrics and :doc:`../evaluations/index` for standalone evaluation.

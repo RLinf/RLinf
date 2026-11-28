@@ -20,6 +20,7 @@ from typing import Any, Callable, Optional, Union
 import gym
 import numpy as np
 
+from rlinf.envs.sim.libero.art_state import object_state
 from rlinf.envs.sim.libero.utils import import_libero_module
 from rlinf.envs.venv import (
     BaseVectorEnv,
@@ -155,6 +156,8 @@ def _worker(
                 p.send(env.get_segmentation_of_interest(data))
             elif cmd == "get_sim_state":
                 p.send(env.get_sim_state())
+            elif cmd == "object_state":
+                p.send(object_state(env))
             elif cmd == "set_init_state":
                 obs = env.set_init_state(data)
                 p.send(obs)
@@ -311,3 +314,9 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
             self.workers[i].parent_remote.send(["set_camera_rendering", enabled])
         for i in id:
             self.workers[i].parent_remote.recv()
+
+    def object_states(self) -> list[dict]:
+        """Read the task-object state of every subprocess."""
+        for worker in self.workers:
+            worker.parent_remote.send(["object_state", None])
+        return [worker.parent_remote.recv() for worker in self.workers]

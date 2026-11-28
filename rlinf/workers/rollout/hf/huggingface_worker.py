@@ -215,6 +215,8 @@ class MultiStepRolloutWorker(Worker):
                 self.model_cfg, self.cfg.rollout.model
             )
 
+        if self.cfg.rollout.get("seed", None) is not None:
+            torch.manual_seed(int(self.cfg.rollout.seed) + self._rank)
         self.hf_model: BasePolicy = get_model(rollout_model_config)
         if self.value_only_bootstrap and getattr(
             type(self.hf_model), "predict_value_batch", None

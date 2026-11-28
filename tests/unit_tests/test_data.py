@@ -1683,6 +1683,39 @@ def test_vla_sft_checkpoint_restores_data_order_and_rng(tmp_path, monkeypatch):
         set_rng_state(original_rng)
 
 
+@pytest.mark.parametrize("with_policy_inputs", [False, True])
+@pytest.mark.parametrize("with_reset_mask", [False, True])
+def test_env_output_preserves_optional_fields_through_policy_transport(
+    with_policy_inputs,
+    with_reset_mask,
+):
+    obs = {"states": torch.zeros(4, 3)}
+    if with_policy_inputs:
+        obs["policy_inputs"] = {"features": torch.arange(8).reshape(4, 2)}
+    if with_reset_mask:
+        obs["reset_mask"] = torch.tensor([True, False, False, True])
+    output = EnvOutput(obs=obs, final_obs=obs)
+    env_worker = object.__new__(EnvWorker)
+    policy_input = env_worker._build_policy_input(output)
+    restored = []
+    for shard in policy_input.split([2, 2]):
+        skeleton, tensors = pack_dataclass_tensors(shard)
+        restored.append(unpack_dataclass_tensors(skeleton, tensors))
+    merged = PolicyInput.merge(
+        MultiStepRolloutWorker._decompress_policy_inputs(restored)
+    )
+
+    for prepared in (
+        output.to_dict()["obs"],
+        output.to_dict()["final_obs"],
+        merged.obs,
+    ):
+        for key in ("policy_inputs", "reset_mask"):
+            assert (key in prepared) == (key in obs)
+            if key in obs:
+                torch.testing.assert_close(prepared[key], obs[key])
+
+
 def test_removed_duplicate_types_are_not_schema_api():
     import rlinf.data.schema as schema
 

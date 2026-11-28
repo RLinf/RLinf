@@ -9,6 +9,8 @@ DiffusionART
 
 使用 DiffusionART 微调 SD3 或 Wan2.2，通过 OCR 奖励改善图像和视频中的文字渲染。完成 :doc:`共用准备步骤 <video_models>` 后，选择对应配置启动训练。
 
+Pi0 机器人 policy 的训练见 :ref:`LIBERO Object 和 Spatial 配方 <diffusion-art-libero>`。
+
 概览
 ----
 
@@ -293,3 +295,199 @@ ART 使用 ``wan22_ti2v_5b_art_video_ocr`` 配置，NFT 使用 ``wan22_ti2v_5b_n
      - 10
      - -1
      - 10
+
+.. _diffusion-art-libero:
+
+LIBERO Object 与 Spatial
+-------------------------
+
+Pi0 在完整 LIBERO 轨迹上训练，支持 natural_anchor 和 cluster 两种分组。两者都先从动作中减去状态相关的 anchor，再计算动作与回报的协方差。Anchor 用共享的正负参考噪声各做一次确定性去噪，取平均来估计该状态的平均动作；实际采样动作不变。
+
+.. list-table:: LIBERO ART 配方
+   :header-rows: 1
+
+   * - 任务套件
+     - Natural Anchor
+     - State Clusters
+   * - Object
+     - ``libero_object_0_art_openpi``
+     - ``libero_object_0_art_cluster_openpi``
+   * - Spatial
+     - ``libero_spatial_0_art_openpi``
+     - ``libero_spatial_0_art_cluster_openpi``
+
+配方默认训练 task 0，使用 128 个训练环境、4 个去噪步、5e-7 学习率和 FP32 master 参数，共训练 50 轮。每条 episode 最多执行 240 个环境步，每次决策执行 5 个动作。两次更新各用 3,072 行决策数据，轨迹互不重叠；终止后的行不参与训练。Guidance、restoration 和 trust-region mask 都只覆盖已执行的动作坐标。
+
+选择分组方式
+~~~~~~~~~~~~
+
+**Natural anchor**\ （``algorithm.art_grouping=index``）比较同一 reset 组、同一决策序号的 8 条轨迹。它们从相同的模拟器初始化出发，独立采样动作。后续决策训练时，组内状态已经分叉；减去 anchor 能减小不同状态下平均动作的差异。
+
+**State clusters**\ （``algorithm.art_grouping=cluster``）跨 actor rank 对存活状态聚类。每簇属于同一任务和接触阶段，包含 4–8 个成员，每条轨迹最多贡献一个决策。第一个决策保留精确的 reset 分组，后续未入簇的行不参与训练。特征包括夹爪、物体和目标的相对位置、完整姿态、夹爪开度及剩余时间。``algorithm.art_cluster_radius=1.0`` 表示归一化特征空间中的半径。
+
+运行训练
+~~~~~~~~
+
+按 :doc:`../start/installation` 安装 OpenPi/LIBERO 环境，使用 4 张可见 GPU。下载包含归一化统计的 SFT 权重：
+
+.. tab-set::
+
+   .. tab-item:: Hugging Face
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT \
+           --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+
+在 ``examples/embodiment/config/libero_object_0_art_openpi.yaml`` 中，将 ``actor.model.model_path`` 设置为下载目录。四个配方都继承这个路径，rollout 自动使用 actor 的权重。设置运行环境：
+
+.. code-block:: bash
+
+   export PYTHONUNBUFFERED=1 XLA_PYTHON_CLIENT_PREALLOCATE=false
+
+用 natural-anchor 分组训练 Object task 0：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_object_0_art_openpi LIBERO
+
+复现 Spatial task 6 的 cluster 结果时，在 ``examples/embodiment/config/libero_spatial_0_art_cluster_openpi.yaml`` 中加入以下覆盖项：
+
+.. code-block:: yaml
+
+   env:
+     train:
+       task_id_filter: [6]
+     eval:
+       task_id_filter: [6]
+
+启动选定的配方：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_0_art_cluster_openpi LIBERO
+
+其他单任务需要同时修改这两处过滤器；切换分组方式时，选择表中对应的配方。复现 Spatial 全部 10 个任务的联合训练结果时，将两个过滤器设为 ``null``，并将下列配置合入所选 Spatial 配方已有的 YAML 段落：
+
+.. code-block:: yaml
+
+   runner:
+     max_steps: 200
+     max_epochs: 200
+   env:
+     train:
+       task_id_filter: null
+     eval:
+       task_id_filter: null
+       max_steps_per_rollout_epoch: 2640
+
+Natural-anchor 使用 ``bash examples/embodiment/run_embodiment.sh libero_spatial_0_art_openpi LIBERO`` 启动，cluster 则选择 ``libero_spatial_0_art_cluster_openpi``。每 10 轮评估一次，日志保存在 ``logs/`` 下。
+
+实验结果
+~~~~~~~~
+
+实验使用 4 张 GPU，actor 的随机种子为 42，训练和评估环境的随机种子均为 0。成功率指标为 ``eval/success_once``。每个 checkpoint 的评估轨迹数为：单任务 50 条，Spatial 联合训练 500 条。SFT 列为所选实验初始 policy 在第 0 步的评估结果。
+
+下列单任务实验均训练 50 轮。同一任务、同一分组方式有多次完整实验时，选择第 50 轮成功率最高的一次，并列出这次实验对应的 SFT 基线。
+
+.. list-table:: Natural anchor 单任务成功率
+   :header-rows: 1
+
+   * - 任务
+     - SFT
+     - ART，第 50 轮
+     - 提升（百分点）
+   * - Object 0
+     - 32%
+     - 100%
+     - +68
+   * - Spatial 0
+     - 90%
+     - 94%
+     - +4
+   * - Spatial 1
+     - 84%
+     - 100%
+     - +16
+   * - Spatial 2
+     - 100%
+     - 100%
+     - +0
+   * - Spatial 3
+     - 74%
+     - 94%
+     - +20
+   * - Spatial 4
+     - 66%
+     - 88%
+     - +22
+   * - Spatial 5
+     - 2%
+     - 0%
+     - -2
+   * - Spatial 6
+     - 62%
+     - 100%
+     - +38
+   * - Spatial 7
+     - 50%
+     - 86%
+     - +36
+   * - Spatial 8
+     - 68%
+     - 88%
+     - +20
+   * - Spatial 9
+     - 20%
+     - 68%
+     - +48
+
+.. list-table:: State clusters 单任务成功率
+   :header-rows: 1
+
+   * - 任务
+     - SFT
+     - ART，第 50 轮
+     - 提升（百分点）
+   * - Spatial 6
+     - 56%
+     - 96%
+     - +40
+   * - Spatial 7
+     - 50%
+     - 78%
+     - +28
+   * - Spatial 8
+     - 68%
+     - 86%
+     - +18
+   * - Spatial 9
+     - 18%
+     - 38%
+     - +20
+
+每次联合训练都用一个 policy 学习 Spatial 的全部 10 个任务，共训练 200 轮。下表列出最终成功率、训练期间最高成功率及其对应轮次。
+
+.. list-table:: Spatial 全部 10 个任务联合训练成功率
+   :header-rows: 1
+
+   * - 分组方式
+     - SFT
+     - ART，第 200 轮
+     - 提升（百分点）
+     - ART 最高成功率
+     - 最高成功率对应轮次
+   * - Natural anchor
+     - 61.4%
+     - 74.0%
+     - +12.6
+     - 75.0%
+     - 190
+   * - State clusters
+     - 61.4%
+     - 72.6%
+     - +11.2
+     - 77.6%
+     - 170
+
+在 TensorBoard 中查看 ``eval/success_once``。聚类的 ``actor/cluster_row_frac`` 表示入簇覆盖率，``actor/cluster_active_frac`` 表示产生非零 guidance 的簇占比。训练指标见 :doc:`../reference/metrics`，独立评估流程见 :doc:`../evaluations/index`。
