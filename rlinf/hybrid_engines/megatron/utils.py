@@ -90,6 +90,25 @@ def postprocess_ragged_seqs(
     return rows
 
 
+def collect_mtp_loss(
+    num_microbatches: int, num_layers: int, device: torch.device
+) -> torch.Tensor:
+    """Reduce the step's mean MTP loss to every pipeline stage and clear its tracker."""
+    from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
+
+    MTPLossLoggingHelper.reduce_loss_in_tracker()
+    values = MTPLossLoggingHelper.tracker.get("values")
+    loss = torch.zeros((), device=device)
+    if values is not None:
+        loss.copy_(values.sum() / (num_microbatches * num_layers))
+        MTPLossLoggingHelper.clean_loss_in_tracker()
+    if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+        torch.distributed.all_reduce(
+            loss, group=parallel_state.get_pipeline_model_parallel_group()
+        )
+    return loss
+
+
 def align_next_token_scores(scores: torch.Tensor) -> torch.Tensor:
     """Move each prediction to the token it scores, after unpacking trajectory rows."""
     return torch.nn.functional.pad(scores[..., :-1], (1, 0))
@@ -145,9 +164,8 @@ def preprocess_packed_seqs(
             start_idx = cu_seqlens_padded[i] // cp_size
             # split to 2 chunks
             d = input_ids[i, attention_mask[i]]
-            input_ids_rmpad[start_idx : start_idx + half_seqlen] = d[
-                half_seqlen * cp_rank : half_seqlen * (cp_rank + 1)
-            ]
+            first_half = d[half_seqlen * cp_rank : half_seqlen * (cp_rank + 1)]
+            input_ids_rmpad[start_idx : start_idx + first_half.shape[0]] = first_half
 
             remain_start = seqlens_in_batch_padded[i] - half_seqlen * (cp_rank + 1)
             remain_end = seqlens_in_batch_padded[i] - half_seqlen * cp_rank
@@ -171,6 +189,82 @@ def preprocess_packed_seqs(
         return input_ids_rmpad.unsqueeze(0), packed_seq_params
     else:
         return input_ids, packed_seq_params
+
+
+def model_packs_inputs(model: torch.nn.Module) -> bool:
+    """Whether the backend packs and CP-splits complete input sequences."""
+    from megatron.training.training import unwrap_model
+
+    try:
+        from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+    except ImportError:
+        return False
+    return isinstance(unwrap_model(model), Qwen3VLModel)
+
+
+def prepare_full_model_inputs(
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    padding_seqlen: Optional[int] = None,
+) -> tuple[torch.Tensor, torch.Tensor, PackedSeqParams]:
+    """Left-align complete sequences before model-owned mRoPE and CP packing.
+
+    Fixed-size trailing padding is a separate dummy sequence, so the model's
+    internal packing produces the same local extent as RLinf's padded labels.
+    """
+    mask = attention_mask.bool()
+    lengths = mask.sum(-1)
+    tp = parallel_state.get_tensor_model_parallel_world_size()
+    cp = parallel_state.get_context_parallel_world_size()
+    alignment = tp * cp * 2 if cp > 1 else tp
+    aligned = (lengths + alignment - 1) // alignment * alignment
+    width = int(aligned.max())
+    # Bridge numbers mRoPE by column, so each sample starts at column zero.
+    order = torch.sort((~mask).to(torch.int8), dim=1, stable=True).indices
+    tokens = input_ids.gather(1, order)
+    tokens = torch.nn.functional.pad(tokens, (0, max(width - tokens.shape[1], 0)))[
+        :, :width
+    ]
+    columns = torch.arange(width, device=mask.device)
+    tokens = tokens.masked_fill(columns >= lengths[:, None], 0)
+    mask = columns < aligned[:, None]
+    if padding_seqlen is not None:
+        extra = padding_seqlen * input_ids.shape[0] - int(aligned.sum())
+        if extra > 0:
+            width = max(tokens.shape[1], extra)
+            tokens = torch.nn.functional.pad(tokens, (0, width - tokens.shape[1]))
+            mask = torch.nn.functional.pad(mask, (0, width - mask.shape[1]))
+            tokens = torch.cat((tokens, tokens.new_zeros((1, width))))
+            dummy_mask = torch.arange(width, device=mask.device) < extra
+            mask = torch.cat((mask, dummy_mask.unsqueeze(0)))
+    _, params = preprocess_packed_seqs(tokens, mask, pre_process=False)
+    return tokens, mask, params
+
+
+def prepare_ragged_model_inputs(
+    rows: list[torch.Tensor], model: torch.nn.Module
+) -> tuple[
+    torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], PackedSeqParams
+]:
+    """Prepare ragged batches according to the model's packing ownership.
+
+    Model-owned packing consumes complete rows and computes mRoPE internally;
+    other models consume local packed tokens and matching position IDs.
+    """
+    if model_packs_inputs(model):
+        tokens = torch.nn.utils.rnn.pad_sequence(rows, batch_first=True)
+        lengths = torch.tensor([len(row) for row in rows], device=tokens.device)
+        mask = (
+            torch.arange(tokens.shape[1], device=tokens.device)[None, :]
+            < lengths[:, None]
+        )
+        tokens, mask, params = prepare_full_model_inputs(tokens, mask)
+        return tokens, mask, None, params
+    tokens, params = preprocess_ragged_seqs(rows)
+    positions, _ = preprocess_ragged_seqs(
+        [torch.arange(len(row), device=row.device) for row in rows]
+    )
+    return tokens, None, positions, params
 
 
 def postprocess_packed_seqs(
